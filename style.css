@@ -1,0 +1,48 @@
+:root { --bg:#000; --fg:#f2f2f2; --dim:#8a8a8a; --line:#222; --accent:#ff3b30; }
+* { box-sizing:border-box; }
+html,body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif; }
+a { color:inherit; text-decoration:none; }
+header { display:flex; align-items:center; gap:28px; padding:20px 28px; }
+.logo { font-weight:800; font-style:italic; letter-spacing:.04em; font-size:22px; }
+nav { display:flex; gap:22px; flex:1; }
+nav a { color:var(--dim); } nav a.on, nav a:hover { color:var(--fg); }
+.lane { background:none; border:0; color:var(--fg); font:inherit; font-weight:700; cursor:pointer; letter-spacing:.08em; }
+.lane.nsfw { color:var(--accent); }
+main { max-width:980px; margin:0 auto; padding:24px 28px 80px; }
+h1 { font-style:italic; font-weight:800; font-size:clamp(44px,8vw,96px); line-height:1; letter-spacing:-.02em; margin:40px 0 48px; }
+h1 em { color:var(--accent); }
+.choices { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.choice { border:1px solid var(--line); border-radius:18px; padding:34px 28px; font-size:clamp(22px,3.4vw,34px); font-style:italic; font-weight:700; background:none; color:var(--fg); text-align:left; cursor:pointer; }
+.choice.on { border-color:var(--accent); }
+.choice small { display:block; font-style:normal; font-weight:400; font-size:14px; color:var(--dim); margin-top:6px; }
+.models { margin-top:36px; color:var(--dim); }
+.models li { list-style:none; padding:6px 0; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
+.models ul { padding:0; margin:8px 0 0; }
+.models b { color:var(--fg); font-weight:500; }
+.composer { border:1px solid var(--line); border-radius:22px; padding:16px 16px 12px; margin-top:12px; }
+.row { display:flex; align-items:flex-end; gap:12px; }
+textarea { flex:1; background:none; border:0; color:var(--fg); font:inherit; font-size:18px; resize:none; min-height:56px; outline:none; }
+.go { width:46px; height:46px; border-radius:50%; border:0; background:var(--accent); color:#000; font-size:22px; font-weight:800; cursor:pointer; flex:none; }
+.go:disabled { opacity:.35; cursor:default; }
+.under { display:flex; gap:18px; align-items:center; margin-top:10px; color:var(--dim); font-size:14px; }
+select { background:#000; color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:6px 8px; font:inherit; }
+.text { background:none; border:0; color:var(--fg); font:inherit; cursor:pointer; padding:0; text-decoration:underline; text-underline-offset:3px; }
+.text.dim { color:var(--dim); } .text:disabled { color:#444; cursor:default; }
+.panel { border-top:1px solid var(--line); margin-top:12px; padding-top:12px; display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px 20px; font-size:14px; color:var(--dim); }
+.panel label { display:flex; flex-direction:column; gap:4px; }
+.panel input[type=text], .panel textarea, .panel input[type=number] { background:#000; border:1px solid var(--line); color:var(--fg); border-radius:10px; padding:6px 8px; font:inherit; min-height:auto; }
+.panel .wide { grid-column:1/-1; }
+.status { margin-top:18px; color:var(--dim); min-height:22px; }
+.status.err { color:var(--accent); }
+.results { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:18px; margin-top:22px; }
+.card img, .card video { width:100%; border-radius:14px; display:block; background:#111; }
+.card .meta { font-size:13px; color:var(--dim); margin:6px 0 2px; }
+.card .acts { display:flex; gap:14px; font-size:14px; }
+.uploads { margin-top:20px; display:flex; flex-direction:column; gap:14px; }
+.thumbs { display:flex; gap:10px; flex-wrap:wrap; }
+.thumb { position:relative; } .thumb img { width:72px; height:72px; object-fit:cover; border-radius:10px; display:block; }
+.thumb button { position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:50%; border:0; background:var(--fg); color:#000; cursor:pointer; line-height:1; }
+audio { width:100%; max-width:420px; }
+.gate { position:fixed; inset:0; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; }
+.gatebox { text-align:center; display:flex; flex-direction:column; gap:16px; font-size:20px; }
+@media (max-width:640px) { header { gap:14px; padding:16px; flex-wrap:wrap } nav { gap:14px } .choices { grid-template-columns:1fr } main { padding:16px 16px 60px } }

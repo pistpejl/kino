@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KINO</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <a class="logo" href="#/">KINO</a>
+  <nav><a href="#/image">Image</a><a href="#/video">Video</a><a href="#/music">Music</a><a href="#/edit">Edit</a></nav>
+  <button id="lane" class="lane" type="button">SFW</button>
+</header>
+<main id="view"></main>
+<div id="gate" class="gate" hidden>
+  <div class="gatebox">
+    <p>The NSFW lane is for adults only.</p>
+    <button id="gateYes" class="text">I am 21 or older</button>
+    <button id="gateNo" class="text dim">Back</button>
+  </div>
+</div>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
