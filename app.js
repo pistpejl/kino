@@ -241,7 +241,7 @@
     }
     imgIn.onchange = () => { files = files.concat([...imgIn.files]).slice(0, 8); imgIn.value = ''; paint(); };
     paint();
-    const top = h('div', { class: 'uploads' }, imgIn, h('div', {}, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Add reference images'), thumbs));
+    const top = h('div', { class: 'uploads' }, imgIn, h('div', { class: 'under' }, h('b', {}, 'Edit'), h('a', { class: 'text dim', href: '#/timeline' }, 'Timeline')), h('div', {}, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Add reference images'), thumbs));
     const grid = results('edit');
     const c = composer({ kind: 'edit', engineKind: 'edit', placeholder: 'What should change?', noEngineText: "Edit can't run right now.",
       onGo: async ({ prompt, engine, say }) => {
@@ -262,10 +262,181 @@
     v.append(top, c.box, grid);
   }
 
-  const VIEWS = { '': home, image: imageView, video: videoView, music: musicView, edit: editView };
+
+  // ---- Timeline ----
+  st.tl = st.tl || { ratio: '9:16', clips: [], music: null };
+  let tlSeq = 0;
+  const RATIO_WH = { '9:16': [720, 1280], '1:1': [720, 720], '16:9': [1280, 720] };
+  function sessionItems() {
+    const out = [];
+    for (const k of ['image', 'edit']) st.results[k].forEach((i) => out.push({ kind: 'image', name: i.name, url: abs(i.url), label: i.engineName }));
+    for (const k of ['video', 'music']) st.results[k].forEach((i) => out.push({ kind: 'video', name: i.name, url: abs(i.url), label: i.engineName }));
+    return out;
+  }
+  function mediaDuration(url) {
+    return new Promise((res) => { const v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = () => res(v.duration || 0); v.onerror = () => res(0); v.src = url; });
+  }
+  async function addClip(c) {
+    const clip = { id: ++tlSeq, text: '', duration: 3, start: 0, end: 0, ...c };
+    if (clip.kind === 'video') { clip.mediaDur = await mediaDuration(clip.url); clip.end = +clip.mediaDur.toFixed(2); }
+    st.tl.clips.push(clip);
+  }
+  function clipLen(c) { return c.kind === 'image' ? Math.max(0.3, +c.duration || 3) : Math.max(0.1, (+c.end || c.mediaDur || 0) - (+c.start || 0)); }
+  async function overlayBlob(text, ratio) {
+    const [w, hh] = RATIO_WH[ratio];
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = hh;
+    const g = cv.getContext('2d');
+    const size = Math.round(w * 0.075);
+    g.font = `italic 800 ${size}px -apple-system, Helvetica, Arial, sans-serif`;
+    g.textAlign = 'center'; g.textBaseline = 'bottom';
+    g.shadowColor = 'rgba(0,0,0,.85)'; g.shadowBlur = size * 0.4;
+    g.fillStyle = '#fff';
+    const words = text.split(/\s+/); const lines = []; let line = '';
+    for (const wd of words) { const t = line ? line + ' ' + wd : wd; if (g.measureText(t).width > w * 0.86 && line) { lines.push(line); line = wd; } else line = t; }
+    if (line) lines.push(line);
+    lines.forEach((l, i) => g.fillText(l, w / 2, hh * 0.88 - (lines.length - 1 - i) * size * 1.15));
+    return new Promise((r) => cv.toBlob(r, 'image/png'));
+  }
+
+  async function timelineView(v) {
+    const T = st.tl;
+    const ratio = select([['9:16', '9:16'], ['1:1', '1:1'], ['16:9', '16:9']], T.ratio);
+    ratio.onchange = () => { T.ratio = ratio.value; paintStage(); };
+    const fileIn = h('input', { type: 'file', accept: 'video/*,image/*', multiple: true, hidden: true });
+    const musicIn = h('input', { type: 'file', accept: 'audio/*,.mp3,.wav,.m4a', hidden: true });
+    const list = h('div', { class: 'tl-list' });
+    const pickBox = h('div', { class: 'tl-pick', hidden: true });
+    const musicBox = h('div');
+    const status = h('div', { class: 'status' });
+    const say = (t, err) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); };
+    const stage = h('div', { class: 'tl-stage' });
+    const out = h('div', { class: 'results' });
+
+    fileIn.onchange = async () => {
+      for (const f of [...fileIn.files]) await addClip({ kind: f.type.startsWith('image') ? 'image' : 'video', file: f, url: URL.createObjectURL(f), label: f.name });
+      fileIn.value = ''; paintList();
+    };
+    musicIn.onchange = () => { const f = musicIn.files[0]; musicIn.value = ''; if (f) { T.music = { file: f, url: URL.createObjectURL(f), name: f.name, volume: 1 }; paintMusic(); } };
+
+    function paintPick() {
+      pickBox.innerHTML = '';
+      const items = sessionItems();
+      if (!items.length) pickBox.append(h('div', { class: 'meta' }, 'Nothing made this session yet.'));
+      items.forEach((it) => pickBox.append(h('button', { class: 'text', onclick: async () => { await addClip({ kind: it.kind, ref: it.name, url: it.url, label: it.label }); paintList(); } }, `${it.kind === 'image' ? 'Image' : 'Video'} · ${it.label}`)));
+    }
+    function paintMusic() {
+      musicBox.innerHTML = '';
+      const songs = st.results.music;
+      if (!T.music) {
+        musicBox.append(h('button', { class: 'text', onclick: () => musicIn.click() }, 'Upload music'));
+        songs.forEach((s) => musicBox.append(' ', h('button', { class: 'text dim', onclick: () => { T.music = { ref: s.name, url: abs(s.url), name: `KINO song (${s.credits ? s.credits.song : s.engineName})`, volume: 1 }; paintMusic(); } }, 'Use KINO song')));
+        return;
+      }
+      const vol = h('input', { type: 'range', min: 0, max: 1.5, step: 0.05, value: T.music.volume });
+      vol.oninput = () => { T.music.volume = +vol.value; };
+      musicBox.append(h('div', {}, `Music: ${T.music.name}  `, h('button', { class: 'text dim', onclick: () => { T.music = null; paintMusic(); } }, 'Remove')), h('label', { class: 'tl-vol' }, 'Volume ', vol));
+    }
+    function num(val, on, step = 0.1) { const i = h('input', { type: 'number', step, min: 0, value: val, inputmode: 'decimal' }); i.onchange = () => on(+i.value); return i; }
+    function paintList() {
+      list.innerHTML = '';
+      if (!T.clips.length) list.append(h('div', { class: 'meta' }, 'No clips yet.'));
+      T.clips.forEach((c, idx) => {
+        const handle = h('span', { class: 'tl-handle' }, 'Move');
+        const txt = h('input', { type: 'text', placeholder: 'Text on clip', value: c.text });
+        txt.oninput = () => { c.text = txt.value; };
+        const fields = c.kind === 'image'
+          ? [h('label', {}, 'Seconds', num(c.duration, (x) => { c.duration = x; }))]
+          : [h('label', {}, 'Start', num(c.start, (x) => { c.start = x; })), h('label', {}, 'End', num(c.end, (x) => { c.end = x; }))];
+        const thumb = c.kind === 'image' ? h('img', { src: c.url }) : h('video', { src: c.url, muted: true, playsinline: true, preload: 'metadata' });
+        const row = h('div', { class: 'tl-row', 'data-id': c.id }, handle, h('div', { class: 'tl-thumb' }, thumb),
+          h('div', { class: 'tl-fields' }, h('div', { class: 'meta' }, `${idx + 1}. ${c.label || c.kind}`), h('div', { class: 'tl-nums' }, ...fields), txt),
+          h('button', { class: 'text dim', onclick: () => { T.clips = T.clips.filter((x) => x !== c); paintList(); } }, 'Remove'));
+        dragify(handle, row);
+        list.append(row);
+      });
+    }
+    // touch + mouse drag to reorder (pointer events)
+    function dragify(handle, row) {
+      handle.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); row.classList.add('drag');
+        const move = (ev) => {
+          const rows = [...list.querySelectorAll('.tl-row')];
+          const target = rows.find((r2) => r2 !== row && ev.clientY > r2.getBoundingClientRect().top && ev.clientY < r2.getBoundingClientRect().bottom);
+          if (!target) return;
+          const r = target.getBoundingClientRect();
+          list.insertBefore(row, ev.clientY < r.top + r.height / 2 ? target : target.nextSibling);
+        };
+        const up = () => {
+          window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+          row.classList.remove('drag');
+          const order = [...list.querySelectorAll('.tl-row')].map((r2) => +r2.dataset.id);
+          T.clips.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+          paintList();
+        };
+        window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+      });
+    }
+    // preview: plays clips in order with text, music underneath
+    let playing = null;
+    function paintStage() { const [w, hh] = RATIO_WH[T.ratio]; stage.style.aspectRatio = `${w} / ${hh}`; stage.style.width = `min(100%, calc(60vh * ${(w / hh).toFixed(4)}))`; }
+    async function preview() {
+      if (playing) { playing.stop(); return; }
+      if (!T.clips.length) return say('Add clips first.', true);
+      let stopped = false; const audio = T.music ? new Audio(T.music.url) : null;
+      playing = { stop: () => { stopped = true; if (audio) audio.pause(); stage.innerHTML = ''; playing = null; prevBtn.textContent = 'Preview'; } };
+      prevBtn.textContent = 'Stop';
+      if (audio) { audio.volume = Math.min(1, T.music.volume); audio.play().catch(() => {}); }
+      for (const c of T.clips) {
+        if (stopped) return;
+        stage.innerHTML = '';
+        const el = c.kind === 'image' ? h('img', { src: c.url }) : h('video', { src: c.url, muted: true, playsinline: true, autoplay: true });
+        stage.append(el); if (c.text) stage.append(h('div', { class: 'tl-text' }, c.text));
+        if (c.kind === 'video') { el.currentTime = +c.start || 0; el.play().catch(() => {}); }
+        await new Promise((r) => setTimeout(r, clipLen(c) * 1000));
+      }
+      if (!stopped) playing.stop();
+    }
+    async function exportMp4() {
+      if (!T.clips.length) return say('Add clips first.', true);
+      const fd = new FormData(); let n = 0; const files = [];
+      const addFile = (blob, name) => { files.push([blob, name]); return `file:${n++}`; };
+      const spec = { lane: st.lane, ratio: T.ratio, clips: [], music: null };
+      for (const c of T.clips) {
+        const item = { kind: c.kind, start: +c.start || 0, end: +c.end || 0, duration: +c.duration || 3, text: c.text || '' };
+        item.src = c.ref ? `ref:${c.ref}` : addFile(c.file, c.file.name);
+        if (c.text && c.text.trim()) item.overlay = addFile(await overlayBlob(c.text.trim(), T.ratio), 'overlay.png');
+        spec.clips.push(item);
+      }
+      if (T.music) spec.music = { volume: T.music.volume, src: T.music.ref ? `ref:${T.music.ref}` : addFile(T.music.file, T.music.name) };
+      fd.append('spec', JSON.stringify(spec));
+      files.forEach(([b, name]) => fd.append('files', b, name));
+      say('Uploading for export…');
+      const r = await fetch(`${API}/timeline`, { method: 'POST', body: fd });
+      if (!r.ok) return say(await errMsg(r), true);
+      const j = await r.json();
+      try {
+        const res = await poll(j.jobId, (m) => say(`Rendering · ${m}`));
+        st.results.video.unshift(res); out.prepend(resultCard(res, 'video'));
+        say(`Exported ${res.width}×${res.height}, ${res.duration.toFixed(1)} s. Uploaded files were deleted from the server.`);
+      } catch (e) { say(e.message, true); }
+    }
+    const prevBtn = h('button', { class: 'text', onclick: preview }, 'Preview');
+    v.append(
+      h('div', { class: 'under tl-top' }, h('a', { class: 'text dim', href: '#/edit' }, 'Edit'), h('b', {}, 'Timeline'), field('Ratio', ratio)),
+      fileIn, musicIn,
+      h('div', { class: 'uploads' },
+        h('div', {}, h('button', { class: 'text', onclick: () => { pickBox.hidden = !pickBox.hidden; paintPick(); } }, 'Add from this session'), '  ', h('button', { class: 'text', onclick: () => fileIn.click() }, 'Add files')),
+        pickBox, list, musicBox),
+      stage,
+      h('div', { class: 'under' }, prevBtn, h('button', { class: 'text', onclick: () => exportMp4().catch((e) => say(e.message, true)) }, 'Export mp4')),
+      status, out);
+    paintList(); paintMusic(); paintStage();
+  }
+
+  const VIEWS = { '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView };
   function route() {
     const k = (location.hash.replace(/^#\/?/, '').split('?')[0]) || '';
-    document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('on', a.getAttribute('href') === `#/${k}`));
+    document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('on', a.getAttribute('href') === `#/${k === 'timeline' ? 'edit' : k}`));
     const v = $('#view'); v.innerHTML = '';
     (VIEWS[k] || home)(v);
   }

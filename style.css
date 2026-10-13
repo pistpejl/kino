@@ -47,3 +47,21 @@ audio { width:100%; max-width:420px; }
 .gate { position:fixed; inset:0; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; }
 .gatebox { text-align:center; display:flex; flex-direction:column; gap:16px; font-size:20px; }
 @media (max-width:640px) { header { gap:14px; padding:16px; flex-wrap:wrap } nav { gap:14px } .choices { grid-template-columns:1fr } main { padding:16px 16px 60px } }
+
+.tl-list { display:flex; flex-direction:column; gap:10px; }
+.tl-row { display:flex; gap:12px; align-items:center; border:1px solid var(--line); border-radius:14px; padding:10px; background:#000; }
+.tl-row.drag { border-color:var(--accent); opacity:.85; }
+.tl-handle { touch-action:none; user-select:none; color:var(--dim); padding:14px 6px; cursor:grab; font-size:14px; }
+.tl-thumb img, .tl-thumb video { width:64px; height:64px; object-fit:cover; border-radius:8px; display:block; background:#111; }
+.tl-fields { flex:1; display:flex; flex-direction:column; gap:6px; min-width:0; }
+.tl-nums { display:flex; gap:10px; font-size:13px; color:var(--dim); }
+.tl-nums label { display:flex; gap:4px; align-items:center; }
+.tl-row input[type=number] { width:64px; background:#000; border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:4px 6px; font:inherit; }
+.tl-row input[type=text] { background:#000; border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:6px 8px; font:inherit; width:100%; }
+.tl-vol { color:var(--dim); font-size:14px; display:flex; gap:8px; align-items:center; }
+.tl-vol input { accent-color:var(--accent); }
+.tl-stage { position:relative; margin-top:18px; max-height:60vh; max-width:100%; background:#0b0b0b; border-radius:14px; overflow:hidden; }
+.tl-stage img, .tl-stage video { width:100%; height:100%; object-fit:cover; display:block; }
+.tl-text { position:absolute; left:7%; right:7%; bottom:12%; text-align:center; font-style:italic; font-weight:800; font-size:clamp(18px,5vw,40px); text-shadow:0 0 12px #000; }
+.tl-pick { display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+.tl-top b { color:var(--fg); }
