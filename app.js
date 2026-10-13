@@ -235,7 +235,7 @@
     const carry = st.carry; st.carry = null;
     const first = fileField('First frame', 'image/*', carry);
     const last = fileField('Last frame', 'image/*');
-    const len = select([['2', '2 s'], ['3', '3 s'], ['4', '4 s'], ['5', '5 s'], ['15', '15 s (Grok)'], ['30', '30 s (Grok)'], ['60', '1 min (Grok)'], ['120', '2 min (Grok)']], '4');
+    const len = select([['2', '2 s'], ['3', '3 s'], ['4', '4 s'], ['5', '5 s'], ['6', '6 s'], ['8', '8 s'], ['10', '10 s'], ['12', '12 s'], ['15', '15 s (Grok)'], ['30', '30 s (Grok)'], ['60', '1 min (Grok)'], ['120', '2 min (Grok)']], '4');
     const ratio = select([['16:9', '16:9'], ['9:16', '9:16'], ['1:1', '1:1']], '16:9');
     const g = await grokToggle();
     const grid = results('video');
@@ -287,14 +287,16 @@
     const look = h('input', { type: 'text' });
     const action = h('input', { type: 'text' });
     const g = await grokToggle();
+    const motion = select([['none', 'none (cuts on the beat)'], ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (real motion, up to 30 s, ~1 clip/min)']] : [])], 'none');
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'What is the video about?', noEngineText: 'No image model responding (needed without images)',
-      settings: [field('Genre', genre), field('Ratio', ratio), field('Length', len), field('Look', look), field('Action', action), g.el, field('Lyrics', lyrics, true)],
+      settings: [field('Genre', genre), field('Ratio', ratio), field('Length', len), field('Look', look), field('Action', action), field('Motion', motion), g.el, field('Lyrics', lyrics, true)],
       onGo: async ({ prompt, engine, say }) => {
         if (!imgs.length && !engine) return say('Upload images: no image model is responding right now.', true);
+        if (!imgs.length && engine.startsWith('puter:')) return say('Seedream runs in your browser and can’t make music-video stills. Pick another model or upload images.', true);
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('prompt', prompt); fd.append('genre', genre.value); fd.append('ratio', ratio.value); fd.append('seconds', len.value);
-        fd.append('lyrics', lyrics.value); fd.append('look', look.value); fd.append('action', action.value); fd.append('grok', g.cb.checked ? '1' : '0'); fd.append('imageEngine', engine);
+        fd.append('lyrics', lyrics.value); fd.append('look', look.value); fd.append('action', action.value); fd.append('grok', g.cb.checked ? '1' : '0'); fd.append('motion', motion.value); fd.append('imageEngine', engine.startsWith('puter:') ? '' : engine);
         if (song) fd.append('song', song);
         imgs.forEach((f) => fd.append('images', f));
         say('Uploading…');
