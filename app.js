@@ -15,18 +15,90 @@
     lane: localStorage.getItem('kino.lane') === 'nsfw' && localStorage.getItem('kino.21') === '1' ? 'nsfw' : 'sfw',
     engines: {}, config: null, carry: null, results: { image: [], video: [], music: [], edit: [] },
   };
-  const abs = (u) => (/^https?:/.test(u) ? u : API.replace(/\/api\/kino$/, '') + u);
+  const abs = (u) => (/^(https?:|blob:|data:)/.test(u) ? u : API.replace(/\/api\/kino$/, '') + u);
 
   async function getEngines(lane, force) {
     const c = st.engines[lane];
     if (!force && c && Date.now() - c.at < 5 * 60000) return c.list;
     const r = await fetch(`${API}/engines?lane=${lane}`).then((x) => x.json()).catch(() => ({ engines: [] }));
-    st.engines[lane] = { at: Date.now(), list: r.engines || [] };
+    st.engines[lane] = { at: Date.now(), list: [...(r.engines || []), ...puterEngines(lane)] };
     return st.engines[lane].list;
   }
   async function getConfig() {
     if (!st.config) st.config = await fetch(`${API}/config`).then((x) => x.json()).catch(() => ({ grok: { available: false, message: 'Grok needs an API key' } }));
     return st.config;
+  }
+
+
+  // ---- Seedream via Puter.js (client-side, SFW only, user's own Puter account) ----
+  const PUTER_SRC = 'https://js.puter.com/v2/';
+  const PUTER_MODELS = [
+    { id: 'puter:byteplus/seedream-4-5-251128', model: 'byteplus/seedream-4-5-251128', name: 'Seedream 4.5' },
+    { id: 'puter:byteplus/seedream-5-0-lite-260128', model: 'byteplus/seedream-5-0-lite-260128', name: 'Seedream 5 Lite' },
+  ];
+  const puterEngines = (lane) => (lane === 'sfw' ? PUTER_MODELS.flatMap((m) => [
+    { id: m.id, name: `${m.name} (via Puter)`, kind: 'image', puter: true, status: 'via Puter' },
+    { id: m.id, name: `${m.name} (via Puter)`, kind: 'edit', puter: true, status: 'via Puter' },
+  ]) : []);
+  let puterLoading = null;
+  function loadPuter() {
+    if (window.puter) return Promise.resolve(window.puter);
+    if (!puterLoading) puterLoading = new Promise((res, rej) => {
+      const el = document.createElement('script'); el.src = PUTER_SRC; el.async = true;
+      const t = setTimeout(() => rej(new Error('Seedream is busy (Puter.js did not load).')), 20000);
+      el.onload = () => { clearTimeout(t); window.puter ? res(window.puter) : rej(new Error('Seedream is busy (Puter.js did not load).')); };
+      el.onerror = () => { clearTimeout(t); rej(new Error('Seedream is busy (Puter.js did not load).')); };
+      document.head.append(el);
+    }).catch((e) => { puterLoading = null; throw e; });
+    return puterLoading;
+  }
+  const TERMS_RE = /(^|[^a-zåäö0-9])(child|children|kids?|minors?|underage|under[\s-]*age|teens?|teenage[rs]?|preteen|tween|adolescent|juvenile|loli(ta|con)?|shota(con)?|young[\s-]*looking|youthful[\s-]*looking|barely[\s-]*legal|jailbait|school[\s-]*(girl|boy|uniform)|pupil|kindergarten|toddler|baby|infant|little[\s-]*(girl|boy)|young[\s-]*(girl|boy)|girls?|boys?|(step)?daughter|(step)?son|barn(et|en|slig)?|ungen?|ungar|minderåriga?|omyndig|tonåring(ar)?|tonårs|tonåren|flick(a|an|or)|pojk(e|en|ar)|skol(flicka|pojke|tjej|uniform|an)|elev(er)?|högstadiet?|mellanstadiet|lågstadiet|gymnasiet|förskola|dagis|bebis|småbarn|dotter|ungdom(ar)?)(?=$|[^a-zåäö0-9])/i;
+  const AGE_RE = /\b(\d{1,2})\s*(?:-|\s)?\s*(?:yo|y\/o|yrs?|years?(?:[\s-]*old)?|år(?:ig|ing|s)?|åring)\b|\b(?:age|aged|ålder|åldern)\s*(\d{1,2})\b/gi;
+  function minorText(t) {
+    const s = String(t || '').toLowerCase();
+    if (TERMS_RE.test(s)) return true;
+    let m; AGE_RE.lastIndex = 0;
+    while ((m = AGE_RE.exec(s))) if (Number(m[1] || m[2]) < 18) return true;
+    return false;
+  }
+  const REFUSE = 'Refused: KINO never makes anything involving minors.';
+  function puterError(e) {
+    const o = e || {}; const msg = String((o.error && o.error.message) || o.message || o.code || o).toLowerCase(); const code = o.status || (o.error && o.error.status);
+    if (code === 401 || /unauthori|sign.?in|log.?in|auth|popup|cancel|closed/.test(msg)) return 'Seedream needs Puter sign-in';
+    if (code === 402 || code === 429 || /credit|fund|balance|quota|limit|insufficient|busy|rate|overload|unavailable/.test(msg)) return 'Seedream is busy';
+    return `Seedream failed: ${msg.slice(0, 120)}`;
+  }
+  async function imgToBlob(img) {
+    if (!img.complete || !img.naturalWidth) await new Promise((r, j) => { img.onload = r; img.onerror = () => j(new Error('Seedream returned an unreadable image')); });
+    try { const r = await fetch(img.src); if (r.ok) return await r.blob(); } catch { /* canvas fallback */ }
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    c.getContext('2d').drawImage(img, 0, 0);
+    return new Promise((r, j) => c.toBlob((b) => (b ? r(b) : j(new Error('Could not read the Seedream image'))), 'image/jpeg', 0.92));
+  }
+  const blobB64 = (b) => new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(b); });
+  const PUTER_RATIO = { '1:1': { w: 1, h: 1 }, '9:16': { w: 9, h: 16 }, '16:9': { w: 16, h: 9 }, '4:5': { w: 4, h: 5 } };
+  /** Must be called from a tap/Enter handler: sign-in popup first (user gesture), then server text check, then Puter. */
+  async function seedream({ engineId, prompt, ratio, ref }) {
+    const m = PUTER_MODELS.find((x) => x.id === engineId);
+    if (!m || st.lane !== 'sfw') throw new Error('Seedream is SFW only.');
+    if (minorText(prompt)) throw new Error(REFUSE);
+    let p;
+    try {
+      p = await loadPuter();
+      if (p.auth && p.auth.isSignedIn && !p.auth.isSignedIn()) await p.auth.signIn();
+    } catch (e) { throw new Error(e && /busy/.test(e.message || '') ? e.message : 'Seedream needs Puter sign-in'); }
+    if (p.auth && p.auth.isSignedIn && !p.auth.isSignedIn()) throw new Error('Seedream needs Puter sign-in');
+    const chk = await fetch(`${API}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: prompt }) }).catch(() => null);
+    if (!chk || !chk.ok) throw new Error(chk && chk.status === 422 ? REFUSE : 'Safety check unavailable, so Seedream was not run.');
+    const opts = { model: m.model, ratio: PUTER_RATIO[ratio] || PUTER_RATIO['1:1'] };
+    if (ref) Object.assign(opts, { input_image: await blobB64(ref), input_image_mime_type: ref.type || 'image/jpeg' });
+    let img;
+    try { img = await p.ai.txt2img(prompt.slice(0, 1800), opts); } catch (e) { throw new Error(puterError(e)); }
+    if (!img || !img.src) throw new Error('Seedream is busy');
+    const blob = await imgToBlob(img);
+    const returned = (img.dataset && (img.dataset.model || img.dataset.modelName)) || img.model || null;
+    const label = returned ? String(returned) : m.name;
+    return { name: `seedream-${Date.now()}.jpg`, url: URL.createObjectURL(blob), blob, engine: m.id, engineName: `${label} (via Puter)` };
   }
 
   // ---- lane ----
@@ -96,8 +168,8 @@
     const card = h('div', { class: 'card' }, media, h('div', { class: 'meta' }, item.engineName + (item.credits ? ` · song: ${item.credits.song} · images: ${item.credits.images}` : '')));
     const acts = h('div', { class: 'acts' }, h('a', { class: 'text', href: abs(item.url), download: item.name, target: '_blank' }, 'Download'));
     if (kind === 'image' || kind === 'edit') {
-      acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url }; location.hash = '#/video'; } }, 'Animate'));
-      acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url }; location.hash = '#/edit'; } }, 'Edit'));
+      acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url, blob: item.blob }; location.hash = '#/video'; } }, 'Animate'));
+      acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url, blob: item.blob }; location.hash = '#/edit'; } }, 'Edit'));
     }
     acts.append(h('button', { class: 'text dim', onclick: () => { st.results[kind] = st.results[kind].filter((x) => x !== item); card.remove(); } }, 'Delete'));
     card.append(acts);
@@ -115,7 +187,7 @@
     models.innerHTML = '';
     models.append(st.lane === 'nsfw' ? 'Responding now · NSFW' : 'Responding now · SFW');
     const ul = h('ul');
-    list.forEach((e) => ul.append(h('li', {}, h('b', {}, e.name), kinds[e.kind] || e.kind)));
+    list.forEach((e) => ul.append(h('li', {}, h('b', {}, e.name), `${kinds[e.kind] || e.kind}${e.puter ? ' · running via Puter' : ''}`)));
     if (!list.length) ul.append(h('li', {}, 'No model is responding right now.'));
     models.append(ul);
   }
@@ -129,6 +201,15 @@
     const c = composer({ kind: 'image', engineKind: 'image', placeholder: 'Describe an image', settings: [field('Ratio', ratio), field('Resolution', res), field('Count', count), field('LoRA', lora)],
       onGo: async ({ prompt, engine, say }) => {
         if (!prompt) return say('Write a prompt.', true);
+        if (engine.startsWith('puter:')) {
+          const n = Math.max(1, Math.min(4, +count.value || 1));
+          for (let i = 0; i < n; i++) {
+            say(i ? `Seedream ${i + 1}/${n}…` : 'Seedream (Puter)… first use asks you to sign in to Puter.');
+            const item = await seedream({ engineId: engine, prompt, ratio: ratio.value });
+            st.results.image.unshift(item); grid.prepend(resultCard(item, 'image'));
+          }
+          return say(`Made by ${st.results.image[0].engineName}.${lora.value === 'photo' || lora.value === 'cinematic' ? ' LoRA is not available for Seedream.' : ''}`);
+        }
         say('Generating…');
         const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine, prompt, ratio: ratio.value, resolution: res.value, count: count.value, lora: lora.value }) });
         if (!r.ok) return say(await errMsg(r), true);
@@ -142,9 +223,9 @@
   function fileField(label, accept, carry) {
     const inp = h('input', { type: 'file', accept });
     const wrap = h('label', {}, label, inp);
-    const o = { el: wrap, inp, ref: carry ? carry.name : null };
+    const o = { el: wrap, inp, ref: carry && !carry.blob ? carry.name : null, blob: carry && carry.blob ? carry.blob : null };
     if (carry) {
-      const t = h('div', { class: 'thumb' }, h('img', { src: abs(carry.url) }), h('button', { type: 'button', onclick: (e) => { e.preventDefault(); o.ref = null; t.remove(); } }, '×'));
+      const t = h('div', { class: 'thumb' }, h('img', { src: abs(carry.url) }), h('button', { type: 'button', onclick: (e) => { e.preventDefault(); o.ref = null; o.blob = null; t.remove(); } }, '×'));
       wrap.append(t);
     }
     return o;
@@ -164,7 +245,7 @@
         if (!g.cb.checked && !engine) return say('No video model is responding right now.', true);
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('engine', engine); fd.append('prompt', prompt); fd.append('seconds', len.value); fd.append('ratio', ratio.value); fd.append('grok', g.cb.checked ? '1' : '0');
-        if (first.inp.files[0]) fd.append('first', first.inp.files[0]); else if (first.ref) fd.append('firstRef', first.ref);
+        if (first.inp.files[0]) fd.append('first', first.inp.files[0]); else if (first.blob) fd.append('first', first.blob, 'seedream.jpg'); else if (first.ref) fd.append('firstRef', first.ref);
         if (last.inp.files[0]) fd.append('last', last.inp.files[0]);
         say('Sending…');
         const r = await fetch(`${API}/video`, { method: 'POST', body: fd });
@@ -247,9 +328,16 @@
       onGo: async ({ prompt, engine, say }) => {
         if (!prompt) return say('Write a prompt.', true);
         if (!files.length && !refs.length) return say('Add a reference image.', true);
+        if (engine.startsWith('puter:')) {
+          const ref = files[0] || (refs[0] && (refs[0].blob || await fetch(abs(refs[0].url)).then((x) => x.blob())));
+          say('Seedream (Puter)… first use asks you to sign in to Puter.');
+          const item = await seedream({ engineId: engine, prompt, ratio: '1:1', ref });
+          st.results.edit.unshift(item); grid.prepend(resultCard(item, 'edit'));
+          return say(`Made by ${item.engineName}.${files.length + refs.length > 1 ? ' Seedream via Puter takes one reference; the first was used.' : ''}`);
+        }
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('engine', engine); fd.append('prompt', prompt);
-        files.forEach((f) => fd.append('images', f)); refs.forEach((r) => fd.append('refs', r.name));
+        files.forEach((f) => fd.append('images', f)); refs.forEach((r) => (r.blob ? fd.append('images', r.blob, 'seedream.jpg') : fd.append('refs', r.name)));
         say('Sending…');
         const r = await fetch(`${API}/edit`, { method: 'POST', body: fd });
         if (!r.ok) return say(await errMsg(r), true);
@@ -269,7 +357,7 @@
   const RATIO_WH = { '9:16': [720, 1280], '1:1': [720, 720], '16:9': [1280, 720] };
   function sessionItems() {
     const out = [];
-    for (const k of ['image', 'edit']) st.results[k].forEach((i) => out.push({ kind: 'image', name: i.name, url: abs(i.url), label: i.engineName }));
+    for (const k of ['image', 'edit']) st.results[k].forEach((i) => out.push({ kind: 'image', name: i.name, url: abs(i.url), label: i.engineName, blob: i.blob }));
     for (const k of ['video', 'music']) st.results[k].forEach((i) => out.push({ kind: 'video', name: i.name, url: abs(i.url), label: i.engineName }));
     return out;
   }
@@ -322,7 +410,7 @@
       pickBox.innerHTML = '';
       const items = sessionItems();
       if (!items.length) pickBox.append(h('div', { class: 'meta' }, 'Nothing made this session yet.'));
-      items.forEach((it) => pickBox.append(h('button', { class: 'text', onclick: async () => { await addClip({ kind: it.kind, ref: it.name, url: it.url, label: it.label }); paintList(); } }, `${it.kind === 'image' ? 'Image' : 'Video'} · ${it.label}`)));
+      items.forEach((it) => pickBox.append(h('button', { class: 'text', onclick: async () => { await addClip(it.blob ? { kind: it.kind, file: new File([it.blob], it.name, { type: it.blob.type || 'image/jpeg' }), url: it.url, label: it.label } : { kind: it.kind, ref: it.name, url: it.url, label: it.label }); paintList(); } }, `${it.kind === 'image' ? 'Image' : 'Video'} · ${it.label}`)));
     }
     function paintMusic() {
       musicBox.innerHTML = '';
