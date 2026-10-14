@@ -173,6 +173,8 @@
     }
     acts.append(h('button', { class: 'text dim', onclick: () => { st.results[kind] = st.results[kind].filter((x) => x !== item); card.remove(); } }, 'Delete'));
     card.append(acts);
+    // Coverr API terms: show a clickable Coverr credit when Coverr clips are used
+    if (item.credits && item.credits.coverr) card.append(h('div', { class: 'meta' }, h('a', { href: item.credits.coverr.url || 'https://coverr.co', target: '_blank', rel: 'noopener' }, item.credits.coverr.text || 'Video från Coverr')));
     return card;
   }
   function results(kind) { const g = h('div', { class: 'results' }); st.results[kind].forEach((i) => g.append(resultCard(i, kind))); return g; }
