@@ -65,3 +65,4 @@ audio { width:100%; max-width:420px; }
 .tl-text { position:absolute; left:7%; right:7%; bottom:12%; text-align:center; font-style:italic; font-weight:800; font-size:clamp(18px,5vw,40px); text-shadow:0 0 12px #000; }
 .tl-pick { display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
 .tl-top b { color:var(--fg); }
+.srcrow { margin:4px 0 14px; font-size:14px; color:var(--dim); } .src-links { display:inline-flex; flex-wrap:wrap; gap:4px 14px; margin-left:10px; } .srcrow .meta { font-size:12px; margin-top:4px; }

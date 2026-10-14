@@ -231,6 +231,12 @@
     return o;
   }
 
+  const CLIP_TOOLS = [['Google Vids', 'https://vids.google.com/'], ['Google Flow', 'https://labs.google/flow'], ['Dola', 'https://www.dola.com/'], ['Grok Imagine', 'https://grok.com/imagine'], ['giz.ai', 'https://www.giz.ai/text-to-video/'], ['Hugging Face Wan 2.2', 'https://huggingface.co/spaces/zerogpu-aoti/wan2-2-fp8da-aoti-faster']];
+  function clipSources() {
+    const links = h('span', { class: 'src-links' });
+    CLIP_TOOLS.forEach(([n, u]) => links.append(h('a', { class: 'text', href: u, target: '_blank', rel: 'noopener' }, n)));
+    return h('div', { class: 'srcrow' }, h('span', {}, 'Get clips from'), links, h('div', { class: 'meta' }, 'Make clips there, download them, then upload them here.'));
+  }
   async function videoView(v) {
     const carry = st.carry; st.carry = null;
     const first = fileField('First frame', 'image/*', carry);
@@ -257,7 +263,7 @@
           st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); say(`Made by ${out.engineName}.`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(c.box, grid);
+    v.append(clipSources(), c.box, grid);
   }
 
   async function musicView(v) {
@@ -367,7 +373,7 @@
           st.results.edit.unshift(out); grid.prepend(resultCard(out, 'edit')); say(out.note || `Made by ${out.engineName}.`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(top, c.box, grid);
+    v.append(clipSources(), top, c.box, grid);
   }
 
 
@@ -530,10 +536,11 @@
     }
     const prevBtn = h('button', { class: 'text', onclick: preview }, 'Preview');
     v.append(
+      clipSources(),
       h('div', { class: 'under tl-top' }, h('a', { class: 'text dim', href: '#/edit' }, 'Edit'), h('b', {}, 'Timeline'), field('Ratio', ratio)),
       fileIn, musicIn,
       h('div', { class: 'uploads' },
-        h('div', {}, h('button', { class: 'text', onclick: () => { pickBox.hidden = !pickBox.hidden; paintPick(); } }, 'Add from this session'), '  ', h('button', { class: 'text', onclick: () => fileIn.click() }, 'Add files')),
+        h('div', {}, h('button', { class: 'text', onclick: () => { pickBox.hidden = !pickBox.hidden; paintPick(); } }, 'Add from this session'), '  ', h('button', { class: 'text', onclick: () => fileIn.click() }, 'Add videos / images')),
         pickBox, list, musicBox),
       stage,
       h('div', { class: 'under' }, prevBtn, h('button', { class: 'text', onclick: () => exportMp4().catch((e) => say(e.message, true)) }, 'Export mp4')),
