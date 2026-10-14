@@ -286,12 +286,30 @@
     const lyrics = h('textarea', { rows: 3 });
     const look = h('input', { type: 'text' });
     const action = h('input', { type: 'text' });
+    const overlay = h('input', { type: 'text', placeholder: 'Stock mode: optional title text' });
     const g = await grokToggle();
-    const motion = select([['none', 'none (cuts on the beat)'], ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (real motion, up to 30 s, ~1 clip/min)']] : [])], 'none');
+    const motion = select([['none', 'none (cuts on the beat)'], ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (real motion, up to 30 s, ~1 clip/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stock clips (${(cfg.stock && cfg.stock.source) || 'Pexels'}) – real stock footage, not AI`]] : [])], 'none');
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'What is the video about?', noEngineText: 'No image model responding (needed without images)',
-      settings: [field('Genre', genre), field('Ratio', ratio), field('Length', len), field('Look', look), field('Action', action), field('Motion', motion), g.el, field('Lyrics', lyrics, true)],
+      settings: [field('Genre', genre), field('Ratio', ratio), field('Length', len), field('Look', look), field('Action', action), field('Motion', motion), field('Text overlay', overlay), g.el, field('Lyrics', lyrics, true)],
       onGo: async ({ prompt, engine, say }) => {
+        if (motion.value === 'stock') {
+          if (!song) return say('Stock mode needs an uploaded song.', true);
+          const sf = new FormData();
+          sf.append('prompt', prompt); sf.append('text', overlay.value); sf.append('seconds', len.value === '60' ? '45' : len.value); sf.append('song', song);
+          say('Uploading…');
+          const r0 = await fetch(`${API}/stock`, { method: 'POST', body: sf });
+          if (!r0.ok) return say(await errMsg(r0), true);
+          const j0 = await r0.json();
+          try {
+            const out = await poll(j0.jobId, (m) => say(m));
+            const by = out.credits.footage.map((f) => f.by).join('; ');
+            out.credits = { ...out.credits, images: `stock footage (not AI): ${by}` };
+            st.results.music.unshift(out); grid.prepend(resultCard(out, 'music'));
+            say(`${out.engineName} · real stock footage, not AI video · Song: ${out.credits.song} · Footage: ${by}`);
+          } catch (e) { say(e.message, true); }
+          return;
+        }
         if (!imgs.length && !engine) return say('Upload images: no image model is responding right now.', true);
         if (!imgs.length && engine.startsWith('puter:')) return say('Seedream runs in your browser and can’t make music-video stills. Pick another model or upload images.', true);
         const fd = new FormData();
