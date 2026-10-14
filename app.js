@@ -135,8 +135,20 @@
     const panel = h('div', { class: 'panel', hidden: true }, settings || []);
     const setBtn = h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Settings');
     const status = h('div', { class: 'status' });
+    // optional Swedish/any-language prompt rewrite (GMV /api/prompt/enhance), minors check first
+    const enhBtn = h('button', { class: 'text dim', type: 'button', onclick: async () => {
+      const p0 = ta.value.trim(); if (!p0) return;
+      if (minorText(p0)) { status.textContent = REFUSE; status.classList.add('err'); return; }
+      enhBtn.disabled = true; status.classList.remove('err'); status.textContent = 'Enhancing prompt…';
+      try {
+        const r = await fetch(`${API.replace(/\/api\/kino$/, '')}/api/prompt/enhance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: p0, aspectRatio: '9:16' }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.prompt) throw new Error(j.message || 'Enhance is busy right now.');
+        ta.value = j.prompt; status.textContent = `Prompt enhanced by ${j.model}. Edit it or generate.`;
+      } catch (e) { status.textContent = `Enhance failed: ${e.message}`.slice(0, 200); status.classList.add('err'); } finally { enhBtn.disabled = false; }
+    } }, 'Enhance prompt');
     const box = h('div', {}, extraTop || null,
-      h('div', { class: 'composer' }, h('div', { class: 'row' }, ta, go), h('div', { class: 'under' }, sel, settings ? setBtn : null), panel), status);
+      h('div', { class: 'composer' }, h('div', { class: 'row' }, ta, go), h('div', { class: 'under' }, sel, settings ? setBtn : null, kind === 'image' || kind === 'video' ? enhBtn : null), panel), status);
     getEngines(st.lane).then((list) => {
       const ok = list.filter((e) => e.kind === engineKind);
       sel.innerHTML = '';
@@ -346,7 +358,7 @@
           say(`Song: ${out.credits.song} · Images: ${out.credits.images} · Motion: ${out.credits.motion}`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(top, c.box, grid);
+    v.append(musicTabs('mv'), top, c.box, grid);
   }
 
   async function editView(v) {
@@ -561,10 +573,221 @@
     paintList(); paintMusic(); paintStage();
   }
 
-  const VIEWS = { '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView };
+
+  // ---- Script mode (storyboard): idea -> scene cards -> make scenes -> Edit timeline ----
+  st.sc = st.sc || { scenes: [], song: null, section: null, ref: '', template: 'standard', seq: 0 };
+  const BASE = API.replace(/\/api\/kino$/, '');
+  const musicTabs = (on) => h('div', { class: 'under tl-top' }, on === 'mv' ? h('b', {}, 'Music video') : h('a', { class: 'text dim', href: '#/music' }, 'Music video'), on === 'script' ? h('b', {}, 'Script') : h('a', { class: 'text dim', href: '#/script' }, 'Script'));
+  async function pollScript(id, onMsg) {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const j = await fetch(`${API}/script/jobs/${id}`).then((x) => x.json()).catch(() => null);
+      if (!j) continue;
+      if (j.status === 'done') return j.result;
+      if (j.status === 'error') throw new Error(j.error);
+      onMsg && onMsg(j.message);
+    }
+  }
+  async function scriptView(v) {
+    const S = st.sc;
+    const status = h('div', { class: 'status' });
+    const say = (t, err) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); };
+    const idea = h('textarea', { rows: 2, placeholder: 'Your idea, in Swedish or English' });
+    idea.value = S.idea || ''; idea.oninput = () => { S.idea = idea.value; };
+    // settings
+    const tplSel = h('select'); const tpls = await fetch(`${API}/script/templates`).then((x) => x.json()).catch(() => ({ templates: [{ id: 'standard', sv: 'Standard' }] }));
+    const EN = { standard: 'Standard', live: 'Live concert', cinematic: 'Cinematic', anime: 'Anime', vhs: 'Retro VHS / 80s', neon: 'Neon / Cyberpunk', dreamy: 'Dreamy', bw: 'Black & white', cover: 'Album cover' };
+    tpls.templates.forEach((t) => tplSel.append(h('option', { value: t.id, selected: t.id === S.template }, EN[t.id] || t.sv)));
+    tplSel.onchange = () => { S.template = tplSel.value; };
+    const len = select([['15', '15 s'], ['30', '30 s'], ['45', '45 s'], ['60', '60 s']], String(S.seconds || 30)); len.onchange = () => { S.seconds = +len.value; };
+    const count = select([['4', '4'], ['5', '5'], ['6', '6'], ['8', '8']], String(S.count || 6)); count.onchange = () => { S.count = +count.value; };
+    const songName = h('input', { type: 'text', placeholder: 'optional, e.g. artist – title', value: S.songName || '' }); songName.oninput = () => { S.songName = songName.value; };
+    const refIn = h('input', { type: 'file', accept: 'image/*', hidden: true });
+    const refBox = h('div', { class: 'meta' });
+    const paintRef = () => { refBox.innerHTML = ''; refBox.append(S.ref ? h('span', {}, `Character: ${S.ref.slice(0, 140)}${S.ref.length > 140 ? '…' : ''}  `, h('button', { class: 'text dim', type: 'button', onclick: () => { S.ref = ''; paintRef(); } }, 'Remove')) : h('button', { class: 'text', type: 'button', onclick: () => refIn.click() }, 'Add reference image')); };
+    refIn.onchange = async () => {
+      const f = refIn.files[0]; refIn.value = ''; if (!f) return;
+      refBox.textContent = 'Describing the character…';
+      const fd = new FormData(); fd.append('lane', st.lane); fd.append('image', f);
+      const r = await fetch(`${API}/script/reference`, { method: 'POST', body: fd }).catch(() => null);
+      if (!r || !r.ok) { paintRef(); return say(r ? await errMsg(r) : 'Reference description failed.', true); }
+      S.ref = (await r.json()).description; paintRef(); say('Reference added: it is written into every scene prompt.');
+    };
+    paintRef();
+    const laneSel = select([['image', 'Image → still clip'], ['video', 'AI video'], ['stock', 'Stock footage']], S.make || 'image');
+    const engSel = h('select');
+    async function paintEngines() {
+      engSel.innerHTML = '';
+      if (laneSel.value === 'stock') { engSel.append(h('option', { value: 'stock' }, `Stock (${((await getConfig()).stock || {}).source || 'Wikimedia Commons'})`)); return; }
+      const list = (await getEngines(st.lane)).filter((e) => e.kind === laneSel.value && !e.puter && !e.needsFirstFrame);
+      if (!list.length) engSel.append(h('option', { value: '' }, laneSel.value === 'video' ? 'No AI video engine is ready' : 'No image engine is ready'));
+      const pref = laneSel.value === 'image' ? (st.lane === 'nsfw' ? 'pony' : 'flux-klein') : null;
+      list.sort((a, b) => (b.id === pref) - (a.id === pref)).forEach((e) => engSel.append(h('option', { value: e.id }, e.name)));
+    }
+    laneSel.onchange = () => { S.make = laneSel.value; paintEngines(); };
+    paintEngines();
+    const panel = h('div', { class: 'panel', hidden: true }, field('Template', tplSel), field('Length', len), field('Scenes', count), field('Make scenes with', laneSel), field('Engine', engSel), field('Song name', songName), h('label', { class: 'wide' }, 'Reference (same character in every scene)', refIn, refBox));
+    // song + section picker
+    const songIn = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,audio/*', hidden: true });
+    const songBox = h('div');
+    function paintSong() {
+      songBox.innerHTML = '';
+      if (!S.song) return songBox.append(h('button', { class: 'text', onclick: () => songIn.click() }, 'Add song'), h('span', { class: 'meta' }, '  optional · mp3, wav, m4a · lyrics not needed'));
+      const want = S.seconds || 30; const d = S.song.duration;
+      const cv = h('canvas', { class: 'wave', width: 600, height: 60 });
+      const g = cv.getContext('2d');
+      const draw = () => {
+        g.clearRect(0, 0, 600, 60); const pk = S.song.peaks || [];
+        const a = (S.section.start / d) * 600; const b = (Math.min(d, S.section.start + want) / d) * 600;
+        g.fillStyle = 'rgba(255,59,48,.18)'; g.fillRect(a, 0, b - a, 60);
+        pk.forEach((p, i) => { const x = (i / pk.length) * 600; g.fillStyle = x >= a && x <= b ? '#ff3b30' : '#444'; g.fillRect(x, 30 - p * 28, Math.max(1, 600 / pk.length - 1), p * 56); });
+      };
+      const range = h('input', { type: 'range', min: 0, max: Math.max(0, d - want), step: 0.1, value: S.section.start, class: 'secrange' });
+      const lab = h('span', { class: 'meta' });
+      const paintLab = () => { lab.textContent = `Section ${S.section.start.toFixed(1)}–${Math.min(d, S.section.start + want).toFixed(1)} s of ${d.toFixed(1)} s${Math.abs(S.section.start - S.song.suggested.start) < 0.05 ? ' · suggested chorus' : ''}${d < want ? ' · song is shorter, it loops' : ''}`; };
+      range.oninput = () => { S.section.start = +range.value; S.section.cut = null; draw(); paintLab(); };
+      cv.onclick = (e) => { const r = cv.getBoundingClientRect(); S.section.start = Math.max(0, Math.min(d - want, ((e.clientX - r.left) / r.width) * d - want / 2)); if (S.section.start < 0) S.section.start = 0; range.value = S.section.start; S.section.cut = null; draw(); paintLab(); };
+      const au = h('audio', { src: abs(S.song.url), preload: 'none' });
+      const playBtn = h('button', { class: 'text', onclick: () => { if (!au.paused) { au.pause(); playBtn.textContent = 'Play section'; return; } au.currentTime = S.section.start; au.play(); playBtn.textContent = 'Stop'; setTimeout(() => { au.pause(); playBtn.textContent = 'Play section'; }, Math.min(want, d) * 1000); } }, 'Play section');
+      songBox.append(h('div', {}, S.song.fileName, '  ', h('button', { class: 'text dim', onclick: () => { S.song = null; paintSong(); } }, 'Remove')), cv, range,
+        h('div', { class: 'under' }, playBtn, h('button', { class: 'text dim', onclick: () => { S.section.start = S.song.suggested.start; S.section.cut = null; paintSong(); } }, 'Chorus'), lab), au);
+      draw(); paintLab();
+    }
+    songIn.onchange = async () => {
+      const f = songIn.files[0]; songIn.value = ''; if (!f) return;
+      if (f.size > 20 * 1024 * 1024) return say('Song must be max 20 MB.', true);
+      songBox.textContent = 'Finding the chorus…';
+      const fd = new FormData(); fd.append('song', f); fd.append('seconds', String(S.seconds || 30));
+      const r = await fetch(`${API}/script/song`, { method: 'POST', body: fd }).catch(() => null);
+      if (!r || !r.ok) { S.song = null; paintSong(); return say(r ? await errMsg(r) : 'Upload failed.', true); }
+      const j = await r.json();
+      S.song = { ...j, fileName: f.name }; S.section = { start: j.suggested.start, cut: null }; paintSong();
+    };
+    paintSong();
+    // cards
+    const cards = h('div', { class: 'sc-list' });
+    const newScene = (s = {}) => ({ id: ++S.seq, duration: 5, prompt: '', keywords: [], camera: '', mood: '', text: '', result: null, msg: '', ...s });
+    function paintCards() {
+      cards.innerHTML = '';
+      S.scenes.forEach((s, i) => {
+        const inp = (val, ph, on, tag = 'input') => { const e = h(tag, tag === 'input' ? { type: 'text', placeholder: ph, value: val } : { rows: 3, placeholder: ph }); if (tag !== 'input') e.value = val; e.oninput = () => on(e.value); return e; };
+        const dur = h('input', { type: 'number', min: 1, max: 15, step: 0.5, value: s.duration, inputmode: 'decimal' }); dur.onchange = () => { s.duration = +dur.value || 5; total.textContent = totalTxt(); };
+        const media = s.result ? (s.result.kind === 'image' ? h('img', { src: abs(s.result.url) }) : h('video', { src: abs(s.result.url), muted: true, playsinline: true, loop: true, autoplay: true })) : null;
+        const msg = h('div', { class: 'meta' + (s.err ? ' err' : '') }, s.msg || (s.result ? s.result.engineName : ''));
+        const alt = h('div', { class: 'under sc-alt' });
+        if (s.err && s.offer) {
+          alt.append(h('button', { class: 'text', onclick: () => makeOne(s, 'stock').then(paintCards) }, 'Use stock instead'));
+          s.offer.forEach((e) => alt.append(h('button', { class: 'text', onclick: () => makeOne(s, e.kind, e.id).then(paintCards) }, `Try ${e.name}`)));
+        }
+        cards.append(h('div', { class: 'sc-card' },
+          h('div', { class: 'sc-head' }, h('b', {}, `Scene ${i + 1}`), h('label', {}, dur, ' s'), h('span', { class: 'sc-acts' },
+            h('button', { class: 'text dim', disabled: i === 0, onclick: () => { S.scenes.splice(i - 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, 'Up'),
+            h('button', { class: 'text dim', disabled: i === S.scenes.length - 1, onclick: () => { S.scenes.splice(i + 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, 'Down'),
+            h('button', { class: 'text dim', onclick: () => { S.scenes.splice(i, 1); paintCards(); } }, 'Delete'))),
+          media ? h('div', { class: 'sc-media' }, media) : null,
+          inp(s.prompt, 'Visual prompt (English)', (x) => { s.prompt = x; }, 'textarea'),
+          h('div', { class: 'sc-row' }, inp(s.keywords.join(', '), 'Stock keywords', (x) => { s.keywords = x.split(',').map((k) => k.trim()).filter(Boolean); }), inp([s.camera, s.mood].filter(Boolean).join(' · '), 'Camera · mood', (x) => { const [c, m] = x.split('·'); s.camera = (c || '').trim(); s.mood = (m || '').trim(); })),
+          inp(s.text, 'On-screen text (optional)', (x) => { s.text = x; }),
+          msg, alt));
+      });
+      total.textContent = totalTxt();
+      makeBtn.disabled = !S.scenes.length; tlBtn.hidden = !S.scenes.some((s) => s.result);
+    }
+    const totalTxt = () => (S.scenes.length ? `${S.scenes.length} scenes · ${S.scenes.reduce((a, s) => a + (+s.duration || 0), 0).toFixed(1)} s` : '');
+    const total = h('span', { class: 'meta' });
+    const fullPrompt = (s) => (S.ref && !s.prompt.includes(S.ref.slice(0, 30)) ? `${s.prompt}. Main character: ${S.ref}` : s.prompt);
+    // honest per-scene generation: a busy/failed engine is reported on the card with alternatives; never silently swapped
+    async function makeOne(s, kind, engine) {
+      s.err = false; s.offer = null; s.msg = 'Working…'; paintCards();
+      const prompt = fullPrompt(s);
+      try {
+        if (kind !== 'stock') {
+          const chk = await fetch(`${API}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: prompt + ' ' + (s.text || '') }) }).catch(() => null);
+          if (!chk || !chk.ok) throw Object.assign(new Error(chk && chk.status === 422 ? REFUSE : 'Safety check unavailable, so this scene was not made.'), { final: true });
+        }
+        if (kind === 'stock') {
+          if (st.lane !== 'sfw') throw Object.assign(new Error('Stock footage is SFW lane only.'), { final: true });
+          const r = await fetch(`${API}/script/stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keywords: s.keywords.length ? s.keywords : [s.prompt.split(',')[0].slice(0, 40)], seconds: s.duration }) });
+          if (!r.ok) throw new Error(await errMsg(r));
+          const j = await r.json(); s.result = { kind: 'video', name: j.name, url: j.url, duration: j.duration, engineName: `${j.engineName}: ${j.credit.title} by ${j.credit.by}` };
+        } else if (kind === 'image') {
+          if (!engine) throw new Error('No image engine is ready right now.');
+          const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine, prompt, ratio: '9:16', count: 1 }) });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw Object.assign(new Error(j.message || `Error ${r.status}`), { busy: j.busy, final: j.refused });
+          const im = j.images[0]; s.result = { kind: 'image', name: im.name, url: im.url, engineName: `${im.engineName || j.engineName} → still clip` };
+        } else {
+          if (!engine) throw new Error('No AI video engine is ready right now.');
+          const fd = new FormData(); fd.append('lane', st.lane); fd.append('engine', engine); fd.append('prompt', prompt); fd.append('seconds', String(Math.ceil(s.duration))); fd.append('ratio', '9:16');
+          const r = await fetch(`${API}/video`, { method: 'POST', body: fd });
+          if (!r.ok) throw new Error(await errMsg(r));
+          const out = await poll((await r.json()).jobId, (m) => { s.msg = m; const n = cards.children[S.scenes.indexOf(s)]; if (n) n.querySelector('.meta').textContent = m; });
+          s.result = { kind: 'video', name: out.name, url: out.url, duration: out.duration, engineName: out.engineName };
+        }
+        s.msg = s.result.engineName;
+      } catch (e) {
+        s.err = true; s.msg = e.message;
+        if (!e.final) {
+          const others = (await getEngines(st.lane, true)).filter((x) => (x.kind === 'image' || x.kind === 'video') && !x.puter && !x.needsFirstFrame && x.id !== engine).slice(0, 2);
+          s.offer = st.lane === 'sfw' || others.length ? others : null;
+          if (st.lane !== 'sfw' && s.offer) s.offer = others; // stock button only meaningful in SFW
+        }
+      }
+    }
+    async function writeScript() {
+      if (!idea.value.trim()) return say('Write an idea.', true);
+      say('Writing script…');
+      const r = await fetch(`${API}/script`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idea: idea.value, song: S.songName || (S.song && S.song.fileName) || '', template: tplSel.value, seconds: +len.value, scenes: +count.value, reference: S.ref, lane: st.lane }) });
+      if (!r.ok) return say(await errMsg(r), true);
+      try {
+        const out = await pollScript((await r.json()).jobId, (m) => say(m));
+        S.scenes = out.scenes.map((x) => newScene(x)); S.title = out.title;
+        paintCards(); say(out.note || `Script “${out.title}” by ${out.model || out.via}. Edit, reorder or delete scenes, then Make scenes.`);
+      } catch (e) { say(e.message, true); }
+    }
+    async function makeAll() {
+      const kind = laneSel.value; const engine = engSel.value;
+      for (const s of S.scenes) { if (s.result) continue; await makeOne(s, kind, engine); paintCards(); }
+      const bad = S.scenes.filter((s) => !s.result).length;
+      if (bad) return say(`${bad} scene(s) not made: see the cards for alternatives.`, true);
+      await toTimeline(false);
+    }
+    async function toTimeline(open = true) {
+      const T = st.tl; T.ratio = '9:16'; T.clips = [];
+      for (const s of S.scenes.filter((x) => x.result)) {
+        const r = s.result;
+        await addClip(r.kind === 'image' ? { kind: 'image', ref: r.name, url: abs(r.url), label: r.engineName, duration: +s.duration, text: s.text || '' } : { kind: 'video', ref: r.name, url: abs(r.url), label: r.engineName, text: s.text || '' });
+        const c = T.clips[T.clips.length - 1]; if (c.kind === 'video') c.end = Math.min(c.end || s.duration, +s.duration);
+      }
+      if (S.song) {
+        const want = S.scenes.reduce((a, s) => a + (+s.duration || 0), 0);
+        if (!S.section.cut) {
+          say('Cutting the song section…');
+          const r = await fetch(`${API}/script/song/cut`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: S.song.name, start: S.section.start, end: S.section.start + want }) });
+          if (!r.ok) return say(await errMsg(r), true);
+          S.section.cut = await r.json();
+        }
+        T.music = { ref: S.section.cut.name, url: abs(S.section.cut.url), name: `${S.song.fileName} (${S.section.start.toFixed(1)} s →)`, volume: 1 };
+      }
+      say('Scenes are in the Edit timeline, in order, with the song. Open Edit → Timeline to export mp4.');
+      tlBtn.hidden = false;
+      if (open) location.hash = '#/timeline';
+    }
+    const makeBtn = h('button', { class: 'text', onclick: () => makeAll().catch((e) => say(e.message, true)) }, 'Make scenes');
+    const tlBtn = h('button', { class: 'text', hidden: true, onclick: () => toTimeline(true).catch((e) => say(e.message, true)) }, 'Open in Edit');
+    const writeBtn = h('button', { class: 'go', title: 'Write script', 'aria-label': 'Write script', onclick: () => writeScript().catch((e) => say(e.message, true)) }, '↑');
+    v.append(musicTabs('script'), songIn,
+      h('div', { class: 'composer' }, h('div', { class: 'row' }, idea, writeBtn), h('div', { class: 'under' }, h('span', {}, 'Write script'), h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Settings')), panel),
+      h('div', { class: 'uploads' }, songBox), status,
+      h('div', { class: 'under' }, total), cards,
+      h('div', { class: 'under' }, h('button', { class: 'text dim', onclick: () => { S.scenes.push(newScene()); paintCards(); } }, 'Add scene'), makeBtn, tlBtn));
+    paintCards();
+  }
+
+  const VIEWS = { script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView };
   function route() {
     const k = (location.hash.replace(/^#\/?/, '').split('?')[0]) || '';
-    document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('on', a.getAttribute('href') === `#/${k === 'timeline' ? 'edit' : k}`));
+    document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('on', a.getAttribute('href') === `#/${k === 'timeline' ? 'edit' : k === 'script' ? 'music' : k}`));
     const v = $('#view'); v.innerHTML = '';
     (VIEWS[k] || home)(v);
   }
