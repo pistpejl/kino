@@ -245,7 +245,7 @@
     return o;
   }
 
-  const CLIP_TOOLS = [['Google Vids', 'https://vids.google.com/'], ['Google Flow', 'https://labs.google/flow'], ['Dola', 'https://www.dola.com/'], ['Grok Imagine', 'https://grok.com/imagine'], ['Digen', 'https://digen.ai/create'], ['DreamFace', 'https://www.dreamfaceapp.com/tools/free-ai-video-generator'], ['Bing Video Creator', 'https://www.bing.com/images/create/ai-video-generator'], ['PixVerse', 'https://app.pixverse.ai/'], ['Kling', 'https://kling.ai/app/'], ['Vidu', 'https://www.vidu.com/'], ['Krea', 'https://www.krea.ai/video'], ['Meta AI (bild)', 'https://www.meta.ai/'], ['giz.ai', 'https://www.giz.ai/text-to-video/'], ['Hugging Face Wan 2.2', 'https://huggingface.co/spaces/zerogpu-aoti/wan2-2-fp8da-aoti-faster'], ['Coverr', 'https://coverr.co/'], ['Mixkit', 'https://mixkit.co/free-stock-video/'], ['ImagineArt', 'https://www.imagine.art/ai-video-generator'], ['fal H3', 'https://fal.ai/minimax-h3-max']];
+  const CLIP_TOOLS = [['Google Vids', 'https://vids.google.com/'], ['Google Flow', 'https://labs.google/flow'], ['Dola', 'https://www.dola.com/'], ['Grok Imagine', 'https://grok.com/imagine'], ['Digen', 'https://digen.ai/create'], ['DreamFace', 'https://www.dreamfaceapp.com/tools/free-ai-video-generator'], ['Bing Video Creator', 'https://www.bing.com/images/create/ai-video-generator'], ['PixVerse', 'https://app.pixverse.ai/'], ['Kling', 'https://kling.ai/app/'], ['Vidu', 'https://www.vidu.com/'], ['Krea', 'https://www.krea.ai/video'], ['Meta AI (bild)', 'https://www.meta.ai/'], ['giz.ai', 'https://www.giz.ai/text-to-video/'], ['Hugging Face Wan 2.2', 'https://huggingface.co/spaces/zerogpu-aoti/wan2-2-fp8da-aoti-faster'], ['Coverr', 'https://coverr.co/'], ['Mixkit', 'https://mixkit.co/free-stock-video/'], ['ImagineArt', 'https://www.imagine.art/ai-video-generator'], ['fal H3', 'https://fal.ai/minimax-h3-max'], ['fal Wan 3', 'https://fal.ai/wan-video-free']];
   function clipSources() {
     const links = h('span', { class: 'src-links' });
     CLIP_TOOLS.forEach(([n, u]) => links.append(h('a', { class: 'text', href: u, target: '_blank', rel: 'noopener' }, n)));
@@ -672,7 +672,7 @@
       S.scenes.forEach((s, i) => {
         const inp = (val, ph, on, tag = 'input') => { const e = h(tag, tag === 'input' ? { type: 'text', placeholder: ph, value: val } : { rows: 3, placeholder: ph }); if (tag !== 'input') e.value = val; e.oninput = () => on(e.value); return e; };
         const dur = h('input', { type: 'number', min: 1, max: 15, step: 0.5, value: s.duration, inputmode: 'decimal' }); dur.onchange = () => { s.duration = +dur.value || 5; total.textContent = totalTxt(); };
-        const media = s.result ? (s.result.kind === 'image' ? h('img', { src: abs(s.result.url) }) : h('video', { src: abs(s.result.url), muted: true, playsinline: true, loop: true, autoplay: true })) : null;
+        const media = !s.result && s.thumb ? h('img', { src: abs(s.thumb), title: 'Original frame' }) : s.result ? (s.result.kind === 'image' ? h('img', { src: abs(s.result.url) }) : h('video', { src: abs(s.result.url), muted: true, playsinline: true, loop: true, autoplay: true })) : null;
         const msg = h('div', { class: 'meta' + (s.err ? ' err' : '') }, s.msg || (s.result ? s.result.engineName : ''));
         const alt = h('div', { class: 'under sc-alt' });
         if (s.err && s.offer) {
@@ -687,6 +687,7 @@
           media ? h('div', { class: 'sc-media' }, media) : null,
           inp(s.prompt, 'Visual prompt (English)', (x) => { s.prompt = x; }, 'textarea'),
           h('div', { class: 'sc-row' }, inp(s.keywords.join(', '), 'Stock keywords', (x) => { s.keywords = x.split(',').map((k) => k.trim()).filter(Boolean); }), inp([s.camera, s.mood].filter(Boolean).join(' · '), 'Camera · mood', (x) => { const [c, m] = x.split('·'); s.camera = (c || '').trim(); s.mood = (m || '').trim(); })),
+          s.people && s.people.length ? h('div', { class: 'meta' }, `Huvudpersoner: ${s.people.map((x) => 'Person ' + x).join(', ')}${s.start != null ? ` · original ${s.start}–${s.end} s` : ''}`) : null,
           inp(s.text, 'On-screen text (optional)', (x) => { s.text = x; }),
           msg, alt));
       });
@@ -695,7 +696,40 @@
     }
     const totalTxt = () => (S.scenes.length ? `${S.scenes.length} scenes · ${S.scenes.reduce((a, s) => a + (+s.duration || 0), 0).toFixed(1)} s` : '');
     const total = h('span', { class: 'meta' });
-    const fullPrompt = (s) => (S.ref && !s.prompt.includes(S.ref.slice(0, 30)) ? `${s.prompt}. Main character: ${S.ref}` : s.prompt);
+    const fullPrompt = (s) => {
+      let p = s.prompt;
+      (S.people || []).forEach((x) => { p = p.replace(new RegExp(`\\bPerson ${x.id}\\b`, 'g'), x.look ? `(${x.look})` : 'a person'); });
+      if (S.ref && !p.includes(S.ref.slice(0, 30))) p = `${p}. Main character: ${S.ref}`;
+      if (S.style && !p.includes(S.style.slice(0, 30))) p = `${p}. Style: ${S.style}`;
+      return p;
+    };
+    // Huvudpersoner (from Analysera video): editable person descriptions referenced as "Person A" in prompts
+    const peopleBox = h('div', { class: 'sc-people' });
+    function paintPeople() {
+      peopleBox.innerHTML = '';
+      if (!(S.people && S.people.length) && !S.style) return;
+      peopleBox.append(h('b', {}, 'Huvudpersoner'), h('div', { class: 'meta' }, 'Swap or edit a character here; every scene that says “Person A” uses it.'));
+      (S.people || []).forEach((x) => { const t = h('textarea', { rows: 2 }); t.value = x.look; t.oninput = () => { x.look = t.value; }; peopleBox.append(h('label', { class: 'wide' }, `Person ${x.id}`, t)); });
+      const sty = h('textarea', { rows: 2, placeholder: 'Global style prompt' }); sty.value = S.style || ''; sty.oninput = () => { S.style = sty.value; };
+      peopleBox.append(h('label', { class: 'wide' }, 'Global style', sty));
+    }
+    const vidIn = h('input', { type: 'file', accept: 'video/*', hidden: true });
+    const keepAudio = h('input', { type: 'checkbox', checked: true });
+    vidIn.onchange = async () => {
+      const f = vidIn.files[0]; vidIn.value = ''; if (!f) return;
+      if (f.size > 80 * 1024 * 1024) return say('Video must be max 80 MB.', true);
+      say('Uploading video…');
+      const fd = new FormData(); fd.append('lane', st.lane); fd.append('keepAudio', keepAudio.checked ? '1' : '0'); fd.append('video', f);
+      const r = await fetch(`${API}/script/analyze`, { method: 'POST', body: fd }).catch(() => null);
+      if (!r || !r.ok) return say(r ? await errMsg(r) : 'Upload failed.', true);
+      try {
+        const out = await pollScript((await r.json()).jobId, (m) => say(m));
+        S.scenes = out.scenes.map((x) => newScene(x)); S.title = out.title; S.people = out.people || []; S.style = out.style || '';
+        if (out.song) { S.song = { ...out.song, fileName: `${f.name} (audio)` }; S.section = { start: 0, cut: null }; S.seconds = Math.round(out.seconds); }
+        paintPeople(); paintSong(); paintCards();
+        say(`${out.scenes.length} scenes analysed by ${out.model}. ${out.note || ''} Edit Huvudpersoner and the cards, then Make scenes.`);
+      } catch (e) { say(e.message, true); }
+    };
     // honest per-scene generation: a busy/failed engine is reported on the card with alternatives; never silently swapped
     async function makeOne(s, kind, engine) {
       s.err = false; s.offer = null; s.msg = 'Working…'; paintCards();
@@ -776,12 +810,12 @@
     const makeBtn = h('button', { class: 'text', onclick: () => makeAll().catch((e) => say(e.message, true)) }, 'Make scenes');
     const tlBtn = h('button', { class: 'text', hidden: true, onclick: () => toTimeline(true).catch((e) => say(e.message, true)) }, 'Open in Edit');
     const writeBtn = h('button', { class: 'go', title: 'Write script', 'aria-label': 'Write script', onclick: () => writeScript().catch((e) => say(e.message, true)) }, '↑');
-    v.append(musicTabs('script'), songIn,
-      h('div', { class: 'composer' }, h('div', { class: 'row' }, idea, writeBtn), h('div', { class: 'under' }, h('span', {}, 'Write script'), h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Settings')), panel),
-      h('div', { class: 'uploads' }, songBox), status,
+    v.append(musicTabs('script'), songIn, vidIn,
+      h('div', { class: 'composer' }, h('div', { class: 'row' }, idea, writeBtn), h('div', { class: 'under' }, h('span', {}, 'Write script'), h('button', { class: 'text', type: 'button', onclick: () => vidIn.click() }, 'Analysera video'), h('label', { class: 'meta' }, keepAudio, ' keep audio as song'), h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Settings')), panel),
+      h('div', { class: 'uploads' }, songBox), peopleBox, status,
       h('div', { class: 'under' }, total), cards,
       h('div', { class: 'under' }, h('button', { class: 'text dim', onclick: () => { S.scenes.push(newScene()); paintCards(); } }, 'Add scene'), makeBtn, tlBtn));
-    paintCards();
+    paintPeople(); paintCards();
   }
 
   const VIEWS = { script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView };
