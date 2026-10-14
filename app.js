@@ -295,14 +295,24 @@
     const overlay = h('input', { type: 'text', placeholder: 'Stock mode: optional title text' });
     const g = await grokToggle();
     const motion = select([['none', 'none (cuts on the beat)'], ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (real motion, up to 30 s, ~1 clip/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stock clips (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – real stock footage, not AI`]] : [])], 'none');
+    // Stock source: 3-way toggle Riktiga / AI / Blanda (sent as source=real|ai|mix)
+    let stockSrc = 'real';
+    const srcBtns = [['real', 'Riktiga'], ['ai', 'AI'], ['mix', 'Blanda']].map(([v, t]) => h('button', { type: 'button', class: 'text', 'data-v': v, onclick: () => { stockSrc = v; paintSrc(); } }, t));
+    const srcHint = h('span', { class: 'meta' });
+    const paintSrc = () => {
+      srcBtns.forEach((b) => { const on = b.getAttribute('data-v') === stockSrc; b.style.fontWeight = on ? '700' : '400'; b.style.textDecoration = on ? 'underline' : 'none'; b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+      srcHint.textContent = { real: '  riktiga stockklipp (ej AI)', ai: '  AI-genererade stockklipp från Pixabay', mix: '  både riktiga och AI-genererade' }[stockSrc];
+    };
+    const srcToggle = h('div', { role: 'group', 'aria-label': 'Stockkälla' }, ...srcBtns, srcHint);
+    paintSrc();
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'What is the video about?', noEngineText: 'No image model responding (needed without images)',
-      settings: [field('Genre', genre), field('Ratio', ratio), field('Length', len), field('Look', look), field('Action', action), field('Motion', motion), field('Text overlay', overlay), g.el, field('Lyrics', lyrics, true)],
+      settings: [field('Genre', genre), field('Ratio', ratio), field('Length', len), field('Look', look), field('Action', action), field('Motion', motion), field('Stockklipp', srcToggle), field('Text overlay', overlay), g.el, field('Lyrics', lyrics, true)],
       onGo: async ({ prompt, engine, say }) => {
         if (motion.value === 'stock') {
           if (!song) return say('Stock mode needs an uploaded song.', true);
           const sf = new FormData();
-          sf.append('prompt', prompt); sf.append('text', overlay.value); sf.append('seconds', len.value === '60' ? '45' : len.value); sf.append('song', song);
+          sf.append('prompt', prompt); sf.append('text', overlay.value); sf.append('seconds', len.value === '60' ? '45' : len.value); sf.append('source', stockSrc); sf.append('song', song);
           say('Uploading…');
           const r0 = await fetch(`${API}/stock`, { method: 'POST', body: sf });
           if (!r0.ok) return say(await errMsg(r0), true);
@@ -310,9 +320,10 @@
           try {
             const out = await poll(j0.jobId, (m) => say(m));
             const by = out.credits.footage.map((f) => f.by).join('; ');
-            out.credits = { ...out.credits, images: `stock footage (not AI): ${by}` };
+            const lbl = out.source === 'ai' ? 'AI-generated stock clips (Pixabay)' : out.source === 'mix' ? (out.kind || 'stock clips, real + AI-generated') : 'real stock footage, not AI video';
+            out.credits = { ...out.credits, images: `${lbl}: ${by}` };
             st.results.music.unshift(out); grid.prepend(resultCard(out, 'music'));
-            say(`${out.engineName} · real stock footage, not AI video · Song: ${out.credits.song} · Footage: ${by}`);
+            say(`${out.engineName} · ${lbl} · Song: ${out.credits.song} · Footage: ${by}`);
           } catch (e) { say(e.message, true); }
           return;
         }
