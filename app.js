@@ -611,7 +611,8 @@
   }
   async function scriptView(v) {
     const S = st.sc;
-    const status = h('div', { class: 'status' });
+    let making = false;
+    const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
     const say = (t, err) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); };
     const idea = h('textarea', { rows: 2, placeholder: 'Your idea, in Swedish or English' });
     idea.value = S.idea || ''; idea.oninput = () => { S.idea = idea.value; };
@@ -650,10 +651,10 @@
     const panel = h('div', { class: 'panel', hidden: true }, field('Template', tplSel), field('Length', len), field('Scenes', count), field('Make scenes with', laneSel), field('Engine', engSel), field('Song name', songName), h('label', { class: 'wide' }, 'Reference (same character in every scene)', refIn, refBox));
     // song + section picker
     const songIn = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,audio/*', hidden: true });
-    const songBox = h('div');
+    const songBox = h('div', { class: 'drop' });
     function paintSong() {
-      songBox.innerHTML = '';
-      if (!S.song) return songBox.append(h('button', { class: 'text', onclick: () => songIn.click() }, 'Add song'), h('span', { class: 'meta' }, '  optional · mp3, wav, m4a · lyrics not needed'));
+      songBox.innerHTML = ''; songBox.classList.remove('busy');
+      if (!S.song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Add song'), h('span', { class: 'meta' }, 'optional · mp3, wav, m4a · lyrics not needed')));
       const want = S.seconds || 30; const d = S.song.duration;
       const cv = h('canvas', { class: 'wave', width: 600, height: 60 });
       const g = cv.getContext('2d');
@@ -670,14 +671,14 @@
       cv.onclick = (e) => { const r = cv.getBoundingClientRect(); S.section.start = Math.max(0, Math.min(d - want, ((e.clientX - r.left) / r.width) * d - want / 2)); if (S.section.start < 0) S.section.start = 0; range.value = S.section.start; S.section.cut = null; draw(); paintLab(); };
       const au = h('audio', { src: abs(S.song.url), preload: 'none' });
       const playBtn = h('button', { class: 'text', onclick: () => { if (!au.paused) { au.pause(); playBtn.textContent = 'Play section'; return; } au.currentTime = S.section.start; au.play(); playBtn.textContent = 'Stop'; setTimeout(() => { au.pause(); playBtn.textContent = 'Play section'; }, Math.min(want, d) * 1000); } }, 'Play section');
-      songBox.append(h('div', {}, S.song.fileName, '  ', h('button', { class: 'text dim', onclick: () => { S.song = null; paintSong(); } }, 'Remove')), cv, range,
+      songBox.append(h('div', { class: 'hintline' }, h('b', {}, S.song.fileName), h('button', { class: 'text dim danger', onclick: () => { S.song = null; paintSong(); } }, 'Remove')), cv, range,
         h('div', { class: 'under' }, playBtn, h('button', { class: 'text dim', onclick: () => { S.section.start = S.song.suggested.start; S.section.cut = null; paintSong(); } }, 'Chorus'), lab), au);
       draw(); paintLab();
     }
     songIn.onchange = async () => {
       const f = songIn.files[0]; songIn.value = ''; if (!f) return;
       if (f.size > 20 * 1024 * 1024) return say('Song must be max 20 MB.', true);
-      songBox.textContent = 'Finding the chorus…';
+      songBox.textContent = 'Finding the chorus…'; songBox.classList.add('busy');
       const fd = new FormData(); fd.append('song', f); fd.append('seconds', String(S.seconds || 30));
       const r = await fetch(`${API}/script/song`, { method: 'POST', body: fd }).catch(() => null);
       if (!r || !r.ok) { S.song = null; paintSong(); return say(r ? await errMsg(r) : 'Upload failed.', true); }
@@ -694,29 +695,35 @@
         const inp = (val, ph, on, tag = 'input') => { const e = h(tag, tag === 'input' ? { type: 'text', placeholder: ph, value: val } : { rows: 3, placeholder: ph }); if (tag !== 'input') e.value = val; e.oninput = () => on(e.value); return e; };
         const dur = h('input', { type: 'number', min: 1, max: 15, step: 0.5, value: s.duration, inputmode: 'decimal' }); dur.onchange = () => { s.duration = +dur.value || 5; total.textContent = totalTxt(); };
         const media = !s.result && s.thumb ? h('img', { src: abs(s.thumb), title: 'Original frame' }) : s.result ? (s.result.kind === 'image' ? h('img', { src: abs(s.result.url) }) : h('video', { src: abs(s.result.url), muted: true, playsinline: true, loop: true, autoplay: true })) : null;
-        const msg = h('div', { class: 'meta' + (s.err ? ' err' : '') }, s.msg || (s.result ? s.result.engineName : ''));
+        const msg = h('div', { class: 'meta sc-msg' + (s.err ? ' err' : '') }, s.msg || (s.result ? s.result.engineName : ''));
         const alt = h('div', { class: 'under sc-alt' });
         if (s.err && s.offer) {
           alt.append(h('button', { class: 'text', onclick: () => makeOne(s, 'stock').then(paintCards) }, 'Use stock instead'));
           s.offer.forEach((e) => alt.append(h('button', { class: 'text', onclick: () => makeOne(s, e.kind, e.id).then(paintCards) }, `Try ${e.name}`)));
         }
-        cards.append(h('div', { class: 'sc-card' },
-          h('div', { class: 'sc-head' }, h('b', {}, `Scene ${i + 1}`), h('label', {}, dur, ' s'), h('span', { class: 'sc-acts' },
-            h('button', { class: 'text dim', disabled: i === 0, onclick: () => { S.scenes.splice(i - 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, 'Up'),
-            h('button', { class: 'text dim', disabled: i === S.scenes.length - 1, onclick: () => { S.scenes.splice(i + 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, 'Down'),
-            h('button', { class: 'text dim', onclick: () => { S.scenes.splice(i, 1); paintCards(); } }, 'Delete'))),
-          media ? h('div', { class: 'sc-media' }, media) : null,
-          inp(s.prompt, 'Visual prompt (English)', (x) => { s.prompt = x; }, 'textarea'),
-          h('div', { class: 'sc-row' }, inp(s.keywords.join(', '), 'Stock keywords', (x) => { s.keywords = x.split(',').map((k) => k.trim()).filter(Boolean); }), inp([s.camera, s.mood].filter(Boolean).join(' · '), 'Camera · mood', (x) => { const [c, m] = x.split('·'); s.camera = (c || '').trim(); s.mood = (m || '').trim(); })),
-          s.people && s.people.length ? h('div', { class: 'meta' }, `Huvudpersoner: ${s.people.map((x) => 'Person ' + x).join(', ')}${s.start != null ? ` · original ${s.start}–${s.end} s` : ''}`) : null,
-          inp(s.text, 'On-screen text (optional)', (x) => { s.text = x; }),
+        cards.append(h('div', { class: 'sc-card' + (s.busy ? ' working' : '') + (s.err ? ' failed' : '') + (s.result ? ' done' : '') },
+          h('div', { class: 'sc-head' }, h('b', {}, `Scene ${i + 1}`), h('label', { class: 'sc-dur' }, dur, ' s'), h('span', { class: 'sc-acts' },
+            h('button', { class: 'text dim icon', title: 'Up', 'aria-label': 'Up', disabled: i === 0, onclick: () => { S.scenes.splice(i - 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, '↑'),
+            h('button', { class: 'text dim icon', title: 'Down', 'aria-label': 'Down', disabled: i === S.scenes.length - 1, onclick: () => { S.scenes.splice(i + 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, '↓'),
+            h('button', { class: 'text dim icon danger', title: 'Delete', 'aria-label': 'Delete', onclick: () => { S.scenes.splice(i, 1); paintCards(); } }, '✕'))),
+          h('div', { class: 'sc-body' + (media ? ' has-media' : '') },
+            media ? h('div', { class: 'sc-media' }, media) : null,
+            h('div', { class: 'sc-fields' },
+              inp(s.prompt, 'Visual prompt (English)', (x) => { s.prompt = x; }, 'textarea'),
+              h('div', { class: 'sc-row' }, inp(s.keywords.join(', '), 'Stock keywords', (x) => { s.keywords = x.split(',').map((k) => k.trim()).filter(Boolean); }), inp([s.camera, s.mood].filter(Boolean).join(' · '), 'Camera · mood', (x) => { const [c, m] = x.split('·'); s.camera = (c || '').trim(); s.mood = (m || '').trim(); })),
+              s.people && s.people.length ? h('div', { class: 'meta' }, `Huvudpersoner: ${s.people.map((x) => 'Person ' + x).join(', ')}${s.start != null ? ` · original ${s.start}–${s.end} s` : ''}`) : null,
+              inp(s.text, 'On-screen text (optional)', (x) => { s.text = x; }))),
           msg, alt));
       });
+      if (!S.scenes.length) cards.append(empty('No scenes yet.', 'Write an idea above, or use Analysera video.'));
+      const made = S.scenes.filter((x) => x.result).length;
+      prog.hidden = !made; prog.firstChild.style.setProperty('--w', `${S.scenes.length ? (made / S.scenes.length) * 100 : 0}%`); prog.lastChild.textContent = `${made}/${S.scenes.length} made`;
       total.textContent = totalTxt();
-      makeBtn.disabled = !S.scenes.length; tlBtn.hidden = !S.scenes.some((s) => s.result);
+      makeBtn.disabled = !S.scenes.length || making; tlBtn.hidden = !S.scenes.some((s) => s.result);
     }
     const totalTxt = () => (S.scenes.length ? `${S.scenes.length} scenes · ${S.scenes.reduce((a, s) => a + (+s.duration || 0), 0).toFixed(1)} s` : '');
     const total = h('span', { class: 'meta' });
+    const prog = h('div', { class: 'sc-prog', hidden: true }, h('i'), h('span', { class: 'meta' }));
     const fullPrompt = (s) => {
       let p = s.prompt;
       (S.people || []).forEach((x) => { p = p.replace(new RegExp(`\\bPerson ${x.id}\\b`, 'g'), x.look ? `(${x.look})` : 'a person'); });
@@ -736,7 +743,7 @@
     }
     const vidIn = h('input', { type: 'file', accept: 'video/*', hidden: true });
     const keepAudio = h('input', { type: 'checkbox', checked: true });
-    vidIn.onchange = async () => {
+    vidIn.onchange = () => withBusy(status, async () => {
       const f = vidIn.files[0]; vidIn.value = ''; if (!f) return;
       if (f.size > 80 * 1024 * 1024) return say('Video must be max 80 MB.', true);
       say('Uploading video…');
@@ -750,10 +757,10 @@
         paintPeople(); paintSong(); paintCards();
         say(`${out.scenes.length} scenes analysed by ${out.model}. ${out.note || ''} Edit Huvudpersoner and the cards, then Make scenes.`);
       } catch (e) { say(e.message, true); }
-    };
+    });
     // honest per-scene generation: a busy/failed engine is reported on the card with alternatives; never silently swapped
     async function makeOne(s, kind, engine) {
-      s.err = false; s.offer = null; s.msg = 'Working…'; paintCards();
+      s.err = false; s.offer = null; s.msg = 'Working…'; s.busy = true; paintCards();
       const prompt = fullPrompt(s);
       try {
         if (kind !== 'stock') {
@@ -776,12 +783,12 @@
           const fd = new FormData(); fd.append('lane', st.lane); fd.append('engine', engine); fd.append('prompt', prompt); fd.append('seconds', String(Math.ceil(s.duration))); fd.append('ratio', '9:16');
           const r = await fetch(`${API}/video`, { method: 'POST', body: fd });
           if (!r.ok) throw new Error(await errMsg(r));
-          const out = await poll((await r.json()).jobId, (m) => { s.msg = m; const n = cards.children[S.scenes.indexOf(s)]; if (n) n.querySelector('.meta').textContent = m; });
+          const out = await poll((await r.json()).jobId, (m) => { s.msg = m; const n = cards.children[S.scenes.indexOf(s)]; if (n) n.querySelector('.sc-msg').textContent = m; });
           s.result = { kind: 'video', name: out.name, url: out.url, duration: out.duration, engineName: out.engineName };
         }
-        s.msg = s.result.engineName;
+        s.msg = s.result.engineName; s.busy = false;
       } catch (e) {
-        s.err = true; s.msg = e.message;
+        s.busy = false; s.err = true; s.msg = e.message;
         if (!e.final) {
           const others = (await getEngines(st.lane, true)).filter((x) => (x.kind === 'image' || x.kind === 'video') && !x.puter && !x.needsFirstFrame && x.id !== engine).slice(0, 2);
           s.offer = st.lane === 'sfw' || others.length ? others : null;
@@ -802,7 +809,11 @@
     }
     async function makeAll() {
       const kind = laneSel.value; const engine = engSel.value;
-      for (const s of S.scenes) { if (s.result) continue; await makeOne(s, kind, engine); paintCards(); }
+      making = true; makeBtn.disabled = true;
+      try {
+        const todo = S.scenes.filter((x) => !x.result); let n = 0;
+        for (const s of S.scenes) { if (s.result) continue; say(`Making scene ${S.scenes.indexOf(s) + 1} (${++n} of ${todo.length})…`); await makeOne(s, kind, engine); paintCards(); }
+      } finally { making = false; makeBtn.disabled = !S.scenes.length; }
       const bad = S.scenes.filter((s) => !s.result).length;
       if (bad) return say(`${bad} scene(s) not made: see the cards for alternatives.`, true);
       await toTimeline(false);
@@ -828,14 +839,14 @@
       tlBtn.hidden = false;
       if (open) location.hash = '#/timeline';
     }
-    const makeBtn = h('button', { class: 'text', onclick: () => makeAll().catch((e) => say(e.message, true)) }, 'Make scenes');
+    const makeBtn = h('button', { class: 'text primary', onclick: () => withBusy(status, makeAll).catch((e) => say(e.message, true)) }, 'Make scenes');
     const tlBtn = h('button', { class: 'text', hidden: true, onclick: () => toTimeline(true).catch((e) => say(e.message, true)) }, 'Open in Edit');
-    const writeBtn = h('button', { class: 'go', title: 'Write script', 'aria-label': 'Write script', onclick: () => writeScript().catch((e) => say(e.message, true)) }, '↑');
+    const writeBtn = h('button', { class: 'go', title: 'Write script', 'aria-label': 'Write script', onclick: () => withBusy(status, writeScript).catch((e) => say(e.message, true)) }, '↑');
     v.append(musicTabs('script'), songIn, vidIn,
       h('div', { class: 'composer' }, h('div', { class: 'row' }, idea, writeBtn), h('div', { class: 'under' }, h('span', {}, 'Write script'), h('button', { class: 'text', type: 'button', onclick: () => vidIn.click() }, 'Analysera video'), h('label', { class: 'meta' }, keepAudio, ' keep audio as song'), h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Settings')), panel),
       h('div', { class: 'uploads' }, songBox), peopleBox, status,
-      h('div', { class: 'under' }, total), cards,
-      h('div', { class: 'under' }, h('button', { class: 'text dim', onclick: () => { S.scenes.push(newScene()); paintCards(); } }, 'Add scene'), makeBtn, tlBtn));
+      h('div', { class: 'under sc-total' }, total, prog), cards,
+      h('div', { class: 'actbar' }, h('button', { class: 'text dim', onclick: () => { S.scenes.push(newScene()); paintCards(); } }, 'Add scene'), tlBtn, makeBtn));
     paintPeople(); paintCards();
   }
 
