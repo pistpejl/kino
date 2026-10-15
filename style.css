@@ -96,7 +96,7 @@ textarea { padding:10px 12px; line-height:1.45; resize:vertical; }
 input[type=checkbox] { width:22px; height:22px; accent-color:var(--accent); flex:none; }
 input[type=range] { accent-color:var(--accent); min-height:var(--tap); }
 input[type=file] { font-size:14px; color:var(--dim); max-width:100%; }
-input[type=file]::file-selector-button { font:inherit; font-weight:600; color:var(--fg); background:var(--s3); border:1px solid var(--line2); border-radius:999px; min-height:40px; padding:0 14px; margin-right:10px; cursor:pointer; }
+input[type=file]::file-selector-button { font:inherit; font-weight:600; color:var(--fg); background:var(--s3); border:1px solid var(--line2); border-radius:999px; min-height:var(--tap); padding:0 14px; margin-right:10px; cursor:pointer; }
 input[type=number] { width:76px; }
 audio { width:100%; max-width:420px; height:44px; }
 
@@ -133,7 +133,7 @@ audio { width:100%; max-width:420px; height:44px; }
 .card .meta { padding:10px 14px 0; overflow-wrap:anywhere; }
 .card .meta a { text-decoration:underline; text-underline-offset:3px; }
 .card .acts { display:flex; flex-wrap:wrap; gap:8px; padding:10px 14px 14px; margin-top:auto; }
-.card .acts .text { min-height:40px; padding:0 14px; font-size:14px; }
+.card .acts .text { min-height:var(--tap); padding:0 14px; font-size:14px; }
 .card .acts .text, .card .acts a { flex:0 0 auto; }
 
 /* ---- uploads / thumbs ---- */
@@ -289,3 +289,6 @@ audio { width:100%; max-width:420px; height:44px; }
 .sc-people:empty { display:none; }
 .composer .under > span:first-child:not(.meta) { flex:1 1 100%; font-size:13px; font-weight:600; color:var(--dim); }
 .composer .under > span:first-child:not(.meta) + .text { flex:1 1 auto; }
+/* result media: shimmer placeholder until the image/video has loaded */
+.card img { min-height:140px; background:linear-gradient(90deg,#101014 25%,#18181d 50%,#101014 75%); background-size:200% 100%; animation:shimmer 1.4s linear infinite; }
+.card img:not([src=""]) { object-fit:contain; }
