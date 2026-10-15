@@ -29,7 +29,7 @@
     return st.engines[lane].list;
   }
   async function getConfig() {
-    if (!st.config) st.config = await fetch(`${API}/config`).then((x) => x.json()).catch(() => ({ grok: { available: false, message: 'Grok needs an API key' } }));
+    if (!st.config) st.config = await fetch(`${API}/config`).then((x) => x.json()).catch(() => ({ grok: { available: false, message: 'Grok kräver en API-nyckel' } }));
     return st.config;
   }
 
@@ -49,9 +49,9 @@
     if (window.puter) return Promise.resolve(window.puter);
     if (!puterLoading) puterLoading = new Promise((res, rej) => {
       const el = document.createElement('script'); el.src = PUTER_SRC; el.async = true;
-      const t = setTimeout(() => rej(new Error('Seedream is busy (Puter.js did not load).')), 20000);
-      el.onload = () => { clearTimeout(t); window.puter ? res(window.puter) : rej(new Error('Seedream is busy (Puter.js did not load).')); };
-      el.onerror = () => { clearTimeout(t); rej(new Error('Seedream is busy (Puter.js did not load).')); };
+      const t = setTimeout(() => rej(new Error('Seedream är upptaget (Puter.js laddades inte).')), 20000);
+      el.onload = () => { clearTimeout(t); window.puter ? res(window.puter) : rej(new Error('Seedream är upptaget (Puter.js laddades inte).')); };
+      el.onerror = () => { clearTimeout(t); rej(new Error('Seedream är upptaget (Puter.js laddades inte).')); };
       document.head.append(el);
     }).catch((e) => { puterLoading = null; throw e; });
     return puterLoading;
@@ -65,40 +65,40 @@
     while ((m = AGE_RE.exec(s))) if (Number(m[1] || m[2]) < 18) return true;
     return false;
   }
-  const REFUSE = 'Refused: KINO never makes anything involving minors.';
+  const REFUSE = 'Nekad: KINO gör aldrig något som rör minderåriga.';
   function puterError(e) {
     const o = e || {}; const msg = String((o.error && o.error.message) || o.message || o.code || o).toLowerCase(); const code = o.status || (o.error && o.error.status);
-    if (code === 401 || /unauthori|sign.?in|log.?in|auth|popup|cancel|closed/.test(msg)) return 'Seedream needs Puter sign-in';
-    if (code === 402 || code === 429 || /credit|fund|balance|quota|limit|insufficient|busy|rate|overload|unavailable/.test(msg)) return 'Seedream is busy';
-    return `Seedream failed: ${msg.slice(0, 120)}`;
+    if (code === 401 || /unauthori|sign.?in|log.?in|auth|popup|cancel|closed/.test(msg)) return 'Seedream kräver inloggning hos Puter';
+    if (code === 402 || code === 429 || /credit|fund|balance|quota|limit|insufficient|busy|rate|overload|unavailable/.test(msg)) return 'Seedream är upptaget';
+    return `Seedream misslyckades: ${msg.slice(0, 120)}`;
   }
   async function imgToBlob(img) {
-    if (!img.complete || !img.naturalWidth) await new Promise((r, j) => { img.onload = r; img.onerror = () => j(new Error('Seedream returned an unreadable image')); });
+    if (!img.complete || !img.naturalWidth) await new Promise((r, j) => { img.onload = r; img.onerror = () => j(new Error('Seedream returnerade en oläsbar bild')); });
     try { const r = await fetch(img.src); if (r.ok) return await r.blob(); } catch { /* canvas fallback */ }
     const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
     c.getContext('2d').drawImage(img, 0, 0);
-    return new Promise((r, j) => c.toBlob((b) => (b ? r(b) : j(new Error('Could not read the Seedream image'))), 'image/jpeg', 0.92));
+    return new Promise((r, j) => c.toBlob((b) => (b ? r(b) : j(new Error('Kunde inte läsa Seedream-bilden'))), 'image/jpeg', 0.92));
   }
   const blobB64 = (b) => new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(b); });
   const PUTER_RATIO = { '1:1': { w: 1, h: 1 }, '9:16': { w: 9, h: 16 }, '16:9': { w: 16, h: 9 }, '4:5': { w: 4, h: 5 } };
   /** Must be called from a tap/Enter handler: sign-in popup first (user gesture), then server text check, then Puter. */
   async function seedream({ engineId, prompt, ratio, ref }) {
     const m = PUTER_MODELS.find((x) => x.id === engineId);
-    if (!m || st.lane !== 'sfw') throw new Error('Seedream is SFW only.');
+    if (!m || st.lane !== 'sfw') throw new Error('Seedream är bara för SFW.');
     if (minorText(prompt)) throw new Error(REFUSE);
     let p;
     try {
       p = await loadPuter();
       if (p.auth && p.auth.isSignedIn && !p.auth.isSignedIn()) await p.auth.signIn();
-    } catch (e) { throw new Error(e && /busy/.test(e.message || '') ? e.message : 'Seedream needs Puter sign-in'); }
-    if (p.auth && p.auth.isSignedIn && !p.auth.isSignedIn()) throw new Error('Seedream needs Puter sign-in');
+    } catch (e) { throw new Error(e && /upptaget/.test(e.message || '') ? e.message : 'Seedream kräver inloggning hos Puter'); }
+    if (p.auth && p.auth.isSignedIn && !p.auth.isSignedIn()) throw new Error('Seedream kräver inloggning hos Puter');
     const chk = await fetch(`${API}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: prompt }) }).catch(() => null);
-    if (!chk || !chk.ok) throw new Error(chk && chk.status === 422 ? REFUSE : 'Safety check unavailable, so Seedream was not run.');
+    if (!chk || !chk.ok) throw new Error(chk && chk.status === 422 ? REFUSE : 'Säkerhetskontrollen är inte tillgänglig, så Seedream kördes inte.');
     const opts = { model: m.model, ratio: PUTER_RATIO[ratio] || PUTER_RATIO['1:1'] };
     if (ref) Object.assign(opts, { input_image: await blobB64(ref), input_image_mime_type: ref.type || 'image/jpeg' });
     let img;
     try { img = await p.ai.txt2img(prompt.slice(0, 1800), opts); } catch (e) { throw new Error(puterError(e)); }
-    if (!img || !img.src) throw new Error('Seedream is busy');
+    if (!img || !img.src) throw new Error('Seedream är upptaget');
     const blob = await imgToBlob(img);
     const returned = (img.dataset && (img.dataset.model || img.dataset.modelName)) || img.model || null;
     const label = returned ? String(returned) : m.name;
@@ -107,7 +107,11 @@
 
   // ---- lane ----
   const laneBtn = $('#lane');
-  function paintLane() { laneBtn.textContent = st.lane === 'nsfw' ? 'NSFW' : 'SFW'; laneBtn.classList.toggle('nsfw', st.lane === 'nsfw'); laneBtn.setAttribute('aria-label', `Lane: ${laneBtn.textContent}. Tap to switch`); }
+  function paintLane() {
+    const n = st.lane === 'nsfw';
+    laneBtn.classList.toggle('nsfw', n); laneBtn.setAttribute('aria-checked', n ? 'true' : 'false');
+    laneBtn.setAttribute('aria-label', `Läge: ${n ? 'NSFW' : 'SFW'}. Tryck för att byta till ${n ? 'SFW' : 'NSFW'}`);
+  }
   function setLane(l) {
     if (l === 'nsfw' && localStorage.getItem('kino.21') !== '1') {
       $('#gate').hidden = false;
@@ -134,32 +138,32 @@
   // ---- composer ----
   function composer({ kind, placeholder, engineKind, settings, onGo, extraTop, noEngineText }) {
     const ta = h('textarea', { rows: 2, placeholder });
-    const go = h('button', { class: 'go', title: 'Generate', 'aria-label': 'Generate' }, '↑');
-    const sel = h('select', { 'aria-label': 'Model' });
+    const go = h('button', { class: 'go', title: 'Skapa', 'aria-label': 'Skapa' }, '↑');
+    const sel = h('select', { 'aria-label': 'Modell' });
     const panel = h('div', { class: 'panel', hidden: true }, settings || []);
-    const setBtn = h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Settings');
+    const setBtn = h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Inställningar');
     const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
-    sel.append(h('option', { value: '' }, 'Loading models…')); // replaced when the engine list arrives
+    sel.append(h('option', { value: '' }, 'Laddar modeller…')); // replaced when the engine list arrives
     // optional Swedish/any-language prompt rewrite (GMV /api/prompt/enhance), minors check first
     const enhBtn = h('button', { class: 'text dim', type: 'button', onclick: async () => {
       const p0 = ta.value.trim(); if (!p0) return;
       if (minorText(p0)) { status.textContent = REFUSE; status.classList.add('err'); return; }
-      enhBtn.disabled = true; status.classList.remove('err'); status.classList.add('busy'); status.textContent = 'Enhancing prompt…';
+      enhBtn.disabled = true; status.classList.remove('err'); status.classList.add('busy'); status.textContent = 'Förbättrar prompten…';
       try {
         const r = await fetch(`${API.replace(/\/api\/kino$/, '')}/api/prompt/enhance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: p0, aspectRatio: '9:16' }) });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok || !j.prompt) throw new Error(j.message || 'Enhance is busy right now.');
-        ta.value = j.prompt; status.textContent = `Prompt enhanced by ${j.model}. Edit it or generate.`;
-      } catch (e) { status.textContent = `Enhance failed: ${e.message}`.slice(0, 200); status.classList.add('err'); } finally { enhBtn.disabled = false; status.classList.remove('busy'); }
-    } }, 'Enhance prompt');
+        if (!r.ok || !j.prompt) throw new Error(j.message || 'Förbättra är upptaget just nu.');
+        ta.value = j.prompt; status.textContent = `Prompten förbättrades av ${j.model}. Ändra den eller skapa.`;
+      } catch (e) { status.textContent = `Det gick inte att förbättra: ${e.message}`.slice(0, 200); status.classList.add('err'); } finally { enhBtn.disabled = false; status.classList.remove('busy'); }
+    } }, 'Förbättra prompt');
     const comp = h('div', { class: 'composer' }, h('div', { class: 'row' }, ta, go), h('div', { class: 'under' }, sel, settings ? setBtn : null, kind === 'image' || kind === 'video' ? enhBtn : null), panel);
     const box = h('div', {}, extraTop || null, comp, status);
     getEngines(st.lane).then((list) => {
       const ok = list.filter((e) => e.kind === engineKind);
       sel.innerHTML = '';
       ok.forEach((e) => sel.append(h('option', { value: e.id }, e.name)));
-      if (!ok.length) { sel.append(h('option', { value: '' }, noEngineText || 'No model is responding right now')); sel.disabled = true; if (kind !== 'video' && kind !== 'music') go.disabled = true; }
-      if (kind === 'edit' && !ok.length) say("Edit can't run right now.", true);
+      if (!ok.length) { sel.append(h('option', { value: '' }, noEngineText || 'Ingen modell svarar just nu')); sel.disabled = true; if (kind !== 'video' && kind !== 'music') go.disabled = true; }
+      if (kind === 'edit' && !ok.length) say('Redigering fungerar inte just nu.', true);
     });
     function say(t, err) { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); }
     async function fire() {
@@ -169,74 +173,116 @@
     }
     go.onclick = fire;
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); fire(); } });
-    return { box, ta, sel, say };
+    return { box, ta, sel, say, panel };
   }
   const field = (label, input, wide) => h('label', { class: wide ? 'wide' : null }, label, input);
   const select = (opts, val) => { const s = h('select'); opts.forEach(([v, t]) => s.append(h('option', { value: v, selected: v === val }, t))); return s; };
   async function grokToggle() {
     const c = await getConfig();
     const cb = h('input', { type: 'checkbox', disabled: !c.grok.available });
-    return { el: h('label', {}, 'Grok', h('span', {}, cb, ' ', c.grok.available ? 'off by default' : 'Grok needs an API key')), cb };
+    return { el: h('label', {}, 'Grok', h('span', {}, cb, ' ', c.grok.available ? 'av som standard' : 'Grok kräver en API-nyckel')), cb };
   }
   async function errMsg(r) { const j = await r.json().catch(() => ({})); return j.message || `Error ${r.status}`; }
 
   function resultCard(item, kind) {
     const media = kind === 'image' || kind === 'edit' ? h('img', { src: abs(item.url), alt: '' }) : h('video', { src: abs(item.url), controls: true, playsinline: true });
-    const card = h('div', { class: 'card' }, media, h('div', { class: 'meta' }, item.engineName + (item.credits ? ` · song: ${item.credits.song} · images: ${item.credits.images}` : '')));
-    const acts = h('div', { class: 'acts' }, h('a', { class: 'text', href: abs(item.url), download: item.name, target: '_blank' }, 'Download'));
+    const card = h('div', { class: 'card' }, media, h('div', { class: 'meta' }, item.engineName + (item.credits ? ` · låt: ${item.credits.song} · bilder: ${item.credits.images}` : '')));
+    const acts = h('div', { class: 'acts' }, h('a', { class: 'text', href: abs(item.url), download: item.name, target: '_blank' }, 'Ladda ned'));
     if (kind === 'image' || kind === 'edit') {
-      acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url, blob: item.blob }; location.hash = '#/video'; } }, 'Animate'));
-      acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url, blob: item.blob }; location.hash = '#/edit'; } }, 'Edit'));
+      acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url, blob: item.blob }; location.hash = '#/video'; } }, 'Animera'));
+      acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url, blob: item.blob }; location.hash = '#/edit'; } }, 'Redigera'));
     }
-    acts.append(h('button', { class: 'text dim', onclick: () => { st.results[kind] = st.results[kind].filter((x) => x !== item); card.remove(); } }, 'Delete'));
+    acts.append(h('button', { class: 'text dim', onclick: () => { st.results[kind] = st.results[kind].filter((x) => x !== item); card.remove(); } }, 'Ta bort'));
     card.append(acts);
     // Coverr API terms: show a clickable Coverr credit when Coverr clips are used
     if (item.credits && item.credits.coverr) card.append(h('div', { class: 'meta' }, h('a', { href: item.credits.coverr.url || 'https://coverr.co', target: '_blank', rel: 'noopener' }, item.credits.coverr.text || 'Video från Coverr')));
     return card;
   }
-  function results(kind) { const g = h('div', { class: 'results' }); st.results[kind].forEach((i) => g.append(resultCard(i, kind))); return g; }
+  const EMPTY = { image: 'Dina bilder visas här.', video: 'Dina videoklipp visas här.', music: 'Din musikvideo visas här.', edit: 'Dina redigerade bilder visas här.' };
+  const pagehead = (t, sub) => h('div', { class: 'pagehead' }, h('h2', {}, t), sub ? h('p', {}, sub) : null);
+  function results(kind) { const g = h('div', { class: 'results', 'data-empty': EMPTY[kind] || 'Inget här än.' }); st.results[kind].forEach((i) => g.append(resultCard(i, kind))); return g; }
 
   // ---- views ----
+  const ICONS = {
+    image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-8 9"/>',
+    video: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10.5 9.5 4 2.5-4 2.5z"/>',
+    music: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+    script: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
+    analyze: '<rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="11" cy="12" r="3"/><path d="m13.2 14.2 2.3 2.3"/>',
+    stock: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M12 16v4M3 10h18M8 4v6M16 4v6"/>',
+    edit: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 18M8 15.5 20 6"/>',
+    timeline: '<rect x="3" y="6" width="7" height="12" rx="2"/><rect x="12" y="6" width="9" height="12" rx="2"/>',
+  };
+  const icon = (k) => { const e = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); e.setAttribute('viewBox', '0 0 24 24'); e.setAttribute('aria-hidden', 'true'); e.innerHTML = ICONS[k]; return e; };
   async function home(v) {
-    const b = (lane, t, s) => h('button', { class: 'choice' + (st.lane === lane ? ' on' : ''), onclick: () => setLane(lane) }, t, h('small', {}, s));
-    const models = h('div', { class: 'models loading' }, 'Checking which models respond…');
-    v.append(h('h1', {}, 'Image, video, music video.'), h('div', { class: 'choices' }, b('sfw', 'Normal / SFW', 'Everyday images, video and music video'), b('nsfw', 'Adult 21+ / NSFW', 'Consenting adults only')), models);
+    const nsfw = st.lane === 'nsfw';
+    // [icon, title, one-line description, route, preset, SFW-only]
+    const TILES = [
+      ['image', 'Bild', 'Skriv en text, få en bild', '#/image'],
+      ['video', 'Video', 'Text eller bild blir ett videoklipp', '#/video'],
+      ['music', 'Musikvideo', 'Låt och bilder blir en klippt video', '#/music'],
+      ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
+      ['analyze', 'Analysera video', 'Ladda upp ett klipp, få scener', '#/script', 'analyze'],
+      ['stock', 'Stockklipp', 'Riktiga klipp till din låt', '#/music', 'stock', true],
+      ['edit', 'Redigera', 'Ändra en bild med text', '#/edit'],
+      ['timeline', 'Tidslinje', 'Klipp ihop och exportera mp4', '#/timeline'],
+    ];
+    const tile = ([ic, t, d, href, preset, sfwOnly]) => {
+      const off = Boolean(sfwOnly && nsfw);
+      return h('a', { class: 'tile' + (off ? ' off' : ''), href: off ? null : href, 'aria-disabled': off ? 'true' : null, onclick: () => { st.preset = preset || null; } },
+        h('span', { class: 'ti' }, icon(ic)), h('b', {}, t), h('small', {}, off ? 'Bara i SFW-läget' : d));
+    };
+    const models = h('details', { class: 'models' }, h('summary', {}, h('span', { class: 'ttl' }, 'Kollar vilka modeller som svarar…')));
+    models.classList.add('loading');
+    v.append(
+      h('section', { class: 'hero' },
+        h('p', { class: 'eyebrow' }, 'AI-studio för bild, video och musik'),
+        h('h1', {}, 'Gör bild, video och musikvideo', h('em', {}, '.')),
+        h('p', { class: 'lede' }, 'Beskriv en idé, släpp in en låt eller ett klipp så gör KINO resten. Skriv på svenska eller engelska.'),
+        h('div', { class: 'cta' }, h('a', { class: 'text primary lg', href: '#/image' }, 'Skapa bild'), h('a', { class: 'text lg', href: '#/music' }, 'Musikvideo'))),
+      h('h2', { class: 'sect' }, 'Vad vill du göra?'),
+      h('div', { class: 'tiles' }, TILES.map(tile)),
+      h('p', { class: 'lanenote' + (nsfw ? ' nsfw' : '') }, nsfw
+        ? 'NSFW-läge är på: endast för vuxna 21+. Minderåriga blockeras alltid, inga foton på riktiga personer, modellnamn visas ärligt och det finns ingen tyst reservmodell. Byt tillbaka med SFW-knappen uppe till höger.'
+        : 'Läge: SFW. Vuxeninnehåll (21+) finns bakom NSFW-knappen uppe till höger.'),
+      models);
     const list = await getEngines(st.lane);
-    const kinds = { image: 'Image', video: 'Video', edit: 'Edit', music: 'Song' };
-    models.innerHTML = ''; models.classList.remove('loading');
-    models.append(st.lane === 'nsfw' ? 'Responding now · NSFW' : 'Responding now · SFW');
+    const kinds = { image: 'Bild', video: 'Video', edit: 'Redigera', music: 'Låt' };
+    models.classList.remove('loading');
+    models.innerHTML = '';
+    models.append(h('summary', {}, h('span', { class: 'ttl' }, `Modeller som svarar nu · ${nsfw ? 'NSFW' : 'SFW'}`), h('span', { class: 'count' }, String(list.length)), h('span', { class: 'chev', 'aria-hidden': 'true' })));
     const ul = h('ul');
-    list.forEach((e) => ul.append(h('li', {}, h('b', {}, e.name), `${kinds[e.kind] || e.kind}${e.puter ? ' · running via Puter' : ''}`)));
-    if (!list.length) ul.append(h('li', {}, 'No model is responding right now.'));
+    list.forEach((e) => ul.append(h('li', {}, h('b', {}, e.name), `${kinds[e.kind] || e.kind}${e.puter ? ' · körs via Puter' : ''}`)));
+    if (!list.length) ul.append(h('li', {}, 'Ingen modell svarar just nu.'));
     models.append(ul);
   }
 
   async function imageView(v) {
     const ratio = select([['1:1', '1:1'], ['9:16', '9:16'], ['16:9', '16:9'], ['4:5', '4:5']], '1:1');
-    const res = select([['standard', 'Standard'], ['high', 'High']], 'standard');
+    const res = select([['standard', 'Standard'], ['high', 'Hög']], 'standard');
     const count = select([['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']], '1');
-    const lora = select([['auto', 'auto'], ['none', 'none'], ['photo', 'photo'], ['cinematic', 'cinematic']], 'auto');
+    const lora = select([['auto', 'auto'], ['none', 'ingen'], ['photo', 'foto'], ['cinematic', 'filmisk']], 'auto');
     const grid = results('image');
-    const c = composer({ kind: 'image', engineKind: 'image', placeholder: 'Describe an image', settings: [field('Ratio', ratio), field('Resolution', res), field('Count', count), field('LoRA', lora)],
+    const c = composer({ kind: 'image', engineKind: 'image', placeholder: 'Beskriv en bild', settings: [field('Format', ratio), field('Upplösning', res), field('Antal', count), field('LoRA', lora)],
       onGo: async ({ prompt, engine, say }) => {
-        if (!prompt) return say('Write a prompt.', true);
+        if (!prompt) return say('Skriv en prompt.', true);
         if (engine.startsWith('puter:')) {
           const n = Math.max(1, Math.min(4, +count.value || 1));
           for (let i = 0; i < n; i++) {
-            say(i ? `Seedream ${i + 1}/${n}…` : 'Seedream (Puter)… first use asks you to sign in to Puter.');
+            say(i ? `Seedream ${i + 1}/${n}…` : 'Seedream (Puter)… första gången ber den dig logga in hos Puter.');
             const item = await seedream({ engineId: engine, prompt, ratio: ratio.value });
             st.results.image.unshift(item); grid.prepend(resultCard(item, 'image'));
           }
-          return say(`Made by ${st.results.image[0].engineName}.${lora.value === 'photo' || lora.value === 'cinematic' ? ' LoRA is not available for Seedream.' : ''}`);
+          return say(`Gjord av ${st.results.image[0].engineName}.${lora.value === 'photo' || lora.value === 'cinematic' ? ' LoRA finns inte för Seedream.' : ''}`);
         }
-        say('Generating…');
+        say('Skapar…');
         const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine, prompt, ratio: ratio.value, resolution: res.value, count: count.value, lora: lora.value }) });
         if (!r.ok) return say(await errMsg(r), true);
         const j = await r.json();
         j.images.forEach((i) => { st.results.image.unshift(i); grid.prepend(resultCard(i, 'image')); });
-        say(j.loraNote || `Made by ${j.engineName}.`);
+        say(j.loraNote || `Gjord av ${j.engineName}.`);
       } });
-    v.append(c.box, grid);
+    v.append(pagehead('Bild', 'Skriv vad du vill se. Välj modell och format under Inställningar.'), c.box, grid);
   }
 
   function fileField(label, accept, carry) {
@@ -244,7 +290,7 @@
     const wrap = h('label', {}, label, inp);
     const o = { el: wrap, inp, ref: carry && !carry.blob ? carry.name : null, blob: carry && carry.blob ? carry.blob : null };
     if (carry) {
-      const t = h('div', { class: 'thumb' }, h('img', { src: abs(carry.url) }), h('button', { type: 'button', 'aria-label': 'Remove', onclick: (e) => { e.preventDefault(); o.ref = null; o.blob = null; t.remove(); } }, '×'));
+      const t = h('div', { class: 'thumb' }, h('img', { src: abs(carry.url) }), h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: (e) => { e.preventDefault(); o.ref = null; o.blob = null; t.remove(); } }, '×'));
       wrap.append(t);
     }
     return o;
@@ -267,38 +313,38 @@
       const tools = CLIP_TOOLS.filter(([n]) => ((CLIP_META[n] || [])[0] || 'v') === g);
       return tools.length ? h('section', { class: 'cgroup' }, h('h3', {}, title, h('small', {}, sub)), h('div', { class: 'chips' }, tools.map(chip))) : null;
     });
-    const d = h('details', { class: 'clips' }, h('summary', {}, h('span', { class: 'ttl' }, 'Get clips from'), h('span', { class: 'count' }, `${CLIP_TOOLS.length} links`), h('span', { class: 'chev', 'aria-hidden': 'true' })),
-      h('div', { class: 'clips-body' }, ...groups, h('div', { class: 'meta clips-note' }, 'Make clips there, download them, then upload them here.'), h('div', { class: 'meta clips-note' }, 'Free allowances are rough and change often: check each service.')));
+    const d = h('details', { class: 'clips' }, h('summary', {}, h('span', { class: 'ttl' }, 'Hämta klipp från'), h('span', { class: 'count' }, `${CLIP_TOOLS.length} länkar`), h('span', { class: 'chev', 'aria-hidden': 'true' })),
+      h('div', { class: 'clips-body' }, ...groups, h('div', { class: 'meta clips-note' }, 'Gör klipp där, ladda ned dem och ladda sedan upp dem här.'), h('div', { class: 'meta clips-note' }, 'Gratisnivåerna är ungefärliga och ändras ofta – kolla varje tjänst.')));
     d.open = Boolean(open);
     return h('div', { class: 'srcrow' }, d);
   }
   async function videoView(v) {
     const carry = st.carry; st.carry = null;
-    const first = fileField('First frame', 'image/*', carry);
-    const last = fileField('Last frame', 'image/*');
+    const first = fileField('Första bildruta', 'image/*', carry);
+    const last = fileField('Sista bildruta', 'image/*');
     const len = select([['2', '2 s'], ['3', '3 s'], ['4', '4 s'], ['5', '5 s'], ['6', '6 s'], ['8', '8 s'], ['10', '10 s'], ['12', '12 s'], ['15', '15 s (Grok)'], ['30', '30 s (Grok)'], ['60', '1 min (Grok)'], ['120', '2 min (Grok)']], '4');
     const ratio = select([['16:9', '16:9'], ['9:16', '9:16'], ['1:1', '1:1']], '16:9');
     const g = await grokToggle();
     const grid = results('video');
-    const c = composer({ kind: 'video', engineKind: 'video', placeholder: 'Describe a shot', settings: [first.el, last.el, field('Length', len), field('Ratio', ratio), g.el],
+    const c = composer({ kind: 'video', engineKind: 'video', placeholder: 'Beskriv ett klipp', settings: [first.el, last.el, field('Längd', len), field('Format', ratio), g.el],
       onGo: async ({ prompt, engine, say }) => {
-        if (!prompt) return say('Write a prompt.', true);
-        if (!g.cb.checked && !engine) return say('No video model is responding right now.', true);
+        if (!prompt) return say('Skriv en prompt.', true);
+        if (!g.cb.checked && !engine) return say('Ingen videomodell svarar just nu.', true);
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('engine', engine); fd.append('prompt', prompt); fd.append('seconds', len.value); fd.append('ratio', ratio.value); fd.append('grok', g.cb.checked ? '1' : '0');
         if (first.inp.files[0]) fd.append('first', first.inp.files[0]); else if (first.blob) fd.append('first', first.blob, 'seedream.jpg'); else if (first.ref) fd.append('firstRef', first.ref);
         if (last.inp.files[0]) fd.append('last', last.inp.files[0]);
-        say('Sending…');
+        say('Skickar…');
         const r = await fetch(`${API}/video`, { method: 'POST', body: fd });
         if (!r.ok) return say(await errMsg(r), true);
         const j = await r.json();
-        say(`${j.engineName} is working… video can take a few minutes.`);
+        say(`${j.engineName} jobbar… video kan ta några minuter.`);
         try {
           const out = await poll(j.jobId, (m) => say(m));
-          st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); say(`Made by ${out.engineName}.`);
+          st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); say(`Gjord av ${out.engineName}.`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(c.box, clipSources(), grid);
+    v.append(pagehead('Video', 'Beskriv ett klipp, eller börja från en bild. Video kan ta några minuter.'), c.box, clipSources(), grid);
   }
 
   async function musicView(v) {
@@ -309,17 +355,17 @@
     const thumbs = h('div', { class: 'thumbs' });
     function paintSong() {
       songBox.innerHTML = '';
-      if (!song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Upload song'), h('span', { class: 'meta' }, 'mp3, wav, m4a · max 20 MB')));
-      songBox.append(h('div', { class: 'hintline' }, h('b', {}, song.name), h('button', { class: 'text dim', onclick: () => { song = null; paintSong(); } }, 'Remove song')), h('audio', { controls: true, src: URL.createObjectURL(song) }));
+      if (!song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Ladda upp låt'), h('span', { class: 'meta' }, 'mp3, wav, m4a · max 20 MB')));
+      songBox.append(h('div', { class: 'hintline' }, h('b', {}, song.name), h('button', { class: 'text dim', onclick: () => { song = null; paintSong(); } }, 'Ta bort låt')), h('audio', { controls: true, src: URL.createObjectURL(song) }));
     }
     function paintImgs() {
       thumbs.innerHTML = '';
-      imgs.forEach((f, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: URL.createObjectURL(f) }), h('button', { type: 'button', 'aria-label': 'Remove', onclick: () => { imgs.splice(i, 1); paintImgs(); } }, '×'))));
+      imgs.forEach((f, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: URL.createObjectURL(f) }), h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: () => { imgs.splice(i, 1); paintImgs(); } }, '×'))));
     }
-    songIn.onchange = () => { const f = songIn.files[0]; songIn.value = ''; if (!f) return; if (f.size > 20 * 1024 * 1024 || !/\.(mp3|wav|m4a)$/i.test(f.name)) return alert('Song must be mp3, wav or m4a, max 20 MB.'); song = f; paintSong(); };
+    songIn.onchange = () => { const f = songIn.files[0]; songIn.value = ''; if (!f) return; if (f.size > 20 * 1024 * 1024 || !/\.(mp3|wav|m4a)$/i.test(f.name)) return alert('Låten måste vara mp3, wav eller m4a, max 20 MB.'); song = f; paintSong(); };
     imgIn.onchange = () => { imgs = imgs.concat([...imgIn.files]).slice(0, 8); imgIn.value = ''; paintImgs(); };
     paintSong();
-    const top = h('div', { class: 'uploads' }, songIn, imgIn, songBox, h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Upload images'), h('span', { class: 'meta' }, 'up to 8')), thumbs));
+    const top = h('div', { class: 'uploads' }, songIn, imgIn, songBox, h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Ladda upp bilder'), h('span', { class: 'meta' }, 'upp till 8')), thumbs));
     const cfg = await getConfig();
     const genre = select((cfg.genres || ['pop', 'r&b', 'rap', 'rock', 'hyperpop', 'ballad', 'rave', 'score']).map((x) => [x, x]), 'pop');
     const ratio = select([['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1']], '9:16');
@@ -327,9 +373,9 @@
     const lyrics = h('textarea', { rows: 3 });
     const look = h('input', { type: 'text' });
     const action = h('input', { type: 'text' });
-    const overlay = h('input', { type: 'text', placeholder: 'Stock mode: optional title text' });
+    const overlay = h('input', { type: 'text', placeholder: 'Stockläge: valfri titeltext' });
     const g = await grokToggle();
-    const motion = select([['none', 'none (cuts on the beat)'], ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (real motion, up to 30 s, ~1 clip/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stock clips (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – real stock footage, not AI`]] : [])], 'none');
+    const motion = select([['none', 'ingen (klipp i takt med musiken)'], ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (riktig rörelse, upp till 30 s, ca 1 klipp/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stockklipp (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – riktigt stockmaterial, inte AI`]] : [])], 'none');
     // Stock source: 3-way toggle Riktiga / AI / Blanda (sent as source=real|ai|mix)
     let stockSrc = 'real';
     const srcBtns = [['real', 'Riktiga'], ['ai', 'AI'], ['mix', 'Blanda']].map(([v, t]) => h('button', { type: 'button', class: 'seg-b', 'data-v': v, onclick: () => { stockSrc = v; paintSrc(); } }, t));
@@ -341,45 +387,50 @@
     const srcToggle = h('div', { class: 'seg-wrap', role: 'group', 'aria-label': 'Stockkälla' }, seg(...srcBtns), srcHint);
     paintSrc();
     const grid = results('music');
-    const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'What is the video about?', noEngineText: 'No image model responding (needed without images)',
-      settings: [field('Genre', genre), field('Ratio', ratio), field('Length', len), field('Look', look), field('Action', action), field('Motion', motion, true), field('Stockklipp', srcToggle, true), field('Text overlay', overlay), g.el, field('Lyrics', lyrics, true)],
+    const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'Vad handlar videon om?', noEngineText: 'Ingen bildmodell svarar (behövs utan egna bilder)',
+      settings: [field('Genre', genre), field('Format', ratio), field('Längd', len), field('Utseende', look), field('Handling', action), field('Rörelse', motion, true), field('Stockklipp', srcToggle, true), field('Text i bild', overlay), g.el, field('Låttext', lyrics, true)],
       onGo: async ({ prompt, engine, say }) => {
         if (motion.value === 'stock') {
-          if (!song) return say('Stock mode needs an uploaded song.', true);
+          if (!song) return say('Stockläge kräver en uppladdad låt.', true);
           const sf = new FormData();
           sf.append('prompt', prompt); sf.append('text', overlay.value); sf.append('seconds', len.value === '60' ? '45' : len.value); sf.append('source', stockSrc); sf.append('song', song);
-          say('Uploading…');
+          say('Laddar upp…');
           const r0 = await fetch(`${API}/stock`, { method: 'POST', body: sf });
           if (!r0.ok) return say(await errMsg(r0), true);
           const j0 = await r0.json();
           try {
             const out = await poll(j0.jobId, (m) => say(m));
             const by = out.credits.footage.map((f) => f.by).join('; ');
-            const lbl = out.source === 'ai' ? 'AI-generated stock clips (Pixabay)' : out.source === 'mix' ? (out.kind || 'stock clips, real + AI-generated') : 'real stock footage, not AI video';
+            const lbl = out.source === 'ai' ? 'AI-genererade stockklipp (Pixabay)' : out.source === 'mix' ? (out.kind || 'stockklipp, riktiga + AI-genererade') : 'riktigt stockmaterial, inte AI-video';
             out.credits = { ...out.credits, images: `${lbl}: ${by}` };
             st.results.music.unshift(out); grid.prepend(resultCard(out, 'music'));
-            say(`${out.engineName} · ${lbl} · Song: ${out.credits.song} · Footage: ${by}`);
+            say(`${out.engineName} · ${lbl} · Låt: ${out.credits.song} · Material: ${by}`);
           } catch (e) { say(e.message, true); }
           return;
         }
-        if (!imgs.length && !engine) return say('Upload images: no image model is responding right now.', true);
-        if (!imgs.length && engine.startsWith('puter:')) return say('Seedream runs in your browser and can’t make music-video stills. Pick another model or upload images.', true);
+        if (!imgs.length && !engine) return say('Ladda upp bilder: ingen bildmodell svarar just nu.', true);
+        if (!imgs.length && engine.startsWith('puter:')) return say('Seedream körs i din webbläsare och kan inte göra stillbilder till musikvideo. Välj en annan modell eller ladda upp bilder.', true);
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('prompt', prompt); fd.append('genre', genre.value); fd.append('ratio', ratio.value); fd.append('seconds', len.value);
         fd.append('lyrics', lyrics.value); fd.append('look', look.value); fd.append('action', action.value); fd.append('grok', g.cb.checked ? '1' : '0'); fd.append('motion', motion.value); fd.append('imageEngine', engine.startsWith('puter:') ? '' : engine);
         if (song) fd.append('song', song);
         imgs.forEach((f) => fd.append('images', f));
-        say('Uploading…');
+        say('Laddar upp…');
         const r = await fetch(`${API}/music`, { method: 'POST', body: fd });
         if (!r.ok) return say(await errMsg(r), true);
         const j = await r.json();
         try {
           const out = await poll(j.jobId, (m) => say(m));
           st.results.music.unshift(out); grid.prepend(resultCard(out, 'music'));
-          say(`Song: ${out.credits.song} · Images: ${out.credits.images} · Motion: ${out.credits.motion}`);
+          say(`Låt: ${out.credits.song} · Bilder: ${out.credits.images} · Rörelse: ${out.credits.motion}`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(musicTabs('mv'), top, c.box, grid);
+    if (st.preset === 'stock' && st.lane === 'sfw' && [...motion.options].some((o) => o.value === 'stock')) {
+      motion.value = 'stock'; c.panel.hidden = false;
+      c.say('Stockklipp: ladda upp en låt, välj källa under Inställningar och skapa.');
+    }
+    st.preset = null;
+    v.append(musicTabs('mv'), pagehead('Musikvideo', 'Ladda upp en låt och bilder, eller låt KINO göra stillbilderna. Stockklipp finns under Inställningar.'), top, c.box, grid);
   }
 
   async function editView(v) {
@@ -389,37 +440,37 @@
     const thumbs = h('div', { class: 'thumbs' });
     function paint() {
       thumbs.innerHTML = '';
-      refs.forEach((r, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: abs(r.url) }), h('button', { type: 'button', 'aria-label': 'Remove', onclick: () => { refs.splice(i, 1); paint(); } }, '×'))));
-      files.forEach((f, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: URL.createObjectURL(f) }), h('button', { type: 'button', 'aria-label': 'Remove', onclick: () => { files.splice(i, 1); paint(); } }, '×'))));
+      refs.forEach((r, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: abs(r.url) }), h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: () => { refs.splice(i, 1); paint(); } }, '×'))));
+      files.forEach((f, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: URL.createObjectURL(f) }), h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: () => { files.splice(i, 1); paint(); } }, '×'))));
     }
     imgIn.onchange = () => { files = files.concat([...imgIn.files]).slice(0, 8); imgIn.value = ''; paint(); };
     paint();
-    const top = h('div', { class: 'uploads' }, imgIn, h('div', { class: 'tl-top' }, seg(h('span', { class: 'on', 'aria-current': 'page' }, 'Edit'), h('a', { href: '#/timeline' }, 'Timeline'))), h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Add reference images')), thumbs));
+    const top = h('div', { class: 'uploads' }, imgIn, h('div', { class: 'tl-top' }, seg(h('span', { class: 'on', 'aria-current': 'page' }, 'Redigera'), h('a', { href: '#/timeline' }, 'Tidslinje'))), h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Lägg till referensbilder')), thumbs));
     const grid = results('edit');
-    const c = composer({ kind: 'edit', engineKind: 'edit', placeholder: 'What should change?', noEngineText: "Edit can't run right now.",
+    const c = composer({ kind: 'edit', engineKind: 'edit', placeholder: 'Vad ska ändras?', noEngineText: 'Redigering fungerar inte just nu.',
       onGo: async ({ prompt, engine, say }) => {
-        if (!prompt) return say('Write a prompt.', true);
-        if (!files.length && !refs.length) return say('Add a reference image.', true);
+        if (!prompt) return say('Skriv en prompt.', true);
+        if (!files.length && !refs.length) return say('Lägg till en referensbild.', true);
         if (engine.startsWith('puter:')) {
           const ref = files[0] || (refs[0] && (refs[0].blob || await fetch(abs(refs[0].url)).then((x) => x.blob())));
-          say('Seedream (Puter)… first use asks you to sign in to Puter.');
+          say('Seedream (Puter)… första gången ber den dig logga in hos Puter.');
           const item = await seedream({ engineId: engine, prompt, ratio: '1:1', ref });
           st.results.edit.unshift(item); grid.prepend(resultCard(item, 'edit'));
-          return say(`Made by ${item.engineName}.${files.length + refs.length > 1 ? ' Seedream via Puter takes one reference; the first was used.' : ''}`);
+          return say(`Gjord av ${item.engineName}.${files.length + refs.length > 1 ? ' Seedream via Puter tar en referens; den första användes.' : ''}`);
         }
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('engine', engine); fd.append('prompt', prompt);
         files.forEach((f) => fd.append('images', f)); refs.forEach((r) => (r.blob ? fd.append('images', r.blob, 'seedream.jpg') : fd.append('refs', r.name)));
-        say('Sending…');
+        say('Skickar…');
         const r = await fetch(`${API}/edit`, { method: 'POST', body: fd });
         if (!r.ok) return say(await errMsg(r), true);
         const j = await r.json();
         try {
           const out = await poll(j.jobId, (m) => say(m));
-          st.results.edit.unshift(out); grid.prepend(resultCard(out, 'edit')); say(out.note || `Made by ${out.engineName}.`);
+          st.results.edit.unshift(out); grid.prepend(resultCard(out, 'edit')); say(out.note || `Gjord av ${out.engineName}.`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(top, c.box, clipSources(), grid);
+    v.append(top, pagehead('Redigera', 'Ändra en bild med text. Lägg till en eller flera referensbilder.'), c.box, clipSources(), grid);
   }
 
 
@@ -470,7 +521,7 @@
     const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
     const say = (t, err) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); };
     const stage = h('div', { class: 'tl-stage' });
-    const out = h('div', { class: 'results' });
+    const out = h('div', { class: 'results', 'data-empty': 'Din exporterade video visas här.' });
 
     fileIn.onchange = async () => {
       for (const f of [...fileIn.files]) await addClip({ kind: f.type.startsWith('image') ? 'image' : 'video', file: f, url: URL.createObjectURL(f), label: f.name });
@@ -481,37 +532,37 @@
     function paintPick() {
       pickBox.innerHTML = '';
       const items = sessionItems();
-      if (!items.length) pickBox.append(empty('Nothing made this session yet.'));
-      items.forEach((it) => pickBox.append(h('button', { class: 'text', onclick: async () => { await addClip(it.blob ? { kind: it.kind, file: new File([it.blob], it.name, { type: it.blob.type || 'image/jpeg' }), url: it.url, label: it.label } : { kind: it.kind, ref: it.name, url: it.url, label: it.label }); paintList(); } }, `${it.kind === 'image' ? 'Image' : 'Video'} · ${it.label}`)));
+      if (!items.length) pickBox.append(empty('Inget har gjorts i den här sessionen än.'));
+      items.forEach((it) => pickBox.append(h('button', { class: 'text', onclick: async () => { await addClip(it.blob ? { kind: it.kind, file: new File([it.blob], it.name, { type: it.blob.type || 'image/jpeg' }), url: it.url, label: it.label } : { kind: it.kind, ref: it.name, url: it.url, label: it.label }); paintList(); } }, `${it.kind === 'image' ? 'Bild' : 'Video'} · ${it.label}`)));
     }
     function paintMusic() {
       musicBox.innerHTML = '';
       musicBox.className = 'drop';
       const songs = st.results.music;
       if (!T.music) {
-        musicBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => musicIn.click() }, 'Upload music')));
-        songs.forEach((s) => musicBox.firstChild.append(h('button', { class: 'text dim', onclick: () => { T.music = { ref: s.name, url: abs(s.url), name: `KINO song (${s.credits ? s.credits.song : s.engineName})`, volume: 1 }; paintMusic(); } }, 'Use KINO song')));
+        musicBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => musicIn.click() }, 'Ladda upp musik')));
+        songs.forEach((s) => musicBox.firstChild.append(h('button', { class: 'text dim', onclick: () => { T.music = { ref: s.name, url: abs(s.url), name: `KINO-låt (${s.credits ? s.credits.song : s.engineName})`, volume: 1 }; paintMusic(); } }, 'Använd KINO-låt')));
         return;
       }
       const vol = h('input', { type: 'range', min: 0, max: 1.5, step: 0.05, value: T.music.volume });
       vol.oninput = () => { T.music.volume = +vol.value; };
-      musicBox.append(h('div', { class: 'hintline' }, h('b', {}, `Music: ${T.music.name}`), h('button', { class: 'text dim danger', onclick: () => { T.music = null; paintMusic(); } }, 'Remove')), h('label', { class: 'tl-vol' }, 'Volume ', vol));
+      musicBox.append(h('div', { class: 'hintline' }, h('b', {}, `Musik: ${T.music.name}`), h('button', { class: 'text dim danger', onclick: () => { T.music = null; paintMusic(); } }, 'Ta bort')), h('label', { class: 'tl-vol' }, 'Volym ', vol));
     }
     function num(val, on, step = 0.1) { const i = h('input', { type: 'number', step, min: 0, value: val, inputmode: 'decimal' }); i.onchange = () => on(+i.value); return i; }
     function paintList() {
       list.innerHTML = '';
-      if (!T.clips.length) list.append(empty('No clips yet.', 'Add videos or images, or pick something made in this session.'));
+      if (!T.clips.length) list.append(empty('Inga klipp än.', 'Lägg till videor eller bilder, eller välj något du gjort i den här sessionen.'));
       T.clips.forEach((c, idx) => {
-        const handle = h('span', { class: 'tl-handle' }, 'Move');
-        const txt = h('input', { type: 'text', placeholder: 'Text on clip', value: c.text });
+        const handle = h('span', { class: 'tl-handle' }, 'Flytta');
+        const txt = h('input', { type: 'text', placeholder: 'Text på klippet', value: c.text });
         txt.oninput = () => { c.text = txt.value; };
         const fields = c.kind === 'image'
-          ? [h('label', {}, 'Seconds', num(c.duration, (x) => { c.duration = x; }))]
-          : [h('label', {}, 'Start', num(c.start, (x) => { c.start = x; })), h('label', {}, 'End', num(c.end, (x) => { c.end = x; }))];
+          ? [h('label', {}, 'Sekunder', num(c.duration, (x) => { c.duration = x; }))]
+          : [h('label', {}, 'Start', num(c.start, (x) => { c.start = x; })), h('label', {}, 'Slut', num(c.end, (x) => { c.end = x; }))];
         const thumb = c.kind === 'image' ? h('img', { src: c.url }) : h('video', { src: c.url, muted: true, playsinline: true, preload: 'metadata' });
         const row = h('div', { class: 'tl-row', 'data-id': c.id }, handle, h('div', { class: 'tl-thumb' }, thumb),
           h('div', { class: 'tl-fields' }, h('div', { class: 'meta' }, `${idx + 1}. ${c.label || c.kind}`), h('div', { class: 'tl-nums' }, ...fields), txt),
-          h('button', { class: 'text dim danger', onclick: () => { T.clips = T.clips.filter((x) => x !== c); paintList(); } }, 'Remove'));
+          h('button', { class: 'text dim danger', onclick: () => { T.clips = T.clips.filter((x) => x !== c); paintList(); } }, 'Ta bort'));
         dragify(handle, row);
         list.append(row);
       });
@@ -542,10 +593,10 @@
     function paintStage() { const [w, hh] = RATIO_WH[T.ratio]; stage.style.aspectRatio = `${w} / ${hh}`; stage.style.width = `min(100%, calc(60vh * ${(w / hh).toFixed(4)}))`; }
     async function preview() {
       if (playing) { playing.stop(); return; }
-      if (!T.clips.length) return say('Add clips first.', true);
+      if (!T.clips.length) return say('Lägg till klipp först.', true);
       let stopped = false; const audio = T.music ? new Audio(T.music.url) : null;
-      playing = { stop: () => { stopped = true; if (audio) audio.pause(); stage.innerHTML = ''; playing = null; prevBtn.textContent = 'Preview'; } };
-      prevBtn.textContent = 'Stop';
+      playing = { stop: () => { stopped = true; if (audio) audio.pause(); stage.innerHTML = ''; playing = null; prevBtn.textContent = 'Förhandsvisa'; } };
+      prevBtn.textContent = 'Stopp';
       if (audio) { audio.volume = Math.min(1, T.music.volume); audio.play().catch(() => {}); }
       for (const c of T.clips) {
         if (stopped) return;
@@ -558,7 +609,7 @@
       if (!stopped) playing.stop();
     }
     async function exportMp4() {
-      if (!T.clips.length) return say('Add clips first.', true);
+      if (!T.clips.length) return say('Lägg till klipp först.', true);
       const fd = new FormData(); let n = 0; const files = [];
       const addFile = (blob, name) => { files.push([blob, name]); return `file:${n++}`; };
       const spec = { lane: st.lane, ratio: T.ratio, clips: [], music: null };
@@ -571,25 +622,26 @@
       if (T.music) spec.music = { volume: T.music.volume, src: T.music.ref ? `ref:${T.music.ref}` : addFile(T.music.file, T.music.name) };
       fd.append('spec', JSON.stringify(spec));
       files.forEach(([b, name]) => fd.append('files', b, name));
-      say('Uploading for export…');
+      say('Laddar upp för export…');
       const r = await fetch(`${API}/timeline`, { method: 'POST', body: fd });
       if (!r.ok) return say(await errMsg(r), true);
       const j = await r.json();
       try {
-        const res = await poll(j.jobId, (m) => say(`Rendering · ${m}`));
+        const res = await poll(j.jobId, (m) => say(`Renderar · ${m}`));
         st.results.video.unshift(res); out.prepend(resultCard(res, 'video'));
-        say(`Exported ${res.width}×${res.height}, ${res.duration.toFixed(1)} s. Uploaded files were deleted from the server.`);
+        say(`Exporterad ${res.width}×${res.height}, ${res.duration.toFixed(1)} s. Uppladdade filer raderades från servern.`);
       } catch (e) { say(e.message, true); }
     }
-    const prevBtn = h('button', { class: 'text', onclick: preview }, 'Preview');
+    const prevBtn = h('button', { class: 'text', onclick: preview }, 'Förhandsvisa');
     v.append(
-      h('div', { class: 'tl-top' }, seg(h('a', { href: '#/edit' }, 'Edit'), h('span', { class: 'on', 'aria-current': 'page' }, 'Timeline')), field('Ratio', ratio)),
+      h('div', { class: 'tl-top' }, seg(h('a', { href: '#/edit' }, 'Redigera'), h('span', { class: 'on', 'aria-current': 'page' }, 'Tidslinje')), field('Format', ratio)),
+      pagehead('Tidslinje', 'Lägg ihop klipp, text och musik och exportera som mp4.'),
       fileIn, musicIn,
       h('div', { class: 'uploads' },
-        h('div', { class: 'under' }, h('button', { class: 'text primary', onclick: () => fileIn.click() }, 'Add videos / images'), h('button', { class: 'text', onclick: () => { pickBox.hidden = !pickBox.hidden; paintPick(); } }, 'Add from this session')),
+        h('div', { class: 'under' }, h('button', { class: 'text primary', onclick: () => fileIn.click() }, 'Lägg till videor / bilder'), h('button', { class: 'text', onclick: () => { pickBox.hidden = !pickBox.hidden; paintPick(); } }, 'Lägg till från sessionen')),
         pickBox, clipSources(), list, musicBox),
       stage,
-      h('div', { class: 'actbar' }, prevBtn, h('button', { class: 'text primary', onclick: () => withBusy(status, () => exportMp4()).catch((e) => say(e.message, true)) }, 'Export mp4')),
+      h('div', { class: 'actbar' }, prevBtn, h('button', { class: 'text primary', onclick: () => withBusy(status, () => exportMp4()).catch((e) => say(e.message, true)) }, 'Exportera mp4')),
       status, out);
     paintList(); paintMusic(); paintStage();
   }
@@ -598,7 +650,7 @@
   // ---- Script mode (storyboard): idea -> scene cards -> make scenes -> Edit timeline ----
   st.sc = st.sc || { scenes: [], song: null, section: null, ref: '', template: 'standard', seq: 0 };
   const BASE = API.replace(/\/api\/kino$/, '');
-  const musicTabs = (on) => h('div', { class: 'tl-top' }, seg(on === 'mv' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Music video') : h('a', { href: '#/music' }, 'Music video'), on === 'script' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Script') : h('a', { href: '#/script' }, 'Script')));
+  const musicTabs = (on) => h('div', { class: 'tl-top' }, seg(on === 'mv' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Musikvideo') : h('a', { href: '#/music' }, 'Musikvideo'), on === 'script' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Manus') : h('a', { href: '#/script' }, 'Manus')));
   async function pollScript(id, onMsg) {
     for (;;) {
       await new Promise((r) => setTimeout(r, 2500));
@@ -614,47 +666,47 @@
     let making = false;
     const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
     const say = (t, err) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); };
-    const idea = h('textarea', { rows: 2, placeholder: 'Your idea, in Swedish or English' });
+    const idea = h('textarea', { rows: 2, placeholder: 'Din idé, på svenska eller engelska' });
     idea.value = S.idea || ''; idea.oninput = () => { S.idea = idea.value; };
     // settings
     const tplSel = h('select'); const tpls = await fetch(`${API}/script/templates`).then((x) => x.json()).catch(() => ({ templates: [{ id: 'standard', sv: 'Standard' }] }));
-    const EN = { standard: 'Standard', live: 'Live concert', cinematic: 'Cinematic', anime: 'Anime', vhs: 'Retro VHS / 80s', neon: 'Neon / Cyberpunk', dreamy: 'Dreamy', bw: 'Black & white', cover: 'Album cover' };
+    const EN = { standard: 'Standard', live: 'Livekonsert', cinematic: 'Filmisk', anime: 'Anime', vhs: 'Retro VHS / 80-tal', neon: 'Neon / Cyberpunk', dreamy: 'Drömsk', bw: 'Svartvitt', cover: 'Skivomslag' };
     tpls.templates.forEach((t) => tplSel.append(h('option', { value: t.id, selected: t.id === S.template }, EN[t.id] || t.sv)));
     tplSel.onchange = () => { S.template = tplSel.value; };
     const len = select([['15', '15 s'], ['30', '30 s'], ['45', '45 s'], ['60', '60 s']], String(S.seconds || 30)); len.onchange = () => { S.seconds = +len.value; };
     const count = select([['4', '4'], ['5', '5'], ['6', '6'], ['8', '8']], String(S.count || 6)); count.onchange = () => { S.count = +count.value; };
-    const songName = h('input', { type: 'text', placeholder: 'optional, e.g. artist – title', value: S.songName || '' }); songName.oninput = () => { S.songName = songName.value; };
+    const songName = h('input', { type: 'text', placeholder: 'valfritt, t.ex. artist – titel', value: S.songName || '' }); songName.oninput = () => { S.songName = songName.value; };
     const refIn = h('input', { type: 'file', accept: 'image/*', hidden: true });
     const refBox = h('div', { class: 'meta' });
-    const paintRef = () => { refBox.innerHTML = ''; refBox.append(S.ref ? h('span', {}, `Character: ${S.ref.slice(0, 140)}${S.ref.length > 140 ? '…' : ''}  `, h('button', { class: 'text dim', type: 'button', onclick: () => { S.ref = ''; paintRef(); } }, 'Remove')) : h('button', { class: 'text', type: 'button', onclick: () => refIn.click() }, 'Add reference image')); };
+    const paintRef = () => { refBox.innerHTML = ''; refBox.append(S.ref ? h('span', {}, `Karaktär: ${S.ref.slice(0, 140)}${S.ref.length > 140 ? '…' : ''}  `, h('button', { class: 'text dim', type: 'button', onclick: () => { S.ref = ''; paintRef(); } }, 'Ta bort')) : h('button', { class: 'text', type: 'button', onclick: () => refIn.click() }, 'Lägg till referensbild')); };
     refIn.onchange = async () => {
       const f = refIn.files[0]; refIn.value = ''; if (!f) return;
-      refBox.textContent = 'Describing the character…';
+      refBox.textContent = 'Beskriver karaktären…';
       const fd = new FormData(); fd.append('lane', st.lane); fd.append('image', f);
       const r = await fetch(`${API}/script/reference`, { method: 'POST', body: fd }).catch(() => null);
-      if (!r || !r.ok) { paintRef(); return say(r ? await errMsg(r) : 'Reference description failed.', true); }
-      S.ref = (await r.json()).description; paintRef(); say('Reference added: it is written into every scene prompt.');
+      if (!r || !r.ok) { paintRef(); return say(r ? await errMsg(r) : 'Det gick inte att beskriva referensen.', true); }
+      S.ref = (await r.json()).description; paintRef(); say('Referens tillagd: den skrivs in i varje scenprompt.');
     };
     paintRef();
-    const laneSel = select([['image', 'Image → still clip'], ['video', 'AI video'], ['stock', 'Stock footage']], S.make || 'image');
+    const laneSel = select([['image', 'Bild → stillbildsklipp'], ['video', 'AI-video'], ['stock', 'Stockmaterial']], S.make || 'image');
     const engSel = h('select');
     async function paintEngines() {
       engSel.innerHTML = '';
       if (laneSel.value === 'stock') { engSel.append(h('option', { value: 'stock' }, `Stock (${((await getConfig()).stock || {}).source || 'Wikimedia Commons'})`)); return; }
       const list = (await getEngines(st.lane)).filter((e) => e.kind === laneSel.value && !e.puter && !e.needsFirstFrame);
-      if (!list.length) engSel.append(h('option', { value: '' }, laneSel.value === 'video' ? 'No AI video engine is ready' : 'No image engine is ready'));
+      if (!list.length) engSel.append(h('option', { value: '' }, laneSel.value === 'video' ? 'Ingen AI-videomotor är redo' : 'Ingen bildmotor är redo'));
       const pref = laneSel.value === 'image' ? (st.lane === 'nsfw' ? 'pony' : 'flux-klein') : null;
       list.sort((a, b) => (b.id === pref) - (a.id === pref)).forEach((e) => engSel.append(h('option', { value: e.id }, e.name)));
     }
     laneSel.onchange = () => { S.make = laneSel.value; paintEngines(); };
     paintEngines();
-    const panel = h('div', { class: 'panel', hidden: true }, field('Template', tplSel), field('Length', len), field('Scenes', count), field('Make scenes with', laneSel), field('Engine', engSel), field('Song name', songName), h('label', { class: 'wide' }, 'Reference (same character in every scene)', refIn, refBox));
+    const panel = h('div', { class: 'panel', hidden: true }, field('Mall', tplSel), field('Längd', len), field('Scener', count), field('Skapa scener med', laneSel), field('Motor', engSel), field('Låtnamn', songName), h('label', { class: 'wide' }, 'Referens (samma karaktär i varje scen)', refIn, refBox));
     // song + section picker
     const songIn = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,audio/*', hidden: true });
     const songBox = h('div', { class: 'drop' });
     function paintSong() {
       songBox.innerHTML = ''; songBox.classList.remove('busy');
-      if (!S.song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Add song'), h('span', { class: 'meta' }, 'optional · mp3, wav, m4a · lyrics not needed')));
+      if (!S.song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Lägg till låt'), h('span', { class: 'meta' }, 'valfritt · mp3, wav, m4a · låttext behövs inte')));
       const want = S.seconds || 30; const d = S.song.duration;
       const cv = h('canvas', { class: 'wave', width: 600, height: 60 });
       const g = cv.getContext('2d');
@@ -666,22 +718,22 @@
       };
       const range = h('input', { type: 'range', min: 0, max: Math.max(0, d - want), step: 0.1, value: S.section.start, class: 'secrange' });
       const lab = h('span', { class: 'meta' });
-      const paintLab = () => { lab.textContent = `Section ${S.section.start.toFixed(1)}–${Math.min(d, S.section.start + want).toFixed(1)} s of ${d.toFixed(1)} s${Math.abs(S.section.start - S.song.suggested.start) < 0.05 ? ' · suggested chorus' : ''}${d < want ? ' · song is shorter, it loops' : ''}`; };
+      const paintLab = () => { lab.textContent = `Avsnitt ${S.section.start.toFixed(1)}–${Math.min(d, S.section.start + want).toFixed(1)} s av ${d.toFixed(1)} s${Math.abs(S.section.start - S.song.suggested.start) < 0.05 ? ' · föreslagen refräng' : ''}${d < want ? ' · låten är kortare, den loopas' : ''}`; };
       range.oninput = () => { S.section.start = +range.value; S.section.cut = null; draw(); paintLab(); };
       cv.onclick = (e) => { const r = cv.getBoundingClientRect(); S.section.start = Math.max(0, Math.min(d - want, ((e.clientX - r.left) / r.width) * d - want / 2)); if (S.section.start < 0) S.section.start = 0; range.value = S.section.start; S.section.cut = null; draw(); paintLab(); };
       const au = h('audio', { src: abs(S.song.url), preload: 'none' });
-      const playBtn = h('button', { class: 'text', onclick: () => { if (!au.paused) { au.pause(); playBtn.textContent = 'Play section'; return; } au.currentTime = S.section.start; au.play(); playBtn.textContent = 'Stop'; setTimeout(() => { au.pause(); playBtn.textContent = 'Play section'; }, Math.min(want, d) * 1000); } }, 'Play section');
-      songBox.append(h('div', { class: 'hintline' }, h('b', {}, S.song.fileName), h('button', { class: 'text dim danger', onclick: () => { S.song = null; paintSong(); } }, 'Remove')), cv, range,
-        h('div', { class: 'under' }, playBtn, h('button', { class: 'text dim', onclick: () => { S.section.start = S.song.suggested.start; S.section.cut = null; paintSong(); } }, 'Chorus'), lab), au);
+      const playBtn = h('button', { class: 'text', onclick: () => { if (!au.paused) { au.pause(); playBtn.textContent = 'Spela avsnitt'; return; } au.currentTime = S.section.start; au.play(); playBtn.textContent = 'Stopp'; setTimeout(() => { au.pause(); playBtn.textContent = 'Spela avsnitt'; }, Math.min(want, d) * 1000); } }, 'Spela avsnitt');
+      songBox.append(h('div', { class: 'hintline' }, h('b', {}, S.song.fileName), h('button', { class: 'text dim danger', onclick: () => { S.song = null; paintSong(); } }, 'Ta bort')), cv, range,
+        h('div', { class: 'under' }, playBtn, h('button', { class: 'text dim', onclick: () => { S.section.start = S.song.suggested.start; S.section.cut = null; paintSong(); } }, 'Refräng'), lab), au);
       draw(); paintLab();
     }
     songIn.onchange = async () => {
       const f = songIn.files[0]; songIn.value = ''; if (!f) return;
-      if (f.size > 20 * 1024 * 1024) return say('Song must be max 20 MB.', true);
-      songBox.textContent = 'Finding the chorus…'; songBox.classList.add('busy');
+      if (f.size > 20 * 1024 * 1024) return say('Låten får vara max 20 MB.', true);
+      songBox.textContent = 'Hittar refrängen…'; songBox.classList.add('busy');
       const fd = new FormData(); fd.append('song', f); fd.append('seconds', String(S.seconds || 30));
       const r = await fetch(`${API}/script/song`, { method: 'POST', body: fd }).catch(() => null);
-      if (!r || !r.ok) { S.song = null; paintSong(); return say(r ? await errMsg(r) : 'Upload failed.', true); }
+      if (!r || !r.ok) { S.song = null; paintSong(); return say(r ? await errMsg(r) : 'Uppladdningen misslyckades.', true); }
       const j = await r.json();
       S.song = { ...j, fileName: f.name }; S.section = { start: j.suggested.start, cut: null }; paintSong();
     };
@@ -694,34 +746,34 @@
       S.scenes.forEach((s, i) => {
         const inp = (val, ph, on, tag = 'input') => { const e = h(tag, tag === 'input' ? { type: 'text', placeholder: ph, value: val } : { rows: 3, placeholder: ph }); if (tag !== 'input') e.value = val; e.oninput = () => on(e.value); return e; };
         const dur = h('input', { type: 'number', min: 1, max: 15, step: 0.5, value: s.duration, inputmode: 'decimal' }); dur.onchange = () => { s.duration = +dur.value || 5; total.textContent = totalTxt(); };
-        const media = !s.result && s.thumb ? h('img', { src: abs(s.thumb), title: 'Original frame' }) : s.result ? (s.result.kind === 'image' ? h('img', { src: abs(s.result.url) }) : h('video', { src: abs(s.result.url), muted: true, playsinline: true, loop: true, autoplay: true })) : null;
+        const media = !s.result && s.thumb ? h('img', { src: abs(s.thumb), title: 'Originalbild' }) : s.result ? (s.result.kind === 'image' ? h('img', { src: abs(s.result.url) }) : h('video', { src: abs(s.result.url), muted: true, playsinline: true, loop: true, autoplay: true })) : null;
         const msg = h('div', { class: 'meta sc-msg' + (s.err ? ' err' : '') }, s.msg || (s.result ? s.result.engineName : ''));
         const alt = h('div', { class: 'under sc-alt' });
         if (s.err && s.offer) {
-          alt.append(h('button', { class: 'text', onclick: () => makeOne(s, 'stock').then(paintCards) }, 'Use stock instead'));
-          s.offer.forEach((e) => alt.append(h('button', { class: 'text', onclick: () => makeOne(s, e.kind, e.id).then(paintCards) }, `Try ${e.name}`)));
+          alt.append(h('button', { class: 'text', onclick: () => makeOne(s, 'stock').then(paintCards) }, 'Använd stock istället'));
+          s.offer.forEach((e) => alt.append(h('button', { class: 'text', onclick: () => makeOne(s, e.kind, e.id).then(paintCards) }, `Prova ${e.name}`)));
         }
         cards.append(h('div', { class: 'sc-card' + (s.busy ? ' working' : '') + (s.err ? ' failed' : '') + (s.result ? ' done' : '') },
-          h('div', { class: 'sc-head' }, h('b', {}, `Scene ${i + 1}`), h('label', { class: 'sc-dur' }, dur, ' s'), h('span', { class: 'sc-acts' },
-            h('button', { class: 'text dim icon', title: 'Up', 'aria-label': 'Up', disabled: i === 0, onclick: () => { S.scenes.splice(i - 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, '↑'),
-            h('button', { class: 'text dim icon', title: 'Down', 'aria-label': 'Down', disabled: i === S.scenes.length - 1, onclick: () => { S.scenes.splice(i + 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, '↓'),
-            h('button', { class: 'text dim icon danger', title: 'Delete', 'aria-label': 'Delete', onclick: () => { S.scenes.splice(i, 1); paintCards(); } }, '✕'))),
+          h('div', { class: 'sc-head' }, h('b', {}, `Scen ${i + 1}`), h('label', { class: 'sc-dur' }, dur, ' s'), h('span', { class: 'sc-acts' },
+            h('button', { class: 'text dim icon', title: 'Upp', 'aria-label': 'Upp', disabled: i === 0, onclick: () => { S.scenes.splice(i - 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, '↑'),
+            h('button', { class: 'text dim icon', title: 'Ned', 'aria-label': 'Ned', disabled: i === S.scenes.length - 1, onclick: () => { S.scenes.splice(i + 1, 0, S.scenes.splice(i, 1)[0]); paintCards(); } }, '↓'),
+            h('button', { class: 'text dim icon danger', title: 'Ta bort', 'aria-label': 'Ta bort', onclick: () => { S.scenes.splice(i, 1); paintCards(); } }, '✕'))),
           h('div', { class: 'sc-body' + (media ? ' has-media' : '') },
             media ? h('div', { class: 'sc-media' }, media) : null,
             h('div', { class: 'sc-fields' },
-              inp(s.prompt, 'Visual prompt (English)', (x) => { s.prompt = x; }, 'textarea'),
-              h('div', { class: 'sc-row' }, inp(s.keywords.join(', '), 'Stock keywords', (x) => { s.keywords = x.split(',').map((k) => k.trim()).filter(Boolean); }), inp([s.camera, s.mood].filter(Boolean).join(' · '), 'Camera · mood', (x) => { const [c, m] = x.split('·'); s.camera = (c || '').trim(); s.mood = (m || '').trim(); })),
+              inp(s.prompt, 'Bildprompt (engelska)', (x) => { s.prompt = x; }, 'textarea'),
+              h('div', { class: 'sc-row' }, inp(s.keywords.join(', '), 'Stock-sökord', (x) => { s.keywords = x.split(',').map((k) => k.trim()).filter(Boolean); }), inp([s.camera, s.mood].filter(Boolean).join(' · '), 'Kamera · stämning', (x) => { const [c, m] = x.split('·'); s.camera = (c || '').trim(); s.mood = (m || '').trim(); })),
               s.people && s.people.length ? h('div', { class: 'meta' }, `Huvudpersoner: ${s.people.map((x) => 'Person ' + x).join(', ')}${s.start != null ? ` · original ${s.start}–${s.end} s` : ''}`) : null,
-              inp(s.text, 'On-screen text (optional)', (x) => { s.text = x; }))),
+              inp(s.text, 'Text i bild (valfritt)', (x) => { s.text = x; }))),
           msg, alt));
       });
-      if (!S.scenes.length) cards.append(empty('No scenes yet.', 'Write an idea above, or use Analysera video.'));
+      if (!S.scenes.length) cards.append(empty('Inga scener än.', 'Skriv en idé ovan, eller använd Analysera video.'));
       const made = S.scenes.filter((x) => x.result).length;
-      prog.hidden = !made; prog.firstChild.style.setProperty('--w', `${S.scenes.length ? (made / S.scenes.length) * 100 : 0}%`); prog.lastChild.textContent = `${made}/${S.scenes.length} made`;
+      prog.hidden = !made; prog.firstChild.style.setProperty('--w', `${S.scenes.length ? (made / S.scenes.length) * 100 : 0}%`); prog.lastChild.textContent = `${made}/${S.scenes.length} klara`;
       total.textContent = totalTxt();
       makeBtn.disabled = !S.scenes.length || making; tlBtn.hidden = !S.scenes.some((s) => s.result);
     }
-    const totalTxt = () => (S.scenes.length ? `${S.scenes.length} scenes · ${S.scenes.reduce((a, s) => a + (+s.duration || 0), 0).toFixed(1)} s` : '');
+    const totalTxt = () => (S.scenes.length ? `${S.scenes.length} scener · ${S.scenes.reduce((a, s) => a + (+s.duration || 0), 0).toFixed(1)} s` : '');
     const total = h('span', { class: 'meta' });
     const prog = h('div', { class: 'sc-prog', hidden: true }, h('i'), h('span', { class: 'meta' }));
     const fullPrompt = (s) => {
@@ -736,50 +788,50 @@
     function paintPeople() {
       peopleBox.innerHTML = '';
       if (!(S.people && S.people.length) && !S.style) return;
-      peopleBox.append(h('b', {}, 'Huvudpersoner'), h('div', { class: 'meta' }, 'Swap or edit a character here; every scene that says “Person A” uses it.'));
+      peopleBox.append(h('b', {}, 'Huvudpersoner'), h('div', { class: 'meta' }, 'Byt eller ändra en karaktär här; varje scen som nämner ”Person A” använder den.'));
       (S.people || []).forEach((x) => { const t = h('textarea', { rows: 2 }); t.value = x.look; t.oninput = () => { x.look = t.value; }; peopleBox.append(h('label', { class: 'wide' }, `Person ${x.id}`, t)); });
-      const sty = h('textarea', { rows: 2, placeholder: 'Global style prompt' }); sty.value = S.style || ''; sty.oninput = () => { S.style = sty.value; };
-      peopleBox.append(h('label', { class: 'wide' }, 'Global style', sty));
+      const sty = h('textarea', { rows: 2, placeholder: 'Global stilprompt' }); sty.value = S.style || ''; sty.oninput = () => { S.style = sty.value; };
+      peopleBox.append(h('label', { class: 'wide' }, 'Global stil', sty));
     }
     const vidIn = h('input', { type: 'file', accept: 'video/*', hidden: true });
     const keepAudio = h('input', { type: 'checkbox', checked: true });
     vidIn.onchange = () => withBusy(status, async () => {
       const f = vidIn.files[0]; vidIn.value = ''; if (!f) return;
-      if (f.size > 80 * 1024 * 1024) return say('Video must be max 80 MB.', true);
-      say('Uploading video…');
+      if (f.size > 80 * 1024 * 1024) return say('Videon får vara max 80 MB.', true);
+      say('Laddar upp video…');
       const fd = new FormData(); fd.append('lane', st.lane); fd.append('keepAudio', keepAudio.checked ? '1' : '0'); fd.append('video', f);
       const r = await fetch(`${API}/script/analyze`, { method: 'POST', body: fd }).catch(() => null);
-      if (!r || !r.ok) return say(r ? await errMsg(r) : 'Upload failed.', true);
+      if (!r || !r.ok) return say(r ? await errMsg(r) : 'Uppladdningen misslyckades.', true);
       try {
         const out = await pollScript((await r.json()).jobId, (m) => say(m));
         S.scenes = out.scenes.map((x) => newScene(x)); S.title = out.title; S.people = out.people || []; S.style = out.style || '';
         if (out.song) { S.song = { ...out.song, fileName: `${f.name} (audio)` }; S.section = { start: 0, cut: null }; S.seconds = Math.round(out.seconds); }
         paintPeople(); paintSong(); paintCards();
-        say(`${out.scenes.length} scenes analysed by ${out.model}. ${out.note || ''} Edit Huvudpersoner and the cards, then Make scenes.`);
+        say(`${out.scenes.length} scener analyserade av ${out.model}. ${out.note || ''} Ändra Huvudpersoner och korten och tryck sedan Skapa scener.`);
       } catch (e) { say(e.message, true); }
     });
     // honest per-scene generation: a busy/failed engine is reported on the card with alternatives; never silently swapped
     async function makeOne(s, kind, engine) {
-      s.err = false; s.offer = null; s.msg = 'Working…'; s.busy = true; paintCards();
+      s.err = false; s.offer = null; s.msg = 'Jobbar…'; s.busy = true; paintCards();
       const prompt = fullPrompt(s);
       try {
         if (kind !== 'stock') {
           const chk = await fetch(`${API}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: prompt + ' ' + (s.text || '') }) }).catch(() => null);
-          if (!chk || !chk.ok) throw Object.assign(new Error(chk && chk.status === 422 ? REFUSE : 'Safety check unavailable, so this scene was not made.'), { final: true });
+          if (!chk || !chk.ok) throw Object.assign(new Error(chk && chk.status === 422 ? REFUSE : 'Säkerhetskontrollen är inte tillgänglig, så scenen gjordes inte.'), { final: true });
         }
         if (kind === 'stock') {
-          if (st.lane !== 'sfw') throw Object.assign(new Error('Stock footage is SFW lane only.'), { final: true });
+          if (st.lane !== 'sfw') throw Object.assign(new Error('Stockmaterial finns bara i SFW-läget.'), { final: true });
           const r = await fetch(`${API}/script/stock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keywords: s.keywords.length ? s.keywords : [s.prompt.split(',')[0].slice(0, 40)], seconds: s.duration }) });
           if (!r.ok) throw new Error(await errMsg(r));
           const j = await r.json(); s.result = { kind: 'video', name: j.name, url: j.url, duration: j.duration, engineName: `${j.engineName}: ${j.credit.title} by ${j.credit.by}` };
         } else if (kind === 'image') {
-          if (!engine) throw new Error('No image engine is ready right now.');
+          if (!engine) throw new Error('Ingen bildmotor är redo just nu.');
           const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine, prompt, ratio: '9:16', count: 1 }) });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) throw Object.assign(new Error(j.message || `Error ${r.status}`), { busy: j.busy, final: j.refused });
-          const im = j.images[0]; s.result = { kind: 'image', name: im.name, url: im.url, engineName: `${im.engineName || j.engineName} → still clip` };
+          const im = j.images[0]; s.result = { kind: 'image', name: im.name, url: im.url, engineName: `${im.engineName || j.engineName} → stillbildsklipp` };
         } else {
-          if (!engine) throw new Error('No AI video engine is ready right now.');
+          if (!engine) throw new Error('Ingen AI-videomotor är redo just nu.');
           const fd = new FormData(); fd.append('lane', st.lane); fd.append('engine', engine); fd.append('prompt', prompt); fd.append('seconds', String(Math.ceil(s.duration))); fd.append('ratio', '9:16');
           const r = await fetch(`${API}/video`, { method: 'POST', body: fd });
           if (!r.ok) throw new Error(await errMsg(r));
@@ -797,14 +849,14 @@
       }
     }
     async function writeScript() {
-      if (!idea.value.trim()) return say('Write an idea.', true);
-      say('Writing script…');
+      if (!idea.value.trim()) return say('Skriv en idé.', true);
+      say('Skriver manus…');
       const r = await fetch(`${API}/script`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idea: idea.value, song: S.songName || (S.song && S.song.fileName) || '', template: tplSel.value, seconds: +len.value, scenes: +count.value, reference: S.ref, lane: st.lane }) });
       if (!r.ok) return say(await errMsg(r), true);
       try {
         const out = await pollScript((await r.json()).jobId, (m) => say(m));
         S.scenes = out.scenes.map((x) => newScene(x)); S.title = out.title;
-        paintCards(); say(out.note || `Script “${out.title}” by ${out.model || out.via}. Edit, reorder or delete scenes, then Make scenes.`);
+        paintCards(); say(out.note || `Manus ”${out.title}” av ${out.model || out.via}. Ändra, flytta eller ta bort scener och tryck sedan Skapa scener.`);
       } catch (e) { say(e.message, true); }
     }
     async function makeAll() {
@@ -812,10 +864,10 @@
       making = true; makeBtn.disabled = true;
       try {
         const todo = S.scenes.filter((x) => !x.result); let n = 0;
-        for (const s of S.scenes) { if (s.result) continue; say(`Making scene ${S.scenes.indexOf(s) + 1} (${++n} of ${todo.length})…`); await makeOne(s, kind, engine); paintCards(); }
+        for (const s of S.scenes) { if (s.result) continue; say(`Gör scen ${S.scenes.indexOf(s) + 1} (${++n} av ${todo.length})…`); await makeOne(s, kind, engine); paintCards(); }
       } finally { making = false; makeBtn.disabled = !S.scenes.length; }
       const bad = S.scenes.filter((s) => !s.result).length;
-      if (bad) return say(`${bad} scene(s) not made: see the cards for alternatives.`, true);
+      if (bad) return say(`${bad} scen(er) gjordes inte: se korten för alternativ.`, true);
       await toTimeline(false);
     }
     async function toTimeline(open = true) {
@@ -828,26 +880,28 @@
       if (S.song) {
         const want = S.scenes.reduce((a, s) => a + (+s.duration || 0), 0);
         if (!S.section.cut) {
-          say('Cutting the song section…');
+          say('Klipper låtavsnittet…');
           const r = await fetch(`${API}/script/song/cut`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: S.song.name, start: S.section.start, end: S.section.start + want }) });
           if (!r.ok) return say(await errMsg(r), true);
           S.section.cut = await r.json();
         }
         T.music = { ref: S.section.cut.name, url: abs(S.section.cut.url), name: `${S.song.fileName} (${S.section.start.toFixed(1)} s →)`, volume: 1 };
       }
-      say('Scenes are in the Edit timeline, in order, with the song. Open Edit → Timeline to export mp4.');
+      say('Scenerna ligger i tidslinjen under Redigera, i ordning och med låten. Öppna Redigera → Tidslinje för att exportera mp4.');
       tlBtn.hidden = false;
       if (open) location.hash = '#/timeline';
     }
-    const makeBtn = h('button', { class: 'text primary', onclick: () => withBusy(status, makeAll).catch((e) => say(e.message, true)) }, 'Make scenes');
-    const tlBtn = h('button', { class: 'text', hidden: true, onclick: () => toTimeline(true).catch((e) => say(e.message, true)) }, 'Open in Edit');
-    const writeBtn = h('button', { class: 'go', title: 'Write script', 'aria-label': 'Write script', onclick: () => withBusy(status, writeScript).catch((e) => say(e.message, true)) }, '↑');
-    v.append(musicTabs('script'), songIn, vidIn,
-      h('div', { class: 'composer' }, h('div', { class: 'row' }, idea, writeBtn), h('div', { class: 'under' }, h('span', {}, 'Write script'), h('button', { class: 'text', type: 'button', onclick: () => vidIn.click() }, 'Analysera video'), h('label', { class: 'meta' }, keepAudio, ' keep audio as song'), h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Settings')), panel),
+    const makeBtn = h('button', { class: 'text primary', onclick: () => withBusy(status, makeAll).catch((e) => say(e.message, true)) }, 'Skapa scener');
+    const tlBtn = h('button', { class: 'text', hidden: true, onclick: () => toTimeline(true).catch((e) => say(e.message, true)) }, 'Öppna i Redigera');
+    const writeBtn = h('button', { class: 'go', title: 'Skriv manus', 'aria-label': 'Skriv manus', onclick: () => withBusy(status, writeScript).catch((e) => say(e.message, true)) }, '↑');
+    v.append(musicTabs('script'), pagehead('Manus', 'Skriv en idé eller analysera en video, justera scenkorten och skapa scenerna.'), songIn, vidIn,
+      h('div', { class: 'composer' }, h('div', { class: 'row' }, idea, writeBtn), h('div', { class: 'under' }, h('span', {}, 'Skriv manus'), h('button', { class: 'text', type: 'button', onclick: () => vidIn.click() }, 'Analysera video'), h('label', { class: 'meta' }, keepAudio, ' behåll ljudet som låt'), h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Inställningar')), panel),
       h('div', { class: 'uploads' }, songBox), peopleBox, status,
       h('div', { class: 'under sc-total' }, total, prog), cards,
-      h('div', { class: 'actbar' }, h('button', { class: 'text dim', onclick: () => { S.scenes.push(newScene()); paintCards(); } }, 'Add scene'), tlBtn, makeBtn));
+      h('div', { class: 'actbar' }, h('button', { class: 'text dim', onclick: () => { S.scenes.push(newScene()); paintCards(); } }, 'Lägg till scen'), tlBtn, makeBtn));
     paintPeople(); paintCards();
+    if (st.preset === 'analyze') say('Tryck på Analysera video och välj ett klipp (max 80 MB). Du får scenkort att ändra.');
+    st.preset = null;
   }
 
   const VIEWS = { script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView };

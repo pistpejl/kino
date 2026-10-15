@@ -1,30 +1,32 @@
 <!doctype html>
-<html lang="en">
+<html lang="sv">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#09090b">
 <meta name="color-scheme" content="dark">
-<title>KINO</title>
+<title>KINO – bild, video och musikvideo</title>
+<meta name="description" content="KINO: gör bild, video och musikvideo med AI. Skriv på svenska eller engelska.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2309090b'/%3E%3Cpath d='M20 14v36M44 14 26 33l18 17' fill='none' stroke='%23ff3b30' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
-  <a class="logo" href="#/" aria-label="KINO home">KINO</a>
-  <nav aria-label="Main">
-    <a href="#/image"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-8 9"/></svg><span>Image</span></a>
+  <a class="logo" href="#/" aria-label="KINO startsida">KINO</a>
+  <nav aria-label="Huvudmeny">
+    <a href="#/image"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-8 9"/></svg><span>Bild</span></a>
     <a href="#/video"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10.5 9.5 4 2.5-4 2.5z"/></svg><span>Video</span></a>
-    <a href="#/music"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg><span>Music</span></a>
-    <a href="#/edit"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 18M8 15.5 20 6"/></svg><span>Edit</span></a>
+    <a href="#/music"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg><span>Musik</span></a>
+    <a href="#/edit"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 18M8 15.5 20 6"/></svg><span>Redigera</span></a>
   </nav>
-  <button id="lane" class="lane" type="button" title="Switch between SFW and NSFW" aria-label="Switch lane">SFW</button>
+  <button id="lane" class="lane" type="button" role="switch" aria-checked="false" title="Byt mellan SFW och NSFW" aria-label="Byt läge mellan SFW och NSFW"><span class="ls">SFW</span><span class="ln">NSFW</span></button>
 </header>
 <main id="view"></main>
-<div id="gate" class="gate" hidden role="dialog" aria-modal="true" aria-label="Age check">
+<div id="gate" class="gate" hidden role="dialog" aria-modal="true" aria-label="Ålderskontroll">
   <div class="gatebox">
-    <p>The NSFW lane is for adults only.</p>
-    <button id="gateYes" class="text primary">I am 21 or older</button>
-    <button id="gateNo" class="text dim">Back</button>
+    <p>NSFW-läget är bara för vuxna.</p>
+    <button id="gateYes" class="text primary">Jag är 21 år eller äldre</button>
+    <button id="gateNo" class="text dim">Tillbaka</button>
   </div>
 </div>
 <script src="config.js"></script>
