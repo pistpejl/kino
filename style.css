@@ -104,9 +104,9 @@ audio { width:100%; max-width:420px; height:44px; }
 .composer { background:var(--s1); border:1px solid var(--line); border-radius:22px; padding:14px 14px 12px; margin-top:12px; transition:border-color .2s, box-shadow .2s; }
 .composer:focus-within { border-color:var(--line2); box-shadow:0 0 0 3px rgba(255,255,255,.04); }
 .row { display:flex; align-items:flex-end; gap:12px; }
-.composer textarea { flex:1; min-width:0; background:none; border:0; padding:6px 2px; font-size:17px; resize:none; min-height:64px; box-shadow:none; border-radius:0; }
-.composer textarea:focus-visible { box-shadow:none; }
-.composer textarea::placeholder { color:var(--mute); }
+.composer .row textarea { flex:1; min-width:0; background:none; border:0; padding:6px 2px; font-size:17px; resize:none; min-height:64px; box-shadow:none; border-radius:0; }
+.composer .row textarea:focus-visible { box-shadow:none; }
+textarea::placeholder, input::placeholder { color:var(--mute); opacity:1; }
 .composer .under { margin-top:8px; padding-top:12px; border-top:1px solid var(--line); }
 .composer .under select { flex:1 1 100%; min-width:0; }
 .composer .under .text { flex:1 1 auto; }
@@ -249,7 +249,7 @@ audio { width:100%; max-width:420px; height:44px; }
 .chip .ch { font-size:12px; color:var(--dim); white-space:nowrap; }
 .clips-note { padding:10px 16px 0; }
 @media (max-width:760px) { .chips { -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent); mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent); } }
-@media (min-width:761px) { .chips { flex-wrap:wrap; overflow:visible; } .composer .under select { flex:1 1 240px; } .composer .under .text { flex:0 0 auto; } }
+@media (min-width:761px) { .chips { flex-wrap:wrap; overflow:visible; } .composer .under select { flex:1 1 240px; } .composer .under .text, .composer .under > span:first-child:not(.meta) + .text { flex:0 0 auto; } }
 
 /* ---- Script mode: scene cards, progress, song picker ---- */
 .under label.meta { display:inline-flex; align-items:center; gap:8px; min-height:var(--tap); cursor:pointer; font-size:14px; }

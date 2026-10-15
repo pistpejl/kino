@@ -342,7 +342,7 @@
     paintSrc();
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'What is the video about?', noEngineText: 'No image model responding (needed without images)',
-      settings: [field('Genre', genre), field('Ratio', ratio), field('Length', len), field('Look', look), field('Action', action), field('Motion', motion), field('Stockklipp', srcToggle), field('Text overlay', overlay), g.el, field('Lyrics', lyrics, true)],
+      settings: [field('Genre', genre), field('Ratio', ratio), field('Length', len), field('Look', look), field('Action', action), field('Motion', motion, true), field('Stockklipp', srcToggle, true), field('Text overlay', overlay), g.el, field('Lyrics', lyrics, true)],
       onGo: async ({ prompt, engine, say }) => {
         if (motion.value === 'stock') {
           if (!song) return say('Stock mode needs an uploaded song.', true);
