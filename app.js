@@ -15,6 +15,10 @@
     lane: localStorage.getItem('kino.lane') === 'nsfw' && localStorage.getItem('kino.21') === '1' ? 'nsfw' : 'sfw',
     engines: {}, config: null, carry: null, results: { image: [], video: [], music: [], edit: [] },
   };
+  // UI helpers (visual only): busy spinner on a status line, segmented tabs, empty state
+  async function withBusy(el, fn) { el.classList.add('busy'); try { return await fn(); } finally { el.classList.remove('busy'); } }
+  const seg = (...items) => h('div', { class: 'seg', role: 'group' }, ...items);
+  const empty = (t, sub) => h('div', { class: 'empty' }, h('b', {}, t), sub ? h('span', {}, sub) : null);
   const abs = (u) => (/^(https?:|blob:|data:)/.test(u) ? u : API.replace(/\/api\/kino$/, '') + u);
 
   async function getEngines(lane, force) {
@@ -134,21 +138,22 @@
     const sel = h('select', { 'aria-label': 'Model' });
     const panel = h('div', { class: 'panel', hidden: true }, settings || []);
     const setBtn = h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Settings');
-    const status = h('div', { class: 'status' });
+    const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
+    sel.append(h('option', { value: '' }, 'Loading models…')); // replaced when the engine list arrives
     // optional Swedish/any-language prompt rewrite (GMV /api/prompt/enhance), minors check first
     const enhBtn = h('button', { class: 'text dim', type: 'button', onclick: async () => {
       const p0 = ta.value.trim(); if (!p0) return;
       if (minorText(p0)) { status.textContent = REFUSE; status.classList.add('err'); return; }
-      enhBtn.disabled = true; status.classList.remove('err'); status.textContent = 'Enhancing prompt…';
+      enhBtn.disabled = true; status.classList.remove('err'); status.classList.add('busy'); status.textContent = 'Enhancing prompt…';
       try {
         const r = await fetch(`${API.replace(/\/api\/kino$/, '')}/api/prompt/enhance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: p0, aspectRatio: '9:16' }) });
         const j = await r.json().catch(() => ({}));
         if (!r.ok || !j.prompt) throw new Error(j.message || 'Enhance is busy right now.');
         ta.value = j.prompt; status.textContent = `Prompt enhanced by ${j.model}. Edit it or generate.`;
-      } catch (e) { status.textContent = `Enhance failed: ${e.message}`.slice(0, 200); status.classList.add('err'); } finally { enhBtn.disabled = false; }
+      } catch (e) { status.textContent = `Enhance failed: ${e.message}`.slice(0, 200); status.classList.add('err'); } finally { enhBtn.disabled = false; status.classList.remove('busy'); }
     } }, 'Enhance prompt');
-    const box = h('div', {}, extraTop || null,
-      h('div', { class: 'composer' }, h('div', { class: 'row' }, ta, go), h('div', { class: 'under' }, sel, settings ? setBtn : null, kind === 'image' || kind === 'video' ? enhBtn : null), panel), status);
+    const comp = h('div', { class: 'composer' }, h('div', { class: 'row' }, ta, go), h('div', { class: 'under' }, sel, settings ? setBtn : null, kind === 'image' || kind === 'video' ? enhBtn : null), panel);
+    const box = h('div', {}, extraTop || null, comp, status);
     getEngines(st.lane).then((list) => {
       const ok = list.filter((e) => e.kind === engineKind);
       sel.innerHTML = '';
@@ -159,8 +164,8 @@
     function say(t, err) { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); }
     async function fire() {
       if (go.disabled) return;
-      go.disabled = true;
-      try { await onGo({ prompt: ta.value.trim(), engine: sel.value, say }); } catch (e) { say(e.message, true); } finally { go.disabled = false; }
+      go.disabled = true; go.classList.add('busy'); comp.classList.add('is-busy'); status.classList.add('busy');
+      try { await onGo({ prompt: ta.value.trim(), engine: sel.value, say }); } catch (e) { say(e.message, true); } finally { go.disabled = false; go.classList.remove('busy'); comp.classList.remove('is-busy'); status.classList.remove('busy'); }
     }
     go.onclick = fire;
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); fire(); } });
@@ -194,11 +199,11 @@
   // ---- views ----
   async function home(v) {
     const b = (lane, t, s) => h('button', { class: 'choice' + (st.lane === lane ? ' on' : ''), onclick: () => setLane(lane) }, t, h('small', {}, s));
-    const models = h('div', { class: 'models' }, 'Checking which models respond…');
+    const models = h('div', { class: 'models loading' }, 'Checking which models respond…');
     v.append(h('h1', {}, 'Image, video, music video.'), h('div', { class: 'choices' }, b('sfw', 'Normal / SFW', 'Everyday images, video and music video'), b('nsfw', 'Adult 21+ / NSFW', 'Consenting adults only')), models);
     const list = await getEngines(st.lane);
     const kinds = { image: 'Image', video: 'Video', edit: 'Edit', music: 'Song' };
-    models.innerHTML = '';
+    models.innerHTML = ''; models.classList.remove('loading');
     models.append(st.lane === 'nsfw' ? 'Responding now · NSFW' : 'Responding now · SFW');
     const ul = h('ul');
     list.forEach((e) => ul.append(h('li', {}, h('b', {}, e.name), `${kinds[e.kind] || e.kind}${e.puter ? ' · running via Puter' : ''}`)));
@@ -239,17 +244,33 @@
     const wrap = h('label', {}, label, inp);
     const o = { el: wrap, inp, ref: carry && !carry.blob ? carry.name : null, blob: carry && carry.blob ? carry.blob : null };
     if (carry) {
-      const t = h('div', { class: 'thumb' }, h('img', { src: abs(carry.url) }), h('button', { type: 'button', onclick: (e) => { e.preventDefault(); o.ref = null; o.blob = null; t.remove(); } }, '×'));
+      const t = h('div', { class: 'thumb' }, h('img', { src: abs(carry.url) }), h('button', { type: 'button', 'aria-label': 'Remove', onclick: (e) => { e.preventDefault(); o.ref = null; o.blob = null; t.remove(); } }, '×'));
       wrap.append(t);
     }
     return o;
   }
 
   const CLIP_TOOLS = [['Google Vids', 'https://vids.google.com/'], ['Google Flow', 'https://labs.google/flow'], ['Dola', 'https://www.dola.com/'], ['Grok Imagine', 'https://grok.com/imagine'], ['Digen', 'https://digen.ai/create'], ['DreamFace', 'https://www.dreamfaceapp.com/tools/free-ai-video-generator'], ['Bing Video Creator', 'https://www.bing.com/images/create/ai-video-generator'], ['PixVerse', 'https://app.pixverse.ai/'], ['Kling', 'https://kling.ai/app/'], ['Vidu', 'https://www.vidu.com/'], ['Krea', 'https://www.krea.ai/video'], ['Meta AI (bild)', 'https://www.meta.ai/'], ['giz.ai', 'https://www.giz.ai/text-to-video/'], ['Hugging Face Wan 2.2', 'https://huggingface.co/spaces/zerogpu-aoti/wan2-2-fp8da-aoti-faster'], ['Coverr', 'https://coverr.co/'], ['Mixkit', 'https://mixkit.co/free-stock-video/'], ['ImagineArt', 'https://www.imagine.art/ai-video-generator'], ['fal H3', 'https://fal.ai/minimax-h3-max'], ['fal Wan 3', 'https://fal.ai/wan-video-free'], ['Pippit', 'https://www.pippit.ai/']];
-  function clipSources() {
-    const links = h('span', { class: 'src-links' });
-    CLIP_TOOLS.forEach(([n, u]) => links.append(h('a', { class: 'text', href: u, target: '_blank', rel: 'noopener' }, n)));
-    return h('div', { class: 'srcrow' }, h('span', {}, 'Get clips from'), links, h('div', { class: 'meta' }, 'Make clips there, download them, then upload them here.'));
+  // Grouping + small free-allowance hints live in a separate map, so a new [name, url] pair added to CLIP_TOOLS still shows up (in Video-AI) without touching this.
+  // Hints are rough and can change at any time; the footnote says so.
+  const CLIP_GROUPS = [['v', 'Video-AI', 'Text/bild → videoklipp'], ['i', 'Bild-AI', 'Gör en bild, animera den under Video'], ['s', 'Stockklipp', 'Riktiga klipp, gratis att ladda ned']];
+  const CLIP_META = {
+    'Google Vids': ['v', 'några gratisklipp/mån'], 'Google Flow': ['v', 'dagskrediter (ev. plan)'], 'Dola': ['v', 'kolla gratisnivå'], 'Grok Imagine': ['v', 'gratisnivå varierar'],
+    'Digen': ['v', 'några gratisförsök/dag'], 'DreamFace': ['v', 'kolla gratisnivå'], 'Bing Video Creator': ['v', '10 snabba, sen långsamt'], 'PixVerse': ['v', 'dagskrediter'],
+    'Kling': ['v', 'gratiskrediter'], 'Vidu': ['v', 'bonus vid inloggning'], 'Krea': ['v', 'dagskrediter'], 'giz.ai': ['v', 'kolla gratisnivå'],
+    'Hugging Face Wan 2.2': ['v', 'gratis, ibland kö'], 'ImagineArt': ['v', 'dagskrediter'], 'fal H3': ['v', 'kolla gratisnivå'], 'fal Wan 3': ['v', 'kolla gratisnivå'], 'Pippit': ['v', 'kolla gratisnivå'],
+    'Meta AI (bild)': ['i', 'gratis med konto'], 'Coverr': ['s', 'gratis stockklipp'], 'Mixkit': ['s', 'gratis stockklipp'],
+  };
+  function clipSources({ open } = {}) {
+    const chip = ([n, u]) => { const hint = (CLIP_META[n] || [])[1]; return h('a', { class: 'chip', href: u, target: '_blank', rel: 'noopener' }, h('span', { class: 'cn' }, n), hint ? h('span', { class: 'ch' }, hint) : null); };
+    const groups = CLIP_GROUPS.map(([g, title, sub]) => {
+      const tools = CLIP_TOOLS.filter(([n]) => ((CLIP_META[n] || [])[0] || 'v') === g);
+      return tools.length ? h('section', { class: 'cgroup' }, h('h3', {}, title, h('small', {}, sub)), h('div', { class: 'chips' }, tools.map(chip))) : null;
+    });
+    const d = h('details', { class: 'clips' }, h('summary', {}, h('span', { class: 'ttl' }, 'Get clips from'), h('span', { class: 'count' }, `${CLIP_TOOLS.length} links`), h('span', { class: 'chev', 'aria-hidden': 'true' })),
+      h('div', { class: 'clips-body' }, ...groups, h('div', { class: 'meta clips-note' }, 'Make clips there, download them, then upload them here.'), h('div', { class: 'meta clips-note' }, 'Free allowances are rough and change often: check each service.')));
+    d.open = Boolean(open);
+    return h('div', { class: 'srcrow' }, d);
   }
   async function videoView(v) {
     const carry = st.carry; st.carry = null;
@@ -277,28 +298,28 @@
           st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); say(`Made by ${out.engineName}.`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(clipSources(), c.box, grid);
+    v.append(c.box, clipSources(), grid);
   }
 
   async function musicView(v) {
     const songIn = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-m4a,audio/mp4', hidden: true });
     const imgIn = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
     let song = null; let imgs = [];
-    const songBox = h('div');
+    const songBox = h('div', { class: 'drop' });
     const thumbs = h('div', { class: 'thumbs' });
     function paintSong() {
       songBox.innerHTML = '';
-      if (!song) return songBox.append(h('button', { class: 'text', onclick: () => songIn.click() }, 'Upload song'), h('span', { class: 'meta' }, '  mp3, wav, m4a · max 20 MB'));
-      songBox.append(h('div', {}, song.name, '  ', h('button', { class: 'text dim', onclick: () => { song = null; paintSong(); } }, 'Remove song')), h('audio', { controls: true, src: URL.createObjectURL(song) }));
+      if (!song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Upload song'), h('span', { class: 'meta' }, 'mp3, wav, m4a · max 20 MB')));
+      songBox.append(h('div', { class: 'hintline' }, h('b', {}, song.name), h('button', { class: 'text dim', onclick: () => { song = null; paintSong(); } }, 'Remove song')), h('audio', { controls: true, src: URL.createObjectURL(song) }));
     }
     function paintImgs() {
       thumbs.innerHTML = '';
-      imgs.forEach((f, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: URL.createObjectURL(f) }), h('button', { onclick: () => { imgs.splice(i, 1); paintImgs(); } }, '×'))));
+      imgs.forEach((f, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: URL.createObjectURL(f) }), h('button', { type: 'button', 'aria-label': 'Remove', onclick: () => { imgs.splice(i, 1); paintImgs(); } }, '×'))));
     }
     songIn.onchange = () => { const f = songIn.files[0]; songIn.value = ''; if (!f) return; if (f.size > 20 * 1024 * 1024 || !/\.(mp3|wav|m4a)$/i.test(f.name)) return alert('Song must be mp3, wav or m4a, max 20 MB.'); song = f; paintSong(); };
     imgIn.onchange = () => { imgs = imgs.concat([...imgIn.files]).slice(0, 8); imgIn.value = ''; paintImgs(); };
     paintSong();
-    const top = h('div', { class: 'uploads' }, songIn, imgIn, songBox, h('div', {}, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Upload images'), h('span', { class: 'meta' }, '  up to 8'), thumbs));
+    const top = h('div', { class: 'uploads' }, songIn, imgIn, songBox, h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Upload images'), h('span', { class: 'meta' }, 'up to 8')), thumbs));
     const cfg = await getConfig();
     const genre = select((cfg.genres || ['pop', 'r&b', 'rap', 'rock', 'hyperpop', 'ballad', 'rave', 'score']).map((x) => [x, x]), 'pop');
     const ratio = select([['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1']], '9:16');
@@ -311,13 +332,13 @@
     const motion = select([['none', 'none (cuts on the beat)'], ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (real motion, up to 30 s, ~1 clip/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stock clips (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – real stock footage, not AI`]] : [])], 'none');
     // Stock source: 3-way toggle Riktiga / AI / Blanda (sent as source=real|ai|mix)
     let stockSrc = 'real';
-    const srcBtns = [['real', 'Riktiga'], ['ai', 'AI'], ['mix', 'Blanda']].map(([v, t]) => h('button', { type: 'button', class: 'text', 'data-v': v, onclick: () => { stockSrc = v; paintSrc(); } }, t));
-    const srcHint = h('span', { class: 'meta' });
+    const srcBtns = [['real', 'Riktiga'], ['ai', 'AI'], ['mix', 'Blanda']].map(([v, t]) => h('button', { type: 'button', class: 'seg-b', 'data-v': v, onclick: () => { stockSrc = v; paintSrc(); } }, t));
+    const srcHint = h('span', { class: 'meta seg-hint' });
     const paintSrc = () => {
-      srcBtns.forEach((b) => { const on = b.getAttribute('data-v') === stockSrc; b.style.fontWeight = on ? '700' : '400'; b.style.textDecoration = on ? 'underline' : 'none'; b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
-      srcHint.textContent = { real: '  riktiga stockklipp (ej AI)', ai: '  AI-genererade stockklipp från Pixabay', mix: '  både riktiga och AI-genererade' }[stockSrc];
+      srcBtns.forEach((b) => { const on = b.getAttribute('data-v') === stockSrc; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+      srcHint.textContent = { real: 'riktiga stockklipp (ej AI)', ai: 'AI-genererade stockklipp från Pixabay', mix: 'både riktiga och AI-genererade' }[stockSrc];
     };
-    const srcToggle = h('div', { role: 'group', 'aria-label': 'Stockkälla' }, ...srcBtns, srcHint);
+    const srcToggle = h('div', { class: 'seg-wrap', role: 'group', 'aria-label': 'Stockkälla' }, seg(...srcBtns), srcHint);
     paintSrc();
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'What is the video about?', noEngineText: 'No image model responding (needed without images)',
@@ -368,12 +389,12 @@
     const thumbs = h('div', { class: 'thumbs' });
     function paint() {
       thumbs.innerHTML = '';
-      refs.forEach((r, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: abs(r.url) }), h('button', { onclick: () => { refs.splice(i, 1); paint(); } }, '×'))));
-      files.forEach((f, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: URL.createObjectURL(f) }), h('button', { onclick: () => { files.splice(i, 1); paint(); } }, '×'))));
+      refs.forEach((r, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: abs(r.url) }), h('button', { type: 'button', 'aria-label': 'Remove', onclick: () => { refs.splice(i, 1); paint(); } }, '×'))));
+      files.forEach((f, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: URL.createObjectURL(f) }), h('button', { type: 'button', 'aria-label': 'Remove', onclick: () => { files.splice(i, 1); paint(); } }, '×'))));
     }
     imgIn.onchange = () => { files = files.concat([...imgIn.files]).slice(0, 8); imgIn.value = ''; paint(); };
     paint();
-    const top = h('div', { class: 'uploads' }, imgIn, h('div', { class: 'under' }, h('b', {}, 'Edit'), h('a', { class: 'text dim', href: '#/timeline' }, 'Timeline')), h('div', {}, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Add reference images'), thumbs));
+    const top = h('div', { class: 'uploads' }, imgIn, h('div', { class: 'tl-top' }, seg(h('span', { class: 'on', 'aria-current': 'page' }, 'Edit'), h('a', { href: '#/timeline' }, 'Timeline'))), h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Add reference images')), thumbs));
     const grid = results('edit');
     const c = composer({ kind: 'edit', engineKind: 'edit', placeholder: 'What should change?', noEngineText: "Edit can't run right now.",
       onGo: async ({ prompt, engine, say }) => {
@@ -398,7 +419,7 @@
           st.results.edit.unshift(out); grid.prepend(resultCard(out, 'edit')); say(out.note || `Made by ${out.engineName}.`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(clipSources(), top, c.box, grid);
+    v.append(top, c.box, clipSources(), grid);
   }
 
 
@@ -446,7 +467,7 @@
     const list = h('div', { class: 'tl-list' });
     const pickBox = h('div', { class: 'tl-pick', hidden: true });
     const musicBox = h('div');
-    const status = h('div', { class: 'status' });
+    const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
     const say = (t, err) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); };
     const stage = h('div', { class: 'tl-stage' });
     const out = h('div', { class: 'results' });
@@ -460,25 +481,26 @@
     function paintPick() {
       pickBox.innerHTML = '';
       const items = sessionItems();
-      if (!items.length) pickBox.append(h('div', { class: 'meta' }, 'Nothing made this session yet.'));
+      if (!items.length) pickBox.append(empty('Nothing made this session yet.'));
       items.forEach((it) => pickBox.append(h('button', { class: 'text', onclick: async () => { await addClip(it.blob ? { kind: it.kind, file: new File([it.blob], it.name, { type: it.blob.type || 'image/jpeg' }), url: it.url, label: it.label } : { kind: it.kind, ref: it.name, url: it.url, label: it.label }); paintList(); } }, `${it.kind === 'image' ? 'Image' : 'Video'} · ${it.label}`)));
     }
     function paintMusic() {
       musicBox.innerHTML = '';
+      musicBox.className = 'drop';
       const songs = st.results.music;
       if (!T.music) {
-        musicBox.append(h('button', { class: 'text', onclick: () => musicIn.click() }, 'Upload music'));
-        songs.forEach((s) => musicBox.append(' ', h('button', { class: 'text dim', onclick: () => { T.music = { ref: s.name, url: abs(s.url), name: `KINO song (${s.credits ? s.credits.song : s.engineName})`, volume: 1 }; paintMusic(); } }, 'Use KINO song')));
+        musicBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => musicIn.click() }, 'Upload music')));
+        songs.forEach((s) => musicBox.firstChild.append(h('button', { class: 'text dim', onclick: () => { T.music = { ref: s.name, url: abs(s.url), name: `KINO song (${s.credits ? s.credits.song : s.engineName})`, volume: 1 }; paintMusic(); } }, 'Use KINO song')));
         return;
       }
       const vol = h('input', { type: 'range', min: 0, max: 1.5, step: 0.05, value: T.music.volume });
       vol.oninput = () => { T.music.volume = +vol.value; };
-      musicBox.append(h('div', {}, `Music: ${T.music.name}  `, h('button', { class: 'text dim', onclick: () => { T.music = null; paintMusic(); } }, 'Remove')), h('label', { class: 'tl-vol' }, 'Volume ', vol));
+      musicBox.append(h('div', { class: 'hintline' }, h('b', {}, `Music: ${T.music.name}`), h('button', { class: 'text dim danger', onclick: () => { T.music = null; paintMusic(); } }, 'Remove')), h('label', { class: 'tl-vol' }, 'Volume ', vol));
     }
     function num(val, on, step = 0.1) { const i = h('input', { type: 'number', step, min: 0, value: val, inputmode: 'decimal' }); i.onchange = () => on(+i.value); return i; }
     function paintList() {
       list.innerHTML = '';
-      if (!T.clips.length) list.append(h('div', { class: 'meta' }, 'No clips yet.'));
+      if (!T.clips.length) list.append(empty('No clips yet.', 'Add videos or images, or pick something made in this session.'));
       T.clips.forEach((c, idx) => {
         const handle = h('span', { class: 'tl-handle' }, 'Move');
         const txt = h('input', { type: 'text', placeholder: 'Text on clip', value: c.text });
@@ -489,7 +511,7 @@
         const thumb = c.kind === 'image' ? h('img', { src: c.url }) : h('video', { src: c.url, muted: true, playsinline: true, preload: 'metadata' });
         const row = h('div', { class: 'tl-row', 'data-id': c.id }, handle, h('div', { class: 'tl-thumb' }, thumb),
           h('div', { class: 'tl-fields' }, h('div', { class: 'meta' }, `${idx + 1}. ${c.label || c.kind}`), h('div', { class: 'tl-nums' }, ...fields), txt),
-          h('button', { class: 'text dim', onclick: () => { T.clips = T.clips.filter((x) => x !== c); paintList(); } }, 'Remove'));
+          h('button', { class: 'text dim danger', onclick: () => { T.clips = T.clips.filter((x) => x !== c); paintList(); } }, 'Remove'));
         dragify(handle, row);
         list.append(row);
       });
@@ -561,14 +583,13 @@
     }
     const prevBtn = h('button', { class: 'text', onclick: preview }, 'Preview');
     v.append(
-      clipSources(),
-      h('div', { class: 'under tl-top' }, h('a', { class: 'text dim', href: '#/edit' }, 'Edit'), h('b', {}, 'Timeline'), field('Ratio', ratio)),
+      h('div', { class: 'tl-top' }, seg(h('a', { href: '#/edit' }, 'Edit'), h('span', { class: 'on', 'aria-current': 'page' }, 'Timeline')), field('Ratio', ratio)),
       fileIn, musicIn,
       h('div', { class: 'uploads' },
-        h('div', {}, h('button', { class: 'text', onclick: () => { pickBox.hidden = !pickBox.hidden; paintPick(); } }, 'Add from this session'), '  ', h('button', { class: 'text', onclick: () => fileIn.click() }, 'Add videos / images')),
-        pickBox, list, musicBox),
+        h('div', { class: 'under' }, h('button', { class: 'text primary', onclick: () => fileIn.click() }, 'Add videos / images'), h('button', { class: 'text', onclick: () => { pickBox.hidden = !pickBox.hidden; paintPick(); } }, 'Add from this session')),
+        pickBox, clipSources(), list, musicBox),
       stage,
-      h('div', { class: 'under' }, prevBtn, h('button', { class: 'text', onclick: () => exportMp4().catch((e) => say(e.message, true)) }, 'Export mp4')),
+      h('div', { class: 'actbar' }, prevBtn, h('button', { class: 'text primary', onclick: () => withBusy(status, () => exportMp4()).catch((e) => say(e.message, true)) }, 'Export mp4')),
       status, out);
     paintList(); paintMusic(); paintStage();
   }
@@ -577,7 +598,7 @@
   // ---- Script mode (storyboard): idea -> scene cards -> make scenes -> Edit timeline ----
   st.sc = st.sc || { scenes: [], song: null, section: null, ref: '', template: 'standard', seq: 0 };
   const BASE = API.replace(/\/api\/kino$/, '');
-  const musicTabs = (on) => h('div', { class: 'under tl-top' }, on === 'mv' ? h('b', {}, 'Music video') : h('a', { class: 'text dim', href: '#/music' }, 'Music video'), on === 'script' ? h('b', {}, 'Script') : h('a', { class: 'text dim', href: '#/script' }, 'Script'));
+  const musicTabs = (on) => h('div', { class: 'tl-top' }, seg(on === 'mv' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Music video') : h('a', { href: '#/music' }, 'Music video'), on === 'script' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Script') : h('a', { href: '#/script' }, 'Script')));
   async function pollScript(id, onMsg) {
     for (;;) {
       await new Promise((r) => setTimeout(r, 2500));
