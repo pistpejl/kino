@@ -289,6 +289,5 @@ audio { width:100%; max-width:420px; height:44px; }
 .sc-people:empty { display:none; }
 .composer .under > span:first-child:not(.meta) { flex:1 1 100%; font-size:13px; font-weight:600; color:var(--dim); }
 .composer .under > span:first-child:not(.meta) + .text { flex:1 1 auto; }
-/* result media: shimmer placeholder until the image/video has loaded */
-.card img { min-height:140px; background:linear-gradient(90deg,#101014 25%,#18181d 50%,#101014 75%); background-size:200% 100%; animation:shimmer 1.4s linear infinite; }
-.card img:not([src=""]) { object-fit:contain; }
+/* result media: reserve some height until the image has loaded */
+.card img { min-height:140px; background:#101014; }
