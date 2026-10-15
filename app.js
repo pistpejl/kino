@@ -103,7 +103,7 @@
 
   // ---- lane ----
   const laneBtn = $('#lane');
-  function paintLane() { laneBtn.textContent = st.lane === 'nsfw' ? 'NSFW' : 'SFW'; laneBtn.classList.toggle('nsfw', st.lane === 'nsfw'); }
+  function paintLane() { laneBtn.textContent = st.lane === 'nsfw' ? 'NSFW' : 'SFW'; laneBtn.classList.toggle('nsfw', st.lane === 'nsfw'); laneBtn.setAttribute('aria-label', `Lane: ${laneBtn.textContent}. Tap to switch`); }
   function setLane(l) {
     if (l === 'nsfw' && localStorage.getItem('kino.21') !== '1') {
       $('#gate').hidden = false;
@@ -821,8 +821,11 @@
   const VIEWS = { script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView };
   function route() {
     const k = (location.hash.replace(/^#\/?/, '').split('?')[0]) || '';
-    document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('on', a.getAttribute('href') === `#/${k === 'timeline' ? 'edit' : k === 'script' ? 'music' : k}`));
-    const v = $('#view'); v.innerHTML = '';
+    document.querySelectorAll('nav a').forEach((a) => {
+      const on = a.getAttribute('href') === `#/${k === 'timeline' ? 'edit' : k === 'script' ? 'music' : k}`;
+      a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    });
+    const v = $('#view'); v.innerHTML = ''; window.scrollTo(0, 0);
     (VIEWS[k] || home)(v);
   }
   window.addEventListener('hashchange', route);
