@@ -298,17 +298,19 @@
     return o;
   }
 
-  const CLIP_TOOLS = [['Google Vids', 'https://vids.google.com/'], ['Google Flow', 'https://labs.google/flow'], ['Dola', 'https://www.dola.com/'], ['Grok Imagine', 'https://grok.com/imagine'], ['Digen', 'https://digen.ai/create'], ['DreamFace', 'https://www.dreamfaceapp.com/tools/free-ai-video-generator'], ['Bing Video Creator', 'https://www.bing.com/images/create/ai-video-generator'], ['PixVerse', 'https://app.pixverse.ai/'], ['Kling', 'https://kling.ai/app/'], ['Vidu', 'https://www.vidu.com/'], ['Krea', 'https://www.krea.ai/video'], ['Meta AI (bild)', 'https://www.meta.ai/'], ['giz.ai', 'https://www.giz.ai/text-to-video/'], ['Hugging Face Wan 2.2', 'https://huggingface.co/spaces/zerogpu-aoti/wan2-2-fp8da-aoti-faster'], ['Coverr', 'https://coverr.co/'], ['Mixkit', 'https://mixkit.co/free-stock-video/'], ['ImagineArt', 'https://www.imagine.art/ai-video-generator'], ['fal H3', 'https://fal.ai/minimax-h3-max'], ['fal Wan 3', 'https://fal.ai/wan-video-free'], ['Pippit', 'https://www.pippit.ai/'], ['ToolFK Wan', 'https://www.toolfk.com/tools/hf-wan-image-to-video.html'], ['ToolFK Bild', 'https://www.toolfk.com/tools/online-text-to-img.html']];
+  const CLIP_TOOLS = [['Google Vids', 'https://vids.google.com/'], ['Google Flow', 'https://labs.google/flow'], ['Dola', 'https://www.dola.com/'], ['Grok Imagine', 'https://grok.com/imagine'], ['Digen', 'https://digen.ai/create'], ['DreamFace', 'https://www.dreamfaceapp.com/tools/free-ai-video-generator'], ['Bing Video Creator', 'https://www.bing.com/images/create/ai-video-generator'], ['PixVerse', 'https://app.pixverse.ai/'], ['Kling', 'https://kling.ai/app/'], ['Vidu', 'https://www.vidu.com/'], ['Krea', 'https://www.krea.ai/video'], ['Meta AI (bild)', 'https://www.meta.ai/'], ['giz.ai', 'https://www.giz.ai/text-to-video/'], ['Hugging Face Wan 2.2', 'https://huggingface.co/spaces/zerogpu-aoti/wan2-2-fp8da-aoti-faster'], ['Coverr', 'https://coverr.co/'], ['Mixkit', 'https://mixkit.co/free-stock-video/'], ['ImagineArt', 'https://www.imagine.art/ai-video-generator'], ['fal H3', 'https://fal.ai/minimax-h3-max'], ['fal Wan 3', 'https://fal.ai/wan-video-free'], ['Pippit', 'https://www.pippit.ai/'], ['ToolFK Wan', 'https://www.toolfk.com/tools/hf-wan-image-to-video.html'], ['ToolFK Bild', 'https://www.toolfk.com/tools/online-text-to-img.html'], ['Finputsa i OpenCut', 'https://opencut.app']];
   // Grouping + small free-allowance hints live in a separate map, so a new [name, url] pair added to CLIP_TOOLS still shows up (in Video-AI) without touching this.
   // Hints are rough and can change at any time; the footnote says so.
-  const CLIP_GROUPS = [['v', 'Video-AI', 'Text/bild → videoklipp'], ['i', 'Bild-AI', 'Gör en bild, animera den under Video'], ['s', 'Stockklipp', 'Riktiga klipp, gratis att ladda ned']];
+  const CLIP_GROUPS = [['v', 'Video-AI', 'Text/bild → videoklipp'], ['i', 'Bild-AI', 'Gör en bild, animera den under Video'], ['s', 'Stockklipp', 'Riktiga klipp, gratis att ladda ned'], ['e', 'Redigera', 'Finputsa klippen du laddat ned']];
   const CLIP_META = {
     'Google Vids': ['v', 'några gratisklipp/mån'], 'Google Flow': ['v', 'dagskrediter (ev. plan)'], 'Dola': ['v', 'kolla gratisnivå'], 'Grok Imagine': ['v', 'gratisnivå varierar'],
     'Digen': ['v', 'några gratisförsök/dag'], 'DreamFace': ['v', 'kolla gratisnivå'], 'Bing Video Creator': ['v', '10 snabba, sen långsamt'], 'PixVerse': ['v', 'dagskrediter'],
     'Kling': ['v', 'gratiskrediter'], 'Vidu': ['v', 'bonus vid inloggning'], 'Krea': ['v', 'dagskrediter'], 'giz.ai': ['v', 'kolla gratisnivå'],
     'Hugging Face Wan 2.2': ['v', 'gratis, ibland kö'], 'ImagineArt': ['v', 'dagskrediter'], 'fal H3': ['v', 'kolla gratisnivå'], 'fal Wan 3': ['v', 'kolla gratisnivå'], 'Pippit': ['v', 'kolla gratisnivå'], 'ToolFK Wan': ['v', 'bild till video, gratis dagskvot, gäster har gräns'],
-    'Meta AI (bild)': ['i', 'gratis med konto'], 'ToolFK Bild': ['i', 'Flux, FLUX.2 Dev'], 'Coverr': ['s', 'gratis stockklipp'], 'Mixkit': ['s', 'gratis stockklipp'],
+    'Meta AI (bild)': ['i', 'gratis med konto'], 'ToolFK Bild': ['i', 'Flux, FLUX.2 Dev'], 'Coverr': ['s', 'gratis stockklipp'], 'Mixkit': ['s', 'gratis stockklipp'], 'Finputsa i OpenCut': ['e', 'gratis editor i webbläsaren'],
   };
+  // Small secondary link to a free in-browser editor (shown on Tidslinje and Klipp results).
+  const finputsaLink = (cls = '') => h('div', { class: ('meta finputsa ' + cls).trim() }, h('a', { href: 'https://opencut.app', target: '_blank', rel: 'noopener' }, 'Finputsa i OpenCut'), ' – gratis editor i webbläsaren, filerna stannar på din enhet');
   function clipSources({ open } = {}) {
     const chip = ([n, u]) => { const hint = (CLIP_META[n] || [])[1]; return h('a', { class: 'chip', href: u, target: '_blank', rel: 'noopener' }, h('span', { class: 'cn' }, n), hint ? h('span', { class: 'ch' }, hint) : null); };
     const groups = CLIP_GROUPS.map(([g, title, sub]) => {
@@ -642,6 +644,7 @@
       h('div', { class: 'uploads' },
         h('div', { class: 'under' }, h('button', { class: 'text primary', onclick: () => fileIn.click() }, 'Lägg till videor / bilder'), h('button', { class: 'text', onclick: () => { pickBox.hidden = !pickBox.hidden; paintPick(); } }, 'Lägg till från sessionen')),
         pickBox, clipSources(), list, musicBox),
+      finputsaLink(),
       stage,
       h('div', { class: 'actbar' }, prevBtn, h('button', { class: 'text primary', onclick: () => withBusy(status, () => exportMp4()).catch((e) => say(e.message, true)) }, 'Exportera mp4')),
       status, out);
@@ -1000,6 +1003,7 @@
       if (R.mode === 'icke-tal') out.append(h('div', { class: 'status kl-wide' }, 'Inget tal hittades eller kunde läsas, så klippen valdes efter ljudstyrka och scenbyten. Det är ingen AI-bedömning, och textremsor saknas.'));
       R.clips.forEach((c, i) => out.append(clipCard(c, i)));
       out.append(h('div', { class: 'meta kl-wide' }, `Klippen och originalet raderas från servern efter ca ${R.expiresInMin} minuter. Ladda ner det du vill ha.`));
+      out.append(finputsaLink('kl-wide'));
     }
     async function pollKlipp(id, on) {
       for (let miss = 0; ;) {

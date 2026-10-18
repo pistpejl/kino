@@ -366,3 +366,7 @@ textarea::placeholder, input::placeholder { color:var(--mute); opacity:1; }
 .kcard .acts select { min-height:var(--tap); flex:0 0 auto; padding:0 8px; font-size:14px; }
 .kcard .kl-note { padding:0 14px 12px; }
 .kcard .kl-note:empty { display:none; }
+.finputsa { margin-top:12px; font-size:13px; }
+.finputsa a { color:var(--fg); text-decoration:underline; text-decoration-color:var(--line2); text-underline-offset:3px; }
+.finputsa a::after { content:" ↗"; font-size:11px; color:var(--mute); }
+.finputsa a:hover { text-decoration-color:var(--accent-fg); }
