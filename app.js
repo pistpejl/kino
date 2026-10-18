@@ -25,9 +25,13 @@
     const c = st.engines[lane];
     if (!force && c && Date.now() - c.at < 5 * 60000) return c.list;
     const r = await fetch(`${API}/engines?lane=${lane}`).then((x) => x.json()).catch(() => ({ engines: [] }));
-    st.engines[lane] = { at: Date.now(), list: [...(r.engines || []), ...puterEngines(lane)] };
+    st.engines[lane] = { at: Date.now(), list: [...(r.engines || []), ...puterEngines(lane)], inactive: r.inactive || [] };
     return st.engines[lane].list;
   }
+  const getInactive = (lane) => (st.engines[lane] && st.engines[lane].inactive) || [];
+  // option / list label: real engine name + small tags (gratis, kö, NSFW-läge, bara SFW)
+  const engineLabel = (e) => e.name + ((e.tags && e.tags.length) ? ` · ${e.tags.join(' · ')}` : '');
+  const QUEUE_HINT = 'Gratis och delad: kön kan ta 10 sekunder till flera minuter. Du ser köplats och beräknad tid och kan avbryta.';
   async function getConfig() {
     if (!st.config) st.config = await fetch(`${API}/config`).then((x) => x.json()).catch(() => ({ grok: { available: false, message: 'Grok kräver en API-nyckel' } }));
     return st.config;
@@ -126,11 +130,12 @@
   // ---- jobs ----
   async function poll(id, onMsg) {
     for (;;) {
-      await new Promise((r) => setTimeout(r, 3000));
+      await new Promise((r) => setTimeout(r, 2500));
       const j = await fetch(`${API}/jobs/${id}`).then((x) => x.json()).catch(() => null);
       if (!j) continue;
       if (j.status === 'done') return j.result;
-      if (j.status === 'error') throw Object.assign(new Error(j.error), { busy: j.busy });
+      if (j.status === 'cancelled') throw Object.assign(new Error(j.error || 'Avbruten.'), { cancelled: true });
+      if (j.status === 'error') throw Object.assign(new Error(j.error), { busy: j.busy, quota: j.quota, refused: j.refused });
       onMsg && onMsg(j.message);
     }
   }
@@ -143,6 +148,13 @@
     const panel = h('div', { class: 'panel', hidden: true }, settings || []);
     const setBtn = h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Inställningar');
     const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
+    const cancelBtn = h('button', { class: 'text cancel', type: 'button', hidden: true }, 'Avbryt');
+    const hint = h('div', { class: 'hint', hidden: true });
+    const inact = h('details', { class: 'inact', hidden: true });
+    let engList = [];
+    const setCancel = (fn) => { cancelBtn.hidden = !fn; cancelBtn.disabled = false; cancelBtn.onclick = fn ? async () => { cancelBtn.disabled = true; cancelBtn.textContent = 'Avbryter…'; try { await fn(); } finally { cancelBtn.textContent = 'Avbryt'; } } : null; };
+    const showHint = () => { const e = engList.find((x) => x.id === sel.value); hint.hidden = !(e && e.async); hint.textContent = e && e.async ? `${e.name}: ${QUEUE_HINT}${e.detail ? ` Läget nu: ${e.detail}.` : ''}` : ''; };
+    sel.addEventListener('change', showHint);
     sel.append(h('option', { value: '' }, 'Laddar modeller…')); // replaced when the engine list arrives
     // optional Swedish/any-language prompt rewrite (GMV /api/prompt/enhance), minors check first
     const enhBtn = h('button', { class: 'text dim', type: 'button', onclick: async () => {
@@ -157,11 +169,17 @@
       } catch (e) { status.textContent = `Det gick inte att förbättra: ${e.message}`.slice(0, 200); status.classList.add('err'); } finally { enhBtn.disabled = false; status.classList.remove('busy'); }
     } }, 'Förbättra prompt');
     const comp = h('div', { class: 'composer' }, h('div', { class: 'row' }, ta, go), h('div', { class: 'under' }, sel, settings ? setBtn : null, kind === 'image' || kind === 'video' ? enhBtn : null), panel);
-    const box = h('div', {}, extraTop || null, comp, status);
+    const box = h('div', {}, extraTop || null, comp, hint, status, h('div', { class: 'cancelrow' }, cancelBtn), inact);
     getEngines(st.lane).then((list) => {
-      const ok = list.filter((e) => e.kind === engineKind);
+      const ok = list.filter((e) => e.kind === engineKind && !(kind === 'music' && e.noMusic));
+      engList = ok;
       sel.innerHTML = '';
-      ok.forEach((e) => sel.append(h('option', { value: e.id }, e.name)));
+      ok.forEach((e) => sel.append(h('option', { value: e.id, title: e.detail || '' }, engineLabel(e))));
+      // engines that exist but are not usable right now (missing server keys, no free image quota, queue closed): greyed, with the honest reason
+      const off = kind === 'image' ? getInactive(st.lane).filter((e) => e.kind === 'image') : [];
+      off.forEach((e) => sel.append(h('option', { value: '', disabled: true, title: e.note }, `${e.name} · ej aktiv${(e.tags || []).length ? ' · ' + e.tags.join(' · ') : ''}`)));
+      if (off.length) { inact.hidden = false; inact.append(h('summary', {}, `Ej aktiva modeller (${off.length})`), ...off.map((e) => h('p', {}, h('b', {}, e.name), ' – ', e.note))); }
+      showHint();
       if (!ok.length) { sel.append(h('option', { value: '' }, noEngineText || 'Ingen modell svarar just nu')); sel.disabled = true; if (kind !== 'video' && kind !== 'music') go.disabled = true; }
       if (kind === 'edit' && !ok.length) say('Redigering fungerar inte just nu.', true);
     });
@@ -169,10 +187,26 @@
     async function fire() {
       if (go.disabled) return;
       go.disabled = true; go.classList.add('busy'); comp.classList.add('is-busy'); status.classList.add('busy');
-      try { await onGo({ prompt: ta.value.trim(), engine: sel.value, say }); } catch (e) { say(e.message, true); } finally { go.disabled = false; go.classList.remove('busy'); comp.classList.remove('is-busy'); status.classList.remove('busy'); }
+      try { await onGo({ prompt: ta.value.trim(), engine: sel.value, say, setCancel }); } catch (e) { say(e.message, !e.cancelled); } finally { setCancel(null); go.disabled = false; go.classList.remove('busy'); comp.classList.remove('is-busy'); status.classList.remove('busy'); }
     }
     go.onclick = fire;
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); fire(); } });
+    // optional Gemini prompt rewrite (free text model; SFW lane only; image output is paid-only at Google so there is no Gemini image engine)
+    if (kind === 'image' && st.lane === 'sfw') getConfig().then((c) => {
+      if (!c.gemini || !c.gemini.available) return;
+      const gb = h('button', { class: 'text dim', type: 'button', onclick: async () => {
+        const p0 = ta.value.trim(); if (!p0) return;
+        if (minorText(p0)) { status.textContent = REFUSE; status.classList.add('err'); return; }
+        gb.disabled = true; status.classList.remove('err'); status.classList.add('busy'); status.textContent = 'Gemini skriver om prompten…';
+        try {
+          const r = await fetch(`${API}/gemini/rewrite`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: 'sfw', prompt: p0 }) });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || !j.prompt) throw new Error(j.message || 'Gemini är upptaget just nu.');
+          ta.value = j.prompt; status.textContent = `Prompten skrevs om av ${j.engineName}. Ändra den eller skapa.`;
+        } catch (e) { status.textContent = String(e.message).slice(0, 220); status.classList.add('err'); } finally { gb.disabled = false; status.classList.remove('busy'); }
+      } }, 'Förbättra med Gemini');
+      $('.under', comp).append(gb);
+    });
     return { box, ta, sel, say, panel };
   }
   const field = (label, input, wide) => h('label', { class: wide ? 'wide' : null }, label, input);
@@ -254,7 +288,8 @@
     models.innerHTML = '';
     models.append(h('summary', {}, h('span', { class: 'ttl' }, `Modeller som svarar nu · ${nsfw ? 'NSFW' : 'SFW'}`), h('span', { class: 'count' }, String(list.length)), h('span', { class: 'chev', 'aria-hidden': 'true' })));
     const ul = h('ul');
-    list.forEach((e) => ul.append(h('li', {}, h('b', {}, e.name), `${kinds[e.kind] || e.kind}${e.puter ? ' · körs via Puter' : ''}`)));
+    list.forEach((e) => ul.append(h('li', {}, h('b', {}, e.name, ...(e.tags || []).map((t) => h('span', { class: 'etag' + (t === 'NSFW-läge' ? ' nsfw' : '') }, t))), `${kinds[e.kind] || e.kind}${e.puter ? ' · körs via Puter' : ''}`)));
+    getInactive(st.lane).forEach((e) => ul.append(h('li', { class: 'off', title: e.note }, h('b', {}, e.name, ...(e.tags || []).map((t) => h('span', { class: 'etag' }, t)), h('span', { class: 'etag off' }, 'ej aktiv')), h('span', { class: 'why' }, e.note))));
     if (!list.length) ul.append(h('li', {}, 'Ingen modell svarar just nu.'));
     models.append(ul);
   }
@@ -266,7 +301,7 @@
     const lora = select([['auto', 'auto'], ['none', 'ingen'], ['photo', 'foto'], ['cinematic', 'filmisk']], 'auto');
     const grid = results('image');
     const c = composer({ kind: 'image', engineKind: 'image', placeholder: 'Beskriv en bild', settings: [field('Format', ratio), field('Upplösning', res), field('Antal', count), field('LoRA', lora)],
-      onGo: async ({ prompt, engine, say }) => {
+      onGo: async ({ prompt, engine, say, setCancel }) => {
         if (!prompt) return say('Skriv en prompt.', true);
         if (engine.startsWith('puter:')) {
           const n = Math.max(1, Math.min(4, +count.value || 1));
@@ -280,9 +315,15 @@
         say('Skapar…');
         const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine, prompt, ratio: ratio.value, resolution: res.value, count: count.value, lora: lora.value }) });
         if (!r.ok) return say(await errMsg(r), true);
-        const j = await r.json();
+        let j = await r.json();
+        if (j.async) {
+          // queue-based engine (AI Horde): live queue position / estimated wait from the server, with a cancel button
+          setCancel(async () => { await fetch(`${API}/jobs/${j.jobId}`, { method: 'DELETE' }).catch(() => null); });
+          j = await poll(j.jobId, (m) => say(m));
+          setCancel(null);
+        }
         j.images.forEach((i) => { st.results.image.unshift(i); grid.prepend(resultCard(i, 'image')); });
-        say(j.loraNote || `Gjord av ${j.engineName}.`);
+        say(j.loraNote || (j.images[0] && j.images[0].waitedSeconds != null ? `Gjord av ${j.engineName} (${j.images[0].waitedSeconds} s totalt).${j.note ? ' ' + j.note : ''}` : `Gjord av ${j.engineName}.`));
       } });
     v.append(pagehead('Bild', 'Skriv vad du vill se. Välj modell och format under Inställningar.'), c.box, grid);
   }
@@ -832,8 +873,9 @@
         } else if (kind === 'image') {
           if (!engine) throw new Error('Ingen bildmotor är redo just nu.');
           const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine, prompt, ratio: '9:16', count: 1 }) });
-          const j = await r.json().catch(() => ({}));
+          let j = await r.json().catch(() => ({}));
           if (!r.ok) throw Object.assign(new Error(j.message || `Error ${r.status}`), { busy: j.busy, final: j.refused });
+          if (j.async) j = await poll(j.jobId, (m) => { s.msg = m; const n = cards.children[S.scenes.indexOf(s)]; if (n) n.querySelector('.sc-msg').textContent = m; });
           const im = j.images[0]; s.result = { kind: 'image', name: im.name, url: im.url, engineName: `${im.engineName || j.engineName} → stillbildsklipp` };
         } else {
           if (!engine) throw new Error('Ingen AI-videomotor är redo just nu.');
