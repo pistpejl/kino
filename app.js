@@ -212,6 +212,7 @@
     stock: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M12 16v4M3 10h18M8 4v6M16 4v6"/>',
     edit: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 18M8 15.5 20 6"/>',
     timeline: '<rect x="3" y="6" width="7" height="12" rx="2"/><rect x="12" y="6" width="9" height="12" rx="2"/>',
+    klipp: '<circle cx="6" cy="6.5" r="2.5"/><circle cx="6" cy="17.5" r="2.5"/><path d="M8.2 7.8 20 16M8.2 16.2 14 12.3"/><rect x="15" y="4" width="6" height="6" rx="1.5"/>',
   };
   const icon = (k) => { const e = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); e.setAttribute('viewBox', '0 0 24 24'); e.setAttribute('aria-hidden', 'true'); e.innerHTML = ICONS[k]; return e; };
   async function home(v) {
@@ -226,10 +227,11 @@
       ['stock', 'Stockklipp', 'Riktiga klipp till din låt', '#/music', 'stock', true],
       ['edit', 'Redigera', 'Ändra en bild med text', '#/edit'],
       ['timeline', 'Tidslinje', 'Klipp ihop och exportera mp4', '#/timeline'],
+      ['klipp', 'Klipp ur lång video', 'Ladda upp en lång video, få de bästa korta klippen med text', '#/klipp', null, false, true],
     ];
-    const tile = ([ic, t, d, href, preset, sfwOnly]) => {
+    const tile = ([ic, t, d, href, preset, sfwOnly, wide]) => {
       const off = Boolean(sfwOnly && nsfw);
-      return h('a', { class: 'tile' + (off ? ' off' : ''), href: off ? null : href, 'aria-disabled': off ? 'true' : null, onclick: () => { st.preset = preset || null; } },
+      return h('a', { class: 'tile' + (off ? ' off' : '') + (wide ? ' wide' : ''), href: off ? null : href, 'aria-disabled': off ? 'true' : null, onclick: () => { st.preset = preset || null; } },
         h('span', { class: 'ti' }, icon(ic)), h('b', {}, t), h('small', {}, off ? 'Bara i SFW-läget' : d));
     };
     const models = h('details', { class: 'models' }, h('summary', {}, h('span', { class: 'ttl' }, 'Kollar vilka modeller som svarar…')));
@@ -904,7 +906,161 @@
     st.preset = null;
   }
 
-  const VIEWS = { script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView };
+
+  // ---- Klipp (Opus Clip-style): long video -> best short clips with captions ----
+  st.kl = st.kl || { job: null, status: null, progress: 0, message: '', info: {}, result: null, error: null, refused: false, opts: { count: '4', length: 'auto', aspect: '9:16', crop: 'center', captions: true, lang: 'auto', hint: '', url: '' }, fileName: '' };
+  const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(n >= 10485760 ? 0 : 1)} MB` : `${Math.max(1, Math.round(n / 1024))} kB`);
+  const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  const KL_MAX_MB = 200; const KL_MAX_MIN = 30;
+  const CROP_SV = { center: 'Mitten', left: 'Vänster', right: 'Höger', smart: 'Smart (följer rörelse)' };
+  function uploadKlipp(fd, onPct) {
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest(); x.open('POST', `${API}/klipp`); x.responseType = 'json';
+      x.upload.onprogress = (e) => { if (e.lengthComputable) onPct(e.loaded / e.total); };
+      x.onload = () => { const j = x.response || {}; if (x.status >= 200 && x.status < 300 && j.jobId) resolve(j); else reject(new Error(j.message || (x.status === 413 ? `Filen är för stor. Max ${KL_MAX_MB} MB.` : `Uppladdningen misslyckades (${x.status}).`))); };
+      x.onerror = () => reject(new Error('Ingen kontakt med servern. Kolla nätet och försök igen.'));
+      x.ontimeout = () => reject(new Error('Uppladdningen tog för lång tid.'));
+      x.timeout = 20 * 60000; x.send(fd);
+    });
+  }
+  async function klippView(v) {
+    const K = st.kl; const O = K.opts;
+    const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
+    const say = (t, err, busy) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); status.classList.toggle('busy', Boolean(busy)); status.hidden = !t; };
+    say('');
+    const fileIn = h('input', { type: 'file', accept: 'video/*,.mp4,.mov,.webm,.mkv,.m4v', 'aria-label': 'Välj video' });
+    let file = null;
+    const fileInfo = h('div', { class: 'meta kl-file' }, K.fileName ? `Senast: ${K.fileName}` : 'Ingen video vald än.');
+    fileIn.onchange = () => {
+      file = fileIn.files[0] || null;
+      if (!file) { fileInfo.textContent = 'Ingen video vald än.'; return; }
+      fileInfo.textContent = `${file.name} · ${fmtBytes(file.size)}`;
+      if (file.size > KL_MAX_MB * 1048576) { fileInfo.textContent += ` – för stor, max ${KL_MAX_MB} MB.`; fileInfo.classList.add('err'); } else fileInfo.classList.remove('err');
+    };
+    const url = h('input', { type: 'text', inputmode: 'url', placeholder: 'https://…/video.mp4', value: O.url || '', 'aria-label': 'Direktlänk till en videofil' }); url.oninput = () => { O.url = url.value; };
+    const count = select([['3', '3 klipp'], ['4', '4 klipp'], ['5', '5 klipp'], ['6', '6 klipp']], O.count); count.onchange = () => { O.count = count.value; };
+    const length = select([['auto', 'Auto, 15–60 s'], ['kort', 'Kort, 15–30 s'], ['mellan', 'Mellan, 30–45 s'], ['lang', 'Lång, 45–60 s']], O.length); length.onchange = () => { O.length = length.value; };
+    const aspect = select([['9:16', '9:16 (stående)'], ['1:1', '1:1 (kvadrat)'], ['16:9', '16:9 (liggande)']], O.aspect); aspect.onchange = () => { O.aspect = aspect.value; };
+    const crop = select(Object.entries(CROP_SV), O.crop); crop.onchange = () => { O.crop = crop.value; };
+    const lang = select([['auto', 'Hitta språk själv'], ['sv', 'Svenska'], ['en', 'Engelska']], O.lang); lang.onchange = () => { O.lang = lang.value; };
+    const caps = h('input', { type: 'checkbox', checked: O.captions }); caps.onchange = () => { O.captions = caps.checked; };
+    const hint = h('input', { type: 'text', maxlength: 200, placeholder: 'valfritt, t.ex. tips om sömn', value: O.hint || '' }); hint.oninput = () => { O.hint = hint.value; };
+    const go = h('button', { class: 'text primary lg', type: 'button' }, 'Skapa klipp');
+    const bar = h('div', { class: 'kprog', hidden: true, role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100' }, h('i'));
+    const how = h('div', { class: 'khow', hidden: true });
+    const out = h('div', { class: 'results kresults', 'data-empty': 'Dina klipp visas här.' });
+    const setBar = (p) => { bar.hidden = p == null; if (p != null) { bar.firstChild.style.width = `${Math.round(p * 100)}%`; bar.setAttribute('aria-valuenow', String(Math.round(p * 100))); } };
+
+    function paintHow(info) {
+      how.innerHTML = '';
+      const i = info || {}; const rows = [];
+      if (i.transkribering) rows.push(['Transkribering', i.transkribering.text]);
+      if (i.urval) rows.push(['Urval', i.urval.text]);
+      if (i.safety) rows.push(['Säkerhet', i.safety]);
+      if (i.note) rows.push(['Obs', i.note]);
+      how.hidden = !rows.length;
+      if (rows.length) how.append(h('b', {}, 'Så gjordes det'), ...rows.map(([k, t]) => h('div', {}, h('span', {}, k), t)));
+    }
+    function clipCard(c, idx) {
+      const [aw, ah] = c.aspect.split(':').map(Number);
+      const vid = h('video', { controls: true, playsinline: true, preload: 'none', poster: c.thumb ? abs(c.thumb) : null, src: abs(c.url), style: `aspect-ratio:${aw} / ${ah}` });
+      const score = c.score == null ? h('span', { class: 'score none', title: 'Inget AI-betyg i det här läget' }, 'Betyg: –') : h('span', { class: 'score ' + (c.score >= 80 ? 'hi' : c.score >= 60 ? 'mid' : 'lo') }, h('b', {}, String(c.score)), '/100 viralitetsbetyg');
+      const sel = select([['15', '15 s'], ['30', '30 s'], ['45', '45 s'], ['60', '60 s']], c.duration < 22 ? '15' : c.duration < 38 ? '30' : c.duration < 52 ? '45' : '60');
+      const redo = h('button', { class: 'text', type: 'button' }, 'Skapa om');
+      const note = h('div', { class: 'meta kl-note' });
+      redo.onclick = async () => {
+        redo.disabled = true; note.textContent = 'Klipper om…'; note.classList.remove('err');
+        try {
+          const r = await fetch(`${API}/klipp/recut`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: K.job, index: idx, seconds: +sel.value }) });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.message || `Fel ${r.status}`);
+          const res = await pollKlipp(j.jobId, (p, m) => { note.textContent = m || 'Klipper om…'; });
+          const nc = res.clips[0]; K.result.clips[idx] = nc;
+          const fresh = clipCard(nc, idx); card.replaceWith(fresh);
+        } catch (e) { note.textContent = e.message; note.classList.add('err'); redo.disabled = false; }
+      };
+      const card = h('article', { class: 'card kcard' },
+        h('div', { class: 'kv' }, vid),
+        h('div', { class: 'kbody' },
+          h('h3', {}, c.title || `Klipp ${idx + 1}`),
+          score,
+          c.reason ? h('p', { class: 'kreason' }, c.reason) : null,
+          c.hook ? h('p', { class: 'khook' }, h('span', {}, 'Hook'), `“${c.hook}”`) : null,
+          h('div', { class: 'meta kl-tags' }, `${fmtT(c.start)}–${fmtT(c.end)} i originalet · ${Math.round(c.duration)} s · ${c.aspect} · ${fmtBytes(c.bytes)}`),
+          h('div', { class: 'meta kl-tags' }, `Textremsor: ${c.captions}${c.captionNote ? ` – ${c.captionNote}` : ''}`),
+          c.crop && c.crop.note ? h('div', { class: 'meta kl-tags' }, `Beskärning: ${CROP_SV[c.crop.mode] || c.crop.mode}. ${c.crop.note}`) : null),
+        h('div', { class: 'acts' },
+          h('a', { class: 'text primary', href: `${abs(c.url)}${c.url.includes('?') ? '&' : '?'}dl=1`, download: `klipp-${idx + 1}.mp4` }, 'Ladda ner'),
+          sel, redo), note);
+      return card;
+    }
+    function paintResult() {
+      out.innerHTML = '';
+      const R = K.result; if (!R) return;
+      if (R.mode === 'icke-tal') out.append(h('div', { class: 'status kl-wide' }, 'Inget tal hittades eller kunde läsas, så klippen valdes efter ljudstyrka och scenbyten. Det är ingen AI-bedömning, och textremsor saknas.'));
+      R.clips.forEach((c, i) => out.append(clipCard(c, i)));
+      out.append(h('div', { class: 'meta kl-wide' }, `Klippen och originalet raderas från servern efter ca ${R.expiresInMin} minuter. Ladda ner det du vill ha.`));
+    }
+    async function pollKlipp(id, on) {
+      for (let miss = 0; ;) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const r = await fetch(`${API}/klipp/jobs/${id}`).catch(() => null);
+        if (!r) { if (++miss > 20) throw new Error('Tappade kontakten med servern.'); continue; }
+        if (r.status === 404) throw new Error('Jobbet finns inte längre (servern kan ha startat om, eller så har filerna raderats). Ladda upp videon igen.');
+        const j = await r.json().catch(() => null); if (!j) continue; miss = 0;
+        on && on(j.progress, j.message, j);
+        if (j.status === 'done') return j.result;
+        if (j.status === 'error') throw Object.assign(new Error(j.error || 'Något gick fel.'), { refused: j.refused, info: j.info });
+      }
+    }
+    async function follow(id) {
+      go.disabled = true; K.job = id; K.error = null;
+      try {
+        const res = await pollKlipp(id, (p, m, j) => { K.progress = p; K.message = m; K.info = j.info || {}; setBar(p); paintHow(K.info); say(`${m} (${Math.round(p * 100)} %)`, false, true); });
+        K.result = res; K.status = 'done'; setBar(null); say('Klart! Spela upp, ladda ner eller skapa om med annan längd.'); paintResult();
+      } catch (e) {
+        K.status = 'error'; K.error = e.message; setBar(null); if (e.info) { K.info = e.info; paintHow(e.info); }
+        say(e.message, true);
+      } finally { go.disabled = false; K.following = false; }
+    }
+    go.onclick = async () => {
+      if (K.following) return;
+      const u = url.value.trim();
+      if (!file && !u) return say('Välj en videofil, eller klistra in en direktlänk till en videofil.', true);
+      if (file && file.size > KL_MAX_MB * 1048576) return say(`Filen är för stor. Max ${KL_MAX_MB} MB.`, true);
+      if (minorText(hint.value)) return say(REFUSE, true);
+      const fd = new FormData();
+      if (file) fd.append('video', file); else fd.append('url', u);
+      fd.append('lane', st.lane); fd.append('count', count.value); fd.append('length', length.value); fd.append('aspect', aspect.value); fd.append('crop', crop.value);
+      fd.append('captions', caps.checked ? '1' : '0'); fd.append('lang', lang.value); fd.append('hint', hint.value.trim());
+      K.following = true; K.result = null; K.info = {}; out.innerHTML = ''; paintHow(null); go.disabled = true; K.fileName = file ? file.name : u;
+      try {
+        say(file ? 'Laddar upp…' : 'Skickar länken…', false, true); setBar(0);
+        const j = await uploadKlipp(fd, (p) => { setBar(p); say(`Laddar upp ${Math.round(p * 100)} %`, false, true); });
+        setBar(0); await follow(j.jobId);
+      } catch (e) { K.following = false; go.disabled = false; setBar(null); say(e.message, true); }
+    };
+    const panel = h('div', { class: 'panel kpanel' },
+      field('Antal klipp', count), field('Längd', length), field('Bildformat', aspect), field('Beskärning', crop), field('Språk i videon', lang),
+      h('label', { class: 'chk' }, h('span', {}, caps, 'Textremsor (ord för ord)')),
+      h('label', { class: 'wide' }, 'Vad ska klippen handla om?', hint));
+    v.append(
+      pagehead('Klipp', 'Ladda upp en lång video. KINO lyssnar, väljer de bästa ögonblicken och gör korta, färdiga klipp med textremsor.'),
+      h('div', { class: 'drop kdrop' },
+        h('label', { class: 'kfile' }, h('span', {}, 'Välj video'), fileIn), fileInfo,
+        h('label', { class: 'kurl' }, 'Eller en direktlänk till en videofil', url),
+        h('div', { class: 'meta' }, `Max ${KL_MAX_MB} MB och ${KL_MAX_MIN} minuter. YouTube-länkar går inte: ladda upp filen i stället. Filer och klipp raderas efter ca en timme. KINO klipper bara din egen video och skapar inget nytt innehåll.`)),
+      panel,
+      h('div', { class: 'cta kcta' }, go),
+      bar, status, how, out,
+      h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, st.lane === 'nsfw' ? 'NSFW-läge (21+): bilder i videon kontrolleras extra noga och minderåriga blockeras alltid. Går kontrollen inte att göra, avvisas videon.' : 'Minderåriga blockeras alltid, även i klippen. Transkribering och urval görs av AI-modeller på servern, och vilka som användes visas under varje körning.'));
+    if (K.job && K.status === 'done' && K.result) { paintHow(K.info); paintResult(); say('Dina senaste klipp (raderas efter ca en timme).'); }
+    else if (K.job && K.status === 'error' && K.error) say(K.error, true);
+    else if (K.job && K.following) { go.disabled = true; follow(K.job); }
+    if (K.job && K.status !== 'done' && K.status !== 'error' && !K.following) { K.following = true; follow(K.job); }
+  }
+
+  const VIEWS = { klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView };
   function route() {
     const k = (location.hash.replace(/^#\/?/, '').split('?')[0]) || '';
     document.querySelectorAll('nav a').forEach((a) => {
