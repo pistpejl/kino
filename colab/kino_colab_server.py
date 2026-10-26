@@ -1,86 +1,323 @@
-# KINO Colab-motor: FastAPI-server for videogenerering pa en Colab-GPU.
-# KINO_STUB=1 kor utan GPU/modell (for lokalt test).
-import os, re, io, uuid, time, threading, queue, secrets, tempfile
-from typing import Optional
-from fastapi import FastAPI, Form, File, UploadFile, Header, HTTPException
+# KINO Colab-motor: FastAPI-server for KINO pa en Colab-GPU (T4).
+# Alla anrop kraver token. Modeller laddas lat, en i taget, och VRAM frigors mellan dem.
+# KINO_STUB=1: GPU-modeller ersatts av stubbar (lokalt test). KINO_STUB_AUDIO=1: aven Demucs/Whisper stubbas.
+import os, sys, re, io, gc, json, uuid, time, base64, shutil, threading, queue, secrets, tempfile, subprocess
+from typing import Optional, List
+from fastapi import FastAPI, Form, File, UploadFile, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 
 TOKEN = os.environ.get("KINO_TOKEN") or secrets.token_urlsafe(24)
 STUB = os.environ.get("KINO_STUB") == "1"
-MODEL_ID = os.environ.get("KINO_MODEL", "Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
-OUT = tempfile.mkdtemp(prefix="kino_")
-FPS = 16
-MAX_SECONDS = 5  # 81 bildrutor, max for Wan 1.3B
+STUB_AUDIO = os.environ.get("KINO_STUB_AUDIO") == "1"
+WAN_ID = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+SVD_ID = "stabilityai/stable-video-diffusion-img2vid"
+SDXL_ID = "stabilityai/sdxl-turbo"
+NSFW_ID = "Falconsai/nsfw_image_detection"
+LS_DIR, LS_PY = "/content/LatentSync", "/content/ls_env/bin/python"
+INSWAPPER = os.environ.get("KINO_INSWAPPER", "/content/models/inswapper_128.onnx")
+WORK = tempfile.mkdtemp(prefix="kino_")
+FPS, MAX_SECONDS, MIN_AGE = 16, 5, 21
+LICENSE_NOTE = "Ansiktsbyte använder InsightFace/inswapper: endast icke-kommersiellt bruk."
 
-# Innehallsregler: aldrig minderariga; SFW-motor, inget explicit; inga riktiga personers foton i NSFW.
+# ---------------- Innehallsregler ----------------
 MINOR_RE = re.compile(r"(^|[^a-zåäö0-9])(child|children|kids?|minors?|underage|under[\s-]*age|teens?|teenage[rs]?|preteen|tween|adolescent|juvenile|loli(ta|con)?|shota(con)?|young[\s-]*looking|barely[\s-]*legal|jailbait|school[\s-]*(girl|boy|uniform)|kindergarten|toddler|baby|infant|little[\s-]*(girl|boy)|young[\s-]*(girl|boy)|barn(et|en)?|minderåriga?|omyndig|tonåring(ar)?|tonårs|flick(a|an|or)|pojk(e|en|ar)|skolflicka|skolpojke|dagis|bebis|småbarn)(?=$|[^a-zåäö0-9])", re.I)
 AGE_RE = re.compile(r"\b(\d{1,2})\s*(?:-|\s)?\s*(?:yo|y/o|yrs?|years?(?:[\s-]*old)?|år(?:ig|ing|s)?|åring)\b", re.I)
 NSFW_RE = re.compile(r"(^|[^a-zåäö0-9])(nsfw|nude|naked|nudity|porn\w*|sex\w*|explicit|erotic\w*|topless|lingerie|genital\w*|nipples?|naken|nakna|porr\w*|erotisk\w*|bröstvårtor?)(?=$|[^a-zåäö0-9])", re.I)
-STYLE = ("natural handheld phone video, real-life lighting, slight camera shake, authentic, "
-         "unpolished, true-to-life colors")
-NEGATIVE = ("AI look, overly smooth skin, plastic, CGI, 3d render, oversaturated, cinematic color grading, "
-            "glossy, airbrushed, text, watermark, blurry, deformed, extra fingers, static frame")
+STYLE = "natural handheld phone video, real-life lighting, slight camera shake, authentic, unpolished, true-to-life colors"
+IMG_STYLE = "candid phone photo, natural light, real-life, unpolished, true-to-life colors"
+NEGATIVE = "AI look, overly smooth skin, plastic, CGI, 3d render, oversaturated, cinematic color grading, glossy, airbrushed, text, watermark, blurry, deformed, extra fingers, static frame"
 
-def check_prompt(prompt: str, has_image: bool):
-    s = (prompt or "").lower()
+def check_text(text: str, has_person_media: bool = False):
+    s = (text or "").lower()
     if MINOR_RE.search(s) or any(int(m.group(1)) < 18 for m in AGE_RE.finditer(s)):
         raise HTTPException(400, "Nekad: KINO gör aldrig något som rör minderåriga.")
     if NSFW_RE.search(s):
-        if has_image:
+        if has_person_media:
             raise HTTPException(400, "Nekad: riktiga personers foton får aldrig användas i NSFW.")
         raise HTTPException(400, "Nekad: Colab-motorn är bara SFW.")
 
 ASPECT = {"9:16": (480, 832), "16:9": (832, 480), "1:1": (624, 624)}
+IMG_ASPECT = {"9:16": (576, 1024), "16:9": (1024, 576), "1:1": (768, 768)}
 
-pipe = None
-def load():
-    global pipe
-    if STUB or pipe is not None: return
+# ---------------- Modellhanterare: en tung modell i taget ----------------
+_lock = threading.Lock()
+_cur = {"name": None, "obj": None}
+def free_vram():
+    _cur["name"], _cur["obj"] = None, None
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+    except Exception: pass
+def use(name, loader):
+    if _cur["name"] != name:
+        free_vram(); _cur["obj"] = loader(); _cur["name"] = name
+    return _cur["obj"]
+
+def load_wan():
     import torch
     from diffusers import AutoencoderKLWan, WanPipeline
-    vae = AutoencoderKLWan.from_pretrained(MODEL_ID, subfolder="vae", torch_dtype=torch.float32)
-    pipe = WanPipeline.from_pretrained(MODEL_ID, vae=vae, torch_dtype=torch.float16)  # T4: fp16 (ingen bra bf16)
-    pipe.enable_model_cpu_offload()
-    try: pipe.vae.enable_tiling()
-    except Exception: pass
-
-def render(job):
-    path = os.path.join(OUT, job["id"] + ".mp4")
-    w, h = ASPECT.get(job["aspect"], ASPECT["9:16"])
-    frames = min(job["seconds"], MAX_SECONDS) * FPS + 1
-    frames = ((frames - 1) // 4) * 4 + 1  # Wan kräver 4k+1
-    if STUB:
-        import numpy as np, imageio
-        vid = [np.full((h // 4, w // 4, 3), (i * 7) % 255, dtype=np.uint8) for i in range(frames)]
-        imageio.mimsave(path, vid, fps=FPS)
-        return path
+    vae = AutoencoderKLWan.from_pretrained(WAN_ID, subfolder="vae", torch_dtype=torch.float32)
+    p = WanPipeline.from_pretrained(WAN_ID, vae=vae, torch_dtype=torch.float16); p.enable_model_cpu_offload()
+    return p
+def load_svd():
     import torch
-    from diffusers.utils import export_to_video
-    g = torch.Generator("cpu").manual_seed(job["seed"])
-    out = pipe(prompt=f"{job['prompt']}. {STYLE}", negative_prompt=NEGATIVE, height=h, width=w,
-               num_frames=frames, num_inference_steps=job["steps"], guidance_scale=5.0, generator=g).frames[0]
-    export_to_video(out, path, fps=FPS)
-    return path
+    from diffusers import StableVideoDiffusionPipeline
+    p = StableVideoDiffusionPipeline.from_pretrained(SVD_ID, torch_dtype=torch.float16, variant="fp16"); p.enable_model_cpu_offload()
+    return p
+def load_sdxl():
+    import torch
+    from diffusers import AutoPipelineForText2Image
+    p = AutoPipelineForText2Image.from_pretrained(SDXL_ID, torch_dtype=torch.float16, variant="fp16"); p.enable_model_cpu_offload()
+    return p
+def load_whisper():
+    import whisper, torch
+    return whisper.load_model("small", device="cuda" if torch.cuda.is_available() else "cpu")
+def load_faces():
+    from insightface.app import FaceAnalysis
+    import insightface
+    fa = FaceAnalysis(name="buffalo_l", providers=["CUDAExecutionProvider", "CPUExecutionProvider"]); fa.prepare(ctx_id=0, det_size=(640, 640))
+    sw = insightface.model_zoo.get_model(INSWAPPER, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    return fa, sw
+_nsfw = {"p": None}
+def nsfw_frames(paths_or_imgs):
+    """Billig NSFW-koll (liten ViT-klassare pa CPU). Returnerar True om nagon bild ar NSFW."""
+    if STUB: return False
+    from transformers import pipeline
+    from PIL import Image
+    if _nsfw["p"] is None: _nsfw["p"] = pipeline("image-classification", model=NSFW_ID, device=-1)
+    for x in paths_or_imgs:
+        img = Image.open(x).convert("RGB") if isinstance(x, str) else x
+        r = {d["label"]: d["score"] for d in _nsfw["p"](img)}
+        if r.get("nsfw", 0) > 0.6: return True
+    return False
 
+# ---------------- Hjalp ----------------
+def ff(*args):
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *map(str, args)], capture_output=True, text=True)
+    if r.returncode: raise RuntimeError("ffmpeg: " + r.stderr[-400:])
+def probe_dur(p):
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", p], capture_output=True, text=True)
+    return float(r.stdout.strip() or 0)
+def has_audio(p):
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", p], capture_output=True, text=True)
+    return bool(r.stdout.strip())
+async def save_upload(u: UploadFile, d, name=None):
+    ext = os.path.splitext(u.filename or "")[1][:8] or ".bin"
+    p = os.path.join(d, (name or uuid.uuid4().hex[:8]) + ext)
+    with open(p, "wb") as f: f.write(await u.read())
+    return p
+def srt_time(t):
+    ms = int(round(t * 1000)); h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); s, ms = divmod(ms, 1000)
+    return f"{h:02}:{m:02}:{s:02},{ms:03}"
+def fit_filter(w, h):
+    return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,fps=30"
+
+# ---------------- Jobb ----------------
 jobs, q = {}, queue.Queue()
+def submit(kind, fn, **meta):
+    jid = uuid.uuid4().hex[:12]; d = os.path.join(WORK, jid); os.makedirs(d)
+    jobs[jid] = {"id": jid, "kind": kind, "status": "queued", "dir": d, "files": {}, "data": None, "created": time.time(), "fn": fn, **meta}
+    return jid, d
+def go(jid, **extra):
+    jobs[jid].update(extra); q.put(jobs[jid]); return {"jobId": jid, "status": "queued"}
 def worker():
     while True:
-        job = q.get()
-        job["status"] = "running"; job["started"] = time.time()
+        job = q.get(); job["status"] = "running"; job["started"] = time.time()
         try:
-            load(); job["file"] = render(job); job["status"] = "done"
+            with _lock: job["fn"](job)
+            job["status"] = "done"
         except Exception as e:
-            job["status"] = "error"; job["error"] = str(e)[:300]
-        job["finished"] = time.time()
+            job["status"] = "error"; job["error"] = str(e)[:400]
+        finally:
+            job["finished"] = time.time()
+            if job["kind"] in ("lipsync",): free_vram()
 threading.Thread(target=worker, daemon=True).start()
 
+# ---------------- Uppgifter ----------------
+def task_video(job):
+    path = os.path.join(job["dir"], "video.mp4"); w, h = ASPECT[job["aspect"]]
+    frames = ((min(job["seconds"], MAX_SECONDS) * FPS) // 4) * 4 + 1
+    if STUB:
+        import numpy as np, imageio
+        imageio.mimsave(path, [np.full((h // 4, w // 4, 3), (i * 7) % 255, dtype=np.uint8) for i in range(frames)], fps=FPS, macro_block_size=1)
+    elif job.get("image"):  # SVD bild-till-video: den uppladdade forsta bildrutan anvands
+        import torch
+        from PIL import Image, ImageOps
+        from diffusers.utils import export_to_video
+        p = use("svd", load_svd)
+        sw, sh = (576, 1024) if job["aspect"] == "9:16" else (1024, 576) if job["aspect"] == "16:9" else (768, 768)
+        img = ImageOps.fit(Image.open(job["image"]).convert("RGB"), (sw, sh))
+        out = p(img, decode_chunk_size=2, num_frames=14, motion_bucket_id=job["motion"], noise_aug_strength=0.02,
+                generator=torch.Generator("cpu").manual_seed(job["seed"])).frames[0]
+        export_to_video(out, path, fps=7)
+    else:
+        import torch
+        from diffusers.utils import export_to_video
+        p = use("wan", load_wan)
+        out = p(prompt=f"{job['prompt']}. {STYLE}", negative_prompt=NEGATIVE, height=h, width=w, num_frames=frames,
+                num_inference_steps=job["steps"], guidance_scale=5.0, generator=torch.Generator("cpu").manual_seed(job["seed"])).frames[0]
+        export_to_video(out, path, fps=FPS)
+    job["files"]["video.mp4"] = path
+
+def task_image(job):
+    path = os.path.join(job["dir"], "image.png"); w, h = IMG_ASPECT[job["aspect"]]
+    if STUB:
+        from PIL import Image; Image.new("RGB", (w // 4, h // 4), (120, 110, 100)).save(path)
+    else:
+        import torch
+        p = use("sdxl", load_sdxl)
+        img = p(prompt=f"{job['prompt']}, {IMG_STYLE}", negative_prompt=NEGATIVE, width=w, height=h, num_inference_steps=2, guidance_scale=0.0,
+                generator=torch.Generator("cpu").manual_seed(job["seed"])).images[0]
+        if nsfw_frames([img]): raise RuntimeError("Nekad: bilden flaggades som NSFW.")
+        img.save(path)
+    job["files"]["image.png"] = path
+
+def run_demucs(src, outdir):
+    """Returnerar (vocals.wav, no_vocals.wav)."""
+    if STUB_AUDIO:
+        a, b = os.path.join(outdir, "vocals.wav"), os.path.join(outdir, "no_vocals.wav")
+        shutil.copy(src, a) if src.endswith(".wav") else ff("-i", src, a); shutil.copy(a, b); return a, b
+    free_vram()
+    import torch
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    r = subprocess.run([sys.executable, "-m", "demucs", "-n", "htdemucs", "--two-stems=vocals", "-d", dev, "-o", outdir, src], capture_output=True, text=True)
+    if r.returncode: raise RuntimeError("Demucs: " + r.stderr[-400:])
+    base = os.path.join(outdir, "htdemucs", os.path.splitext(os.path.basename(src))[0])
+    return os.path.join(base, "vocals.wav"), os.path.join(base, "no_vocals.wav")
+
+def task_stems(job):
+    v, n = run_demucs(job["audio"], job["dir"])
+    for name, src in (("sang.mp3", v), ("instrumental.mp3", n)):
+        dst = os.path.join(job["dir"], name); ff("-i", src, "-b:a", "192k", dst); job["files"][name] = dst
+
+def task_lyrics(job):
+    src = job["audio"]
+    if job.get("vocals"): src, _ = run_demucs(src, job["dir"])
+    if STUB_AUDIO:
+        segs = [{"start": 0.0, "end": 2.0, "text": "stubbtext rad ett"}, {"start": 2.0, "end": 4.0, "text": "stubbtext rad två"}]
+    else:
+        m = use("whisper", load_whisper) if not job.get("tiny") else __import__("whisper").load_model("tiny", device="cpu")
+        r = m.transcribe(src, language=job["lang"] or None, word_timestamps=False, fp16=False if STUB or job.get("tiny") else True)
+        segs = [{"start": round(s["start"], 2), "end": round(s["end"], 2), "text": s["text"].strip()} for s in r["segments"] if s["text"].strip()]
+    srt = "\n".join(f"{i}\n{srt_time(s['start'])} --> {srt_time(s['end'])}\n{s['text']}\n" for i, s in enumerate(segs, 1))
+    p = os.path.join(job["dir"], "lyrics.srt"); open(p, "w").write(srt); job["files"]["lyrics.srt"] = p
+    job["data"] = {"text": "\n".join(s["text"] for s in segs), "segments": segs, "srt": srt}
+
+def task_autocut(job):
+    import librosa, numpy as np
+    d, start, w, h = job["dir"], job["start"], *ASPECT[job["aspect"]]
+    song_len = probe_dur(job["audio"])
+    if start >= song_len: raise RuntimeError("Starten ligger efter låtens slut.")
+    dur = min(job["seconds"], song_len - start)
+    y, sr = librosa.load(job["audio"], sr=22050, offset=start, duration=dur)
+    _, bf = librosa.beat.beat_track(y=y, sr=sr)
+    beats = [float(t) for t in librosa.frames_to_time(bf, sr=sr)]
+    cuts = beats[::max(1, job["every"])]
+    cuts = [0.0] + [c for c in cuts if 0.3 < c < dur - 0.3] + [dur]
+    if len(cuts) < 3: cuts = list(np.arange(0, dur, 2.0)) + [dur]
+    clips = job["clips"]; lens = [max(0.5, probe_dur(c)) for c in clips]; pos = [0.0] * len(clips)
+    segs = []
+    for i in range(len(cuts) - 1):
+        k = i % len(clips); seg_len = cuts[i + 1] - cuts[i]
+        if pos[k] + seg_len > lens[k]: pos[k] = 0.0
+        sp = os.path.join(d, f"s{i:04}.mp4")
+        ff("-ss", f"{pos[k]:.3f}", "-stream_loop", "-1", "-i", clips[k], "-t", f"{seg_len:.3f}", "-an", "-vf", fit_filter(w, h),
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", sp)
+        pos[k] += seg_len; segs.append(sp)
+    lst = os.path.join(d, "list.txt"); open(lst, "w").write("".join(f"file '{s}'\n" for s in segs))
+    silent = os.path.join(d, "silent.mp4"); ff("-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", silent)
+    out = os.path.join(d, "autocut.mp4")
+    # Laten laggs pa i ett enda sammanhangande stycke: inga hopp i ljudet
+    ff("-i", silent, "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", job["audio"], "-map", "0:v", "-map", "1:a",
+       "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", out)
+    job["files"]["autocut.mp4"] = out; job["data"] = {"cuts": len(segs), "beats": len(beats), "seconds": round(dur, 2)}
+
+def task_lipsync(job):
+    d, s, e = job["dir"], job["start"], job["end"]
+    v25, wav, orig = os.path.join(d, "in25.mp4"), os.path.join(d, "cond.wav"), os.path.join(d, "orig.wav")
+    trim = (["-ss", f"{s:.3f}"] if s > 0 else []) + (["-t", f"{e - s:.3f}"] if e > s else [])
+    ff(*trim, "-i", job["audio"], orig)
+    ff("-stream_loop", "-1", "-i", job["video"], "-t", f"{probe_dur(orig):.3f}", "-r", "25", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", v25)
+    cond = run_demucs(orig, d)[0] if job["vocals"] else orig
+    ff("-i", cond, "-ar", "16000", "-ac", "1", wav)
+    raw = os.path.join(d, "ls_raw.mp4")
+    if STUB: shutil.copy(v25, raw)
+    else:
+        free_vram()
+        if not os.path.exists(LS_PY): raise RuntimeError("LatentSync är inte installerat: kör lipsync-cellen i notebooken.")
+        r = subprocess.run([LS_PY, "-m", "scripts.inference", "--unet_config_path", "configs/unet/stage2.yaml",
+                            "--inference_ckpt_path", "checkpoints/latentsync_unet.pt", "--inference_steps", str(job["steps"]),
+                            "--guidance_scale", "1.5", "--video_path", v25, "--audio_path", wav, "--video_out_path", raw,
+                            "--temp_dir", os.path.join(d, "tmp")], cwd=LS_DIR, capture_output=True, text=True)
+        if r.returncode or not os.path.exists(raw): raise RuntimeError("LatentSync: " + (r.stdout + r.stderr)[-500:])
+    out = os.path.join(d, "lipsync.mp4")
+    ff("-i", raw, "-i", orig, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", out)
+    job["files"]["lipsync.mp4"] = out
+
+# ---------------- Artistlista (bara i sessionen) + ansiktsbyte ----------------
+roster, scans = {}, {}
+def face_age_ok(face):
+    age = getattr(face, "age", None)
+    return age is not None and age >= MIN_AGE
+def detect(img):
+    if STUB:
+        class F: pass
+        f = F(); f.bbox = (10, 10, 60, 60); f.age = 30; f.normed_embedding = __import__("numpy").ones(4) / 2; return [f]
+    fa, _ = use("faces", load_faces); return sorted(fa.get(img), key=lambda f: -(f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+def swap_frame(img, mapping_faces):
+    """mapping_faces: lista av (malansikte-embedding, kallansikte). Byter varje hittat ansikte mot basta matchning."""
+    import numpy as np
+    faces = detect(img)
+    for f in faces:
+        if not face_age_ok(f): raise RuntimeError("Nekad: ett ansikte i klippet bedöms vara under 21 år.")
+    if STUB: return img
+    _, sw = use("faces", load_faces)
+    for f in faces:
+        best, src = -1.0, None
+        for emb, s in mapping_faces:
+            sim = float(np.dot(f.normed_embedding, emb))
+            if sim > best: best, src = sim, s
+        if src is not None and best >= 0.3: img = sw.get(img, f, src, paste_back=True)
+    return img
+
+def task_swap(job):
+    import cv2
+    scan = scans[job["scan"]]; pairs = [(scan["faces"][int(i)].normed_embedding, roster[a]["face"]) for i, a in job["mapping"].items()]
+    src, d = scan["path"], job["dir"]
+    if scan["kind"] == "image":
+        img = swap_frame(cv2.imread(src), pairs)
+        from PIL import Image
+        if nsfw_frames([Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))]): raise RuntimeError("Nekad: bilden flaggades som NSFW.")
+        p = os.path.join(d, "swap.png"); cv2.imwrite(p, img); job["files"]["swap.png"] = p; return
+    cap = cv2.VideoCapture(src); fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    w, h = int(cap.get(3)), int(cap.get(4)); tmp = os.path.join(d, "noaudio.mp4")
+    out = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)); n = 0; check = []
+    s0 = int(job["start"] * fps); maxn = int(job["length"] * fps) if job["length"] > 0 else 10**9
+    if s0: cap.set(cv2.CAP_PROP_POS_FRAMES, s0)
+    while n < maxn:
+        ok, fr = cap.read()
+        if not ok: break
+        fr = swap_frame(fr, pairs); out.write(fr)
+        if n % int(fps * 2) == 0: check.append(os.path.join(d, f"chk{n}.jpg")); cv2.imwrite(check[-1], fr)
+        n += 1
+    cap.release(); out.release()
+    if nsfw_frames(check): raise RuntimeError("Nekad: klippet flaggades som NSFW.")
+    res = os.path.join(d, "swap.mp4")
+    if has_audio(src):  # originalljudet, sammanhangande fran samma startpunkt
+        ff("-i", tmp, "-ss", f"{job['start']:.3f}", "-i", src, "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", res)
+    else:
+        ff("-i", tmp, "-c:v", "libx264", "-pix_fmt", "yuv420p", res)
+    job["files"]["swap.mp4"] = res
+
+# ---------------- API ----------------
 app = FastAPI(title="KINO Colab-motor")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-def auth(authorization: Optional[str]):
-    if not authorization or not secrets.compare_digest(authorization, f"Bearer {TOKEN}"):
-        raise HTTPException(401, "Fel eller saknad token")
+def auth(a: Optional[str]):
+    if not a or not secrets.compare_digest(a, f"Bearer {TOKEN}"): raise HTTPException(401, "Fel eller saknad token")
+def seed_of(s): return s if s >= 0 else secrets.randbelow(2**31)
+def asp(a): return a if a in ASPECT else "9:16"
 
 @app.get("/health")
 def health(authorization: Optional[str] = Header(None)):
@@ -90,36 +327,141 @@ def health(authorization: Optional[str] = Header(None)):
         try:
             import torch; gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "ingen"
         except Exception: gpu = "okänd"
-    return {"ok": True, "auth": ok, "model": MODEL_ID if not STUB else "stub", "gpu": gpu,
-            "queue": q.qsize(), "maxSeconds": MAX_SECONDS, "sfwOnly": True}
+    feats = ["video", "img2video", "image", "stems", "lyrics", "autocut"]
+    if STUB or os.path.exists(LS_PY): feats.append("lipsync")
+    if STUB or os.path.exists(INSWAPPER): feats.append("faceswap")
+    return {"ok": True, "auth": ok, "gpu": gpu, "queue": q.qsize(), "loaded": _cur["name"], "maxSeconds": MAX_SECONDS,
+            "sfwOnly": True, "features": feats, "licenseNote": LICENSE_NOTE}
 
 @app.post("/generate")
-async def generate(prompt: str = Form(...), seconds: int = Form(4), aspect: str = Form("9:16"),
-                   steps: int = Form(30), seed: int = Form(-1), image: Optional[UploadFile] = File(None),
-                   authorization: Optional[str] = Header(None)):
+async def generate(prompt: str = Form(...), seconds: int = Form(4), aspect: str = Form("9:16"), steps: int = Form(30),
+                   seed: int = Form(-1), motion: int = Form(100), image: Optional[UploadFile] = File(None), authorization: Optional[str] = Header(None)):
+    auth(authorization); has_img = image is not None and bool(image.filename); check_text(prompt, has_img)
+    jid, d = submit("video", task_video, prompt=prompt.strip()[:800], seconds=max(1, min(int(seconds), MAX_SECONDS)), aspect=asp(aspect),
+                    steps=max(10, min(int(steps), 50)), seed=seed_of(seed), motion=max(20, min(int(motion), 255)))
+    if has_img: jobs[jid]["image"] = await save_upload(image, d, "first")
+    go(jid)
+    return {"jobId": jid, "status": "queued", "note": "Bild till video (SVD, ca 2 s)." if has_img else None}
+
+@app.post("/image")
+async def image_ep(prompt: str = Form(...), aspect: str = Form("9:16"), seed: int = Form(-1), authorization: Optional[str] = Header(None)):
+    auth(authorization); check_text(prompt)
+    jid, _ = submit("image", task_image, prompt=prompt.strip()[:500], aspect=asp(aspect), seed=seed_of(seed))
+    return go(jid)
+
+@app.post("/stems")
+async def stems(audio: UploadFile = File(...), authorization: Optional[str] = Header(None)):
+    auth(authorization); jid, d = submit("stems", task_stems)
+    return go(jid, audio=await save_upload(audio, d, "song"))
+
+@app.post("/lyrics")
+async def lyrics(audio: UploadFile = File(...), language: str = Form("sv"), vocals: bool = Form(True), authorization: Optional[str] = Header(None)):
+    auth(authorization); jid, d = submit("lyrics", task_lyrics, lang=(language or "")[:5], vocals=vocals, tiny=os.environ.get("KINO_WHISPER_TINY") == "1")
+    return go(jid, audio=await save_upload(audio, d, "song"))
+
+@app.post("/autocut")
+async def autocut(audio: UploadFile = File(...), clips: List[UploadFile] = File(...), every: int = Form(4), start: float = Form(0),
+                  seconds: float = Form(30), aspect: str = Form("9:16"), authorization: Optional[str] = Header(None)):
     auth(authorization)
-    has_image = image is not None and bool(image.filename)
-    check_prompt(prompt, has_image)
-    jid = uuid.uuid4().hex[:12]
-    jobs[jid] = {"id": jid, "prompt": prompt.strip()[:800], "seconds": max(1, min(int(seconds), MAX_SECONDS)),
-                 "aspect": aspect if aspect in ASPECT else "9:16", "steps": max(10, min(int(steps), 50)),
-                 "seed": seed if seed >= 0 else secrets.randbelow(2**31), "status": "queued", "created": time.time(),
-                 "note": "Bilden används inte: Wan 1.3B är text-till-video." if has_image else None}
-    q.put(jobs[jid])
-    return {"jobId": jid, "status": "queued", "note": jobs[jid]["note"]}
+    if not clips or len(clips) > 30: raise HTTPException(400, "Ladda upp 1–30 klipp.")
+    jid, d = submit("autocut", task_autocut, every=max(1, min(int(every), 16)), start=max(0.0, float(start)), seconds=max(3.0, min(float(seconds), 240.0)), aspect=asp(aspect))
+    return go(jid, audio=await save_upload(audio, d, "song"), clips=[await save_upload(c, d, f"clip{i:02}") for i, c in enumerate(clips)])
+
+@app.post("/lipsync")
+async def lipsync(video: UploadFile = File(...), audio: UploadFile = File(...), start: float = Form(0), end: float = Form(0),
+                  vocals: bool = Form(True), steps: int = Form(20), consent: str = Form(""), description: str = Form(""),
+                  authorization: Optional[str] = Header(None)):
+    auth(authorization)
+    if consent != "true": raise HTTPException(400, "Nekad: du måste intyga att personen är er egen artist eller AI-figur och har gett samtycke.")
+    check_text(description, True)
+    if end and end - start > 60: raise HTTPException(400, "Max 60 s per lipsync-körning på en T4.")
+    jid, d = submit("lipsync", task_lipsync, start=max(0.0, float(start)), end=float(end or 0), vocals=vocals, steps=max(10, min(int(steps), 40)))
+    return go(jid, video=await save_upload(video, d, "video"), audio=await save_upload(audio, d, "song"))
+
+@app.post("/roster")
+async def roster_add(name: str = Form(...), consent: str = Form(""), photos: List[UploadFile] = File(...), authorization: Optional[str] = Header(None)):
+    auth(authorization)
+    if consent != "true": raise HTTPException(400, "Kryssa i 'Personen har gett samtycke'.")
+    import numpy as np, cv2
+    best = None
+    with _lock:
+        for ph in photos[:8]:
+            img = cv2.imdecode(np.frombuffer(await ph.read(), np.uint8), cv2.IMREAD_COLOR)
+            if img is None: continue
+            fs = detect(img)
+            if not fs: continue
+            if not face_age_ok(fs[0]): raise HTTPException(400, "Nekad: personen på fotot bedöms vara under 21 år.")
+            if best is None: best = fs[0]
+    if best is None: raise HTTPException(400, "Hittade inget ansikte på fotona.")
+    aid = uuid.uuid4().hex[:8]; now = time.strftime("%Y-%m-%d %H:%M:%S")
+    roster[aid] = {"id": aid, "name": name.strip()[:60], "face": best, "consent": True, "added": now}
+    print(f"[roster] {now} artist tillagd: {roster[aid]['name']} (samtycke intygat)")
+    return {"id": aid, "name": roster[aid]["name"], "added": now, "licenseNote": LICENSE_NOTE}
+
+@app.get("/roster")
+def roster_list(authorization: Optional[str] = Header(None)):
+    auth(authorization); return [{"id": a["id"], "name": a["name"], "added": a["added"]} for a in roster.values()]
+
+@app.delete("/roster/{aid}")
+def roster_del(aid: str, authorization: Optional[str] = Header(None)):
+    auth(authorization); roster.pop(aid, None); return {"ok": True}
+
+@app.post("/faces")
+async def faces(media: UploadFile = File(...), authorization: Optional[str] = Header(None)):
+    """Hittar upp till 4 ansikten i en video/bild. Svarar med scanId + miniatyrer (base64 jpeg)."""
+    auth(authorization)
+    import cv2, numpy as np
+    sid = uuid.uuid4().hex[:10]; d = os.path.join(WORK, "scan_" + sid); os.makedirs(d)
+    p = await save_upload(media, d, "media"); kind = "image" if (media.content_type or "").startswith("image") else "video"
+    found, thumbs = [], []
+    with _lock:
+        frames = [cv2.imread(p)] if kind == "image" else []
+        if kind == "video":
+            cap = cv2.VideoCapture(p); total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+            for i in range(0, total, max(1, total // 20)):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, i); ok, fr = cap.read()
+                if ok: frames.append(fr)
+            cap.release()
+        for fr in frames:
+            if fr is None: continue
+            for f in detect(fr):
+                if not face_age_ok(f): raise HTTPException(400, "Nekad: ett ansikte i klippet bedöms vara under 21 år.")
+                if any(float(np.dot(f.normed_embedding, g.normed_embedding)) > 0.4 for g in found) or len(found) >= 4: continue
+                found.append(f); x1, y1, x2, y2 = [max(0, int(v)) for v in f.bbox]
+                ok, buf = cv2.imencode(".jpg", fr[y1:y2, x1:x2]); thumbs.append(base64.b64encode(buf.tobytes()).decode() if ok else "")
+    if not found: raise HTTPException(400, "Hittade inga ansikten.")
+    scans[sid] = {"path": p, "kind": kind, "faces": found}
+    return {"scanId": sid, "kind": kind, "faces": [{"index": i, "thumb": "data:image/jpeg;base64," + t} for i, t in enumerate(thumbs)]}
+
+@app.post("/swap")
+async def swap(scan_id: str = Form(...), mapping: str = Form(...), start: float = Form(0), length: float = Form(0),
+               authorization: Optional[str] = Header(None)):
+    """mapping: JSON {"0": "<artistId>", ...}. Kallansikten kommer ENBART fran artistlistan."""
+    auth(authorization)
+    if scan_id not in scans: raise HTTPException(404, "Skanna klippet först.")
+    try: m = {str(int(k)): str(v) for k, v in json.loads(mapping).items() if v}
+    except Exception: raise HTTPException(400, "Ogiltig mappning.")
+    if not m: raise HTTPException(400, "Välj minst en artist.")
+    for k, v in m.items():
+        if v not in roster: raise HTTPException(400, "Källansiktet måste vara en artist i listan.")
+        if int(k) >= len(scans[scan_id]["faces"]): raise HTTPException(400, "Ogiltigt ansikte.")
+    jid, _ = submit("swap", task_swap, scan=scan_id, mapping=m, start=max(0.0, float(start)), length=max(0.0, float(length)))
+    return {**go(jid), "licenseNote": LICENSE_NOTE}
 
 @app.get("/status/{jid}")
 def status(jid: str, authorization: Optional[str] = Header(None)):
-    auth(authorization)
-    j = jobs.get(jid)
+    auth(authorization); j = jobs.get(jid)
     if not j: raise HTTPException(404, "Okänt jobb")
-    return {k: j.get(k) for k in ("id", "status", "error", "note", "seconds", "aspect")} | {
-        "url": f"/result/{jid}" if j["status"] == "done" else None,
-        "elapsed": round((j.get("finished") or time.time()) - j.get("started", time.time()))}
+    files = [{"name": n, "url": f"/result/{jid}?file={n}"} for n in j["files"]] if j["status"] == "done" else []
+    return {"id": jid, "kind": j["kind"], "status": j["status"], "error": j.get("error"), "data": j["data"] if j["status"] == "done" else None,
+            "files": files, "url": files[0]["url"] if files else None,
+            "elapsed": round((j.get("finished") or time.time()) - j.get("started", time.time())), "queue": q.qsize()}
 
 @app.get("/result/{jid}")
-def result(jid: str, authorization: Optional[str] = Header(None)):
-    auth(authorization)
-    j = jobs.get(jid)
+def result(jid: str, file: Optional[str] = Query(None), authorization: Optional[str] = Header(None)):
+    auth(authorization); j = jobs.get(jid)
     if not j or j["status"] != "done": raise HTTPException(404, "Inte klart")
-    return FileResponse(j["file"], media_type="video/mp4", filename=f"kino-{jid}.mp4")
+    name = file or next(iter(j["files"]), None)
+    if name not in j["files"]: raise HTTPException(404, "Okänd fil")
+    mt = {".mp4": "video/mp4", ".png": "image/png", ".mp3": "audio/mpeg", ".srt": "text/plain"}.get(os.path.splitext(name)[1], "application/octet-stream")
+    return FileResponse(j["files"][name], media_type=mt, filename=f"kino-{jid}-{name}")
