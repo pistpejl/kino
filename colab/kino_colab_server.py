@@ -31,12 +31,22 @@ IMG_STYLE = "candid phone photo, natural light, real-life, unpolished, true-to-l
 NEGATIVE = "AI look, overly smooth skin, plastic, CGI, 3d render, oversaturated, cinematic color grading, glossy, airbrushed, text, watermark, blurry, deformed, extra fingers, static frame"
 
 BARN_EN_RE = re.compile(r"\b(?:(?:the|a|an|red|old|wooden|big|abandoned|rustic|farm|in\s+a|in\s+the)\s+barns?|barns?\s+(?:doors?|owls?|roofs?|walls?|swallows?|dance|wedding|cats?|interior))\b", re.I)
+# Termer som aldrig far forekomma tillsammans med barn (SFW) – brett med flit
+SEXUAL_RE = re.compile(r"(^|[^a-zåäö0-9])(nsfw|nude|nudes|naked|nudity|porn\w*|sex\w*|sensual\w*|seduc\w*|erotic\w*|explicit|lewd|fetish\w*|provocative|suggestive|intimate|intimacy|"
+    r"lingerie|underwear|panties|bra|bras|thong|bikini\w*|swimsuit|topless|shirtless|cleavage|undress\w*|strip\w*|kiss\w*|making[\s-]*out|bed|beds|bedroom|bath\w*|shower\w*|"
+    r"genital\w*|nipples?|breasts?|butt|ass|crotch|groin|spread|pose[sd]?\s+seductively|"
+    r"naken|nakna|nakenhet|sexig\w*|sensuell\w*|erotisk\w*|porr\w*|underkläder|trosor|behå|bh|bikin\w*|baddräkt|kyss\w*|hångla\w*|säng(en)?|sovrum(met)?|bad(et|ar)?|dusch\w*|"
+    r"klä[\s-]*av|avklädd\w*|strippa\w*|intim\w*|utmanande|bröst(en)?|rumpa|skrev)(?=$|[^a-zåäö0-9])", re.I)
+HARD_MINOR_RE = re.compile(r"(^|[^a-zåäö0-9])(schoolgirls?|skolflick(a|or)|loli(ta|con)?|shota(con)?|jailbait|barely[\s-]*legal|pedo\w*|pedofil\w*|cp|young[\s-]*looking|childlike|barnslig[a-zåäö]*|underage|under[\s-]*age|minderåriga?|omyndig)(?=$|[^a-zåäö0-9])", re.I)
+def has_minor_terms(s):
+    return bool(MINOR_RE.search(s) or any(int(m.group(1)) < 18 for m in AGE_RE.finditer(s)))
 def check_text(text: str, has_person_media: bool = False, nsfw: bool = False):
-    """nsfw=True: minderarsspärren galler alltid (skrivna aldrar under 18 nekas; ansiktsuppskattning har marginal 21)."""
+    """NSFW: alla barntermer nekas (skrivna aldrar under 18 nekas). SFW: barn i harmlosa scener ar ok (t.ex. barn upp pa scen),
+    men barntermer tillsammans med sexuella/nakna/antydande termer nekas alltid, liksom harda termer (loli, jailbait ...)."""
     s = (text or "").lower()
     if not nsfw and not NSFW_RE.search(s):  # SFW: engelska "barn" (lada) i tydligt byggnadssammanhang ar inte "barn" (children)
         s = BARN_EN_RE.sub(" ", s)
-    if MINOR_RE.search(s) or any(int(m.group(1)) < 18 for m in AGE_RE.finditer(s)):
+    if HARD_MINOR_RE.search(s) or (has_minor_terms(s) and (nsfw or SEXUAL_RE.search(s))):
         raise HTTPException(400, "Nekad: KINO gör aldrig något som rör minderåriga.")
     if nsfw:
         if has_person_media: raise HTTPException(400, "Nekad: riktiga personers foton får aldrig användas i NSFW.")
@@ -90,8 +100,8 @@ def load_faces():
     sw = insightface.model_zoo.get_model(INSWAPPER, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]) if os.path.exists(INSWAPPER) else None
     return fa, sw
 _nsfw = {"p": None}
-def nsfw_frames(paths_or_imgs):
-    """Billig NSFW-koll (liten ViT-klassare pa CPU). Returnerar True om nagon bild ar NSFW."""
+def nsfw_frames(paths_or_imgs, thr=0.6):
+    """Billig NSFW-koll (liten ViT-klassare pa CPU). Returnerar True om nagon bild ar over troskeln."""
     if STUB: return False
     from transformers import pipeline
     from PIL import Image
@@ -99,7 +109,7 @@ def nsfw_frames(paths_or_imgs):
     for x in paths_or_imgs:
         img = Image.open(x).convert("RGB") if isinstance(x, str) else x
         r = {d["label"]: d["score"] for d in _nsfw["p"](img)}
-        if r.get("nsfw", 0) > 0.6: return True
+        if r.get("nsfw", 0) > thr: return True
     return False
 
 # ---------------- Hjalp ----------------
@@ -152,6 +162,7 @@ def task_video(job):
         import numpy as np, imageio
         imageio.mimsave(path, [np.full((h // 4, w // 4, 3), (i * 7) % 255, dtype=np.uint8) for i in range(frames)], fps=FPS, macro_block_size=1)
     elif job.get("image"):  # SVD bild-till-video: den uppladdade forsta bildrutan anvands
+        check_images([job["image"]], min_age=0 if sha_file(job["image"]) in GEN_HASH else CHILD_AGE)  # riktiga barnfoton animeras aldrig
         import torch
         from PIL import Image, ImageOps
         from diffusers.utils import export_to_video
@@ -168,6 +179,7 @@ def task_video(job):
         out = p(prompt=f"{job['prompt']}. {STYLE}", negative_prompt=NEGATIVE, height=h, width=w, num_frames=frames,
                 num_inference_steps=job["steps"], guidance_scale=5.0, generator=torch.Generator("cpu").manual_seed(job["seed"])).frames[0]
         export_to_video(out, path, fps=FPS)
+    check_video_sfw(path)  # /generate ar alltid SFW
     job["files"]["video.mp4"] = path
 
 # ---------------- Bildmodeller (oppna vikter fran Hugging Face, 4-bit/nf4 + CPU-offload for T4) ----------------
@@ -242,15 +254,30 @@ def sha_file(p):
 def register_generated(job, path):
     GENERATED[job["id"]] = path; GEN_HASH.add(sha_file(path))
 
+CHILD_AGE, CHILD_NSFW_THR = 18, 0.15  # SFW: finns ett ansikte under 18 racker minsta NSFW-antydan for att neka
 def check_output(img, nsfw=False):
-    """Minderarsparr pa varje utdata (InsightFace-alder under 21 = nekad, aven i NSFW). NSFW-klassaren hoppas bara over i NSFW-text-till-bild."""
+    """NSFW-lage: ansikte under 21 nekas, ingen NSFW-klassare. SFW: NSFW-klassaren alltid pa; barn i bild ar ok,
+    men om nagot ansikte bedoms under 18 nekas bilden redan vid svag NSFW-signal. Kan kontrollen inte koras nekas bilden."""
     if STUB: return
     import cv2, numpy as np
     try: faces = detect(cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2BGR))
     except Exception as e: raise RuntimeError("Ålderskontrollen kunde inte köras, bilden avvisas: " + str(e)[:120])
-    for f in faces:
-        if not face_age_ok(f): raise RuntimeError("Nekad: en person i resultatet bedöms vara under 21 år.")
-    if not nsfw and nsfw_frames([img]): raise RuntimeError("Nekad: bilden flaggades som NSFW.")
+    if nsfw:
+        for f in faces:
+            if not face_age_ok(f): raise RuntimeError("Nekad: en person i resultatet bedöms vara under 21 år.")
+        return
+    child = any(not face_age_ok(f, CHILD_AGE) for f in faces)
+    if nsfw_frames([img], CHILD_NSFW_THR if child else 0.6):
+        raise RuntimeError("Nekad: bilden med ett barn flaggades som olämplig." if child else "Nekad: bilden flaggades som NSFW.")
+
+def check_video_sfw(path):
+    """SFW-video: kontrollerar ett par bildrutor med samma regler som check_output."""
+    if STUB: return
+    from PIL import Image
+    d = path + "_chk"; os.makedirs(d, exist_ok=True)
+    ff("-i", path, "-vf", "fps=1", "-frames:v", "6", os.path.join(d, "f%02d.jpg"))
+    for f in sorted(os.listdir(d)): check_output(Image.open(os.path.join(d, f)).convert("RGB"))
+    shutil.rmtree(d, ignore_errors=True)
 
 def run_t2i(key, prompt, w, h, seed, nsfw=False):
     import torch
@@ -283,7 +310,10 @@ def task_image(job):
 
 def task_edit(job):
     nsfw = job.get("nsfw", False)
-    if not STUB: check_images([job["image"]], nsfw_check=not nsfw)  # InsightFace <21 nekas alltid; NSFW-klassare bara i SFW
+    if not STUB:
+        if nsfw: check_images([job["image"]], nsfw_check=False)  # NSFW: ansikte under 21 nekas
+        elif job.get("generated"): check_images([job["image"]], min_age=0)  # KINO-skapad SFW-bild: barn i scen ok, NSFW-klassare pa
+        else: check_images([job["image"]], min_age=CHILD_AGE)  # uppladdat foto: riktiga barns foton redigeras aldrig
     from PIL import Image, ImageOps
     path = os.path.join(job["dir"], "edit.png")
     src = ImageOps.exif_transpose(Image.open(job["image"])).convert("RGB")
@@ -300,7 +330,7 @@ def task_edit(job):
     check_output(img, nsfw); img.save(path); register_generated(job, path); job["files"]["edit.png"] = path
 
 def task_upscale(job):
-    if not STUB: check_images([job["image"]])  # minderarsparr (InsightFace <21 nekas) + NSFW pa indata
+    if not STUB: check_images([job["image"]], min_age=0 if sha_file(job["image"]) in GEN_HASH else CHILD_AGE)  # uppladdade barnfoton nekas
     from PIL import Image, ImageOps
     path = os.path.join(job["dir"], "upscale.png")
     src = ImageOps.exif_transpose(Image.open(job["image"])).convert("RGB"); src.thumbnail((768, 768))
@@ -383,7 +413,16 @@ def ls_run(video25, wav16k, out, steps=20, tmp="/tmp/ls"):
                         "--temp_dir", tmp], cwd=LS_DIR, capture_output=True, text=True)
     if r.returncode or not os.path.exists(out): raise RuntimeError("LatentSync: " + (r.stdout + r.stderr)[-500:])
 
+def check_video_faces(path, min_age=MIN_AGE):
+    """Lipsync/ansiktsbyte: varje ansikte i ett par bildrutor maste bedomas minst min_age (21). Kan det inte kontrolleras nekas det."""
+    if STUB: return
+    d = path + "_faces"; os.makedirs(d, exist_ok=True)
+    ff("-i", path, "-vf", "fps=1", "-frames:v", "8", os.path.join(d, "f%02d.jpg"))
+    check_images([os.path.join(d, f) for f in sorted(os.listdir(d))], nsfw_check=True, min_age=min_age)
+    shutil.rmtree(d, ignore_errors=True)
+
 def task_lipsync(job):
+    check_video_faces(job["video"])  # ingen lipsync pa barn: ansikten under 21 nekas
     d, s, e = job["dir"], job["start"], job["end"]
     v25, wav, orig = os.path.join(d, "in25.mp4"), os.path.join(d, "cond.wav"), os.path.join(d, "orig.wav")
     trim = (["-ss", f"{s:.3f}"] if s > 0 else []) + (["-t", f"{e - s:.3f}"] if e > s else [])
@@ -400,9 +439,9 @@ def task_lipsync(job):
 # ---------------- Artistlista (bara i sessionen) + ansiktsbyte ----------------
 roster, scans = {}, {}
 _fa = {"a": None}
-def face_age_ok(face):
+def face_age_ok(face, min_age=MIN_AGE):
     age = getattr(face, "age", None)
-    return age is not None and age >= MIN_AGE
+    return age is not None and age >= min_age
 def detect(img):
     if STUB:
         class F: pass
@@ -523,9 +562,9 @@ async def edit_ep(prompt: str = Form(...), image: Optional[UploadFile] = File(No
     if not src and not has_img: raise HTTPException(400, "Ladda upp en bild eller välj en bild KINO skapat.")
     jid, d = submit("edit", task_edit, prompt=prompt.strip()[:500], model=model, seed=seed_of(seed), nsfw=bool(nsfw))
     if src:
-        pth = os.path.join(d, "src.png"); shutil.copy(src, pth)
+        pth = os.path.join(d, "src.png"); shutil.copy(src, pth); jobs[jid]["generated"] = True
     else:
-        pth = await save_upload(image, d, "src")
+        pth = await save_upload(image, d, "src"); jobs[jid]["generated"] = sha_file(pth) in GEN_HASH
         if nsfw and sha_file(pth) not in GEN_HASH:
             shutil.rmtree(d, ignore_errors=True); jobs.pop(jid, None)
             raise HTTPException(400, "Uppladdade foton kan inte redigeras i NSFW – välj en bild KINO skapat.")
@@ -687,7 +726,7 @@ def svd_shot(img_path, aspect, motion, crop, seed, out):
         export_to_video(frames, out + ".tmp.mp4", fps=7)
     os.replace(out + ".tmp.mp4", out); return False
 
-def check_images(paths, nsfw_check=True):
+def check_images(paths, nsfw_check=True, min_age=MIN_AGE):
     import cv2
     with_faces = False
     for pth in paths:
@@ -696,7 +735,7 @@ def check_images(paths, nsfw_check=True):
         try: fs = detect(img)
         except Exception as e: raise RuntimeError("Ålderskontrollen kunde inte köras (kör installationscellen): " + str(e)[:120])
         for f in fs:
-            if not face_age_ok(f): raise RuntimeError("Nekad: en person på bilderna bedöms vara under 21 år.")
+            if not face_age_ok(f, min_age): raise RuntimeError(f"Nekad: en person på bilderna bedöms vara under {min_age} år.")
         with_faces = with_faces or bool(fs)
     if nsfw_check and nsfw_frames(paths): raise RuntimeError("Nekad: en bild flaggades som NSFW.")
     return with_faces

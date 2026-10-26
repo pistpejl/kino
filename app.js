@@ -62,12 +62,19 @@
   }
   const TERMS_RE = /(^|[^a-zåäö0-9])(child|children|kids?|minors?|underage|under[\s-]*age|teens?|teenage[rs]?|preteen|tween|adolescent|juvenile|loli(ta|con)?|shota(con)?|young[\s-]*looking|youthful[\s-]*looking|barely[\s-]*legal|jailbait|school[\s-]*(girl|boy|uniform)|pupil|kindergarten|toddler|baby|infant|little[\s-]*(girl|boy)|young[\s-]*(girl|boy)|girls?|boys?|(step)?daughter|(step)?son|barn(et|en|slig)?|ungen?|ungar|minderåriga?|omyndig|tonåring(ar)?|tonårs|tonåren|flick(a|an|or)|pojk(e|en|ar)|skol(flicka|pojke|tjej|uniform|an)|elev(er)?|högstadiet?|mellanstadiet|lågstadiet|gymnasiet|förskola|dagis|bebis|småbarn|dotter|ungdom(ar)?)(?=$|[^a-zåäö0-9])/i;
   const AGE_RE = /\b(\d{1,2})\s*(?:-|\s)?\s*(?:yo|y\/o|yrs?|years?(?:[\s-]*old)?|år(?:ig|ing|s)?|åring)\b|\b(?:age|aged|ålder|åldern)\s*(\d{1,2})\b/gi;
-  function minorText(t) {
-    const s = String(t || '').toLowerCase();
-    if (TERMS_RE.test(s)) return true;
+  // SFW: barn i harmlösa scener är ok (t.ex. barn upp på scen) men aldrig ihop med sexuella/nakna/antydande ord. NSFW: alla barnord nekas.
+  const SEXUAL_RE = /(^|[^a-zåäö0-9])(nsfw|nudes?|naked|nudity|porn\w*|sex\w*|sensual\w*|seduc\w*|erotic\w*|explicit|lewd|fetish\w*|provocative|suggestive|intima\w*|intimate|lingerie|underwear|panties|bras?|thong|bikini\w*|swimsuit|topless|shirtless|cleavage|undress\w*|strip\w*|kiss\w*|making[\s-]*out|beds?|bedroom|bath\w*|shower\w*|genital\w*|nipples?|breasts?|butt|crotch|groin|naken|nakna|nakenhet|sexig\w*|sensuell\w*|erotisk\w*|porr\w*|underkläder|trosor|behå|bh|baddräkt|kyss\w*|hångla\w*|säng(en)?|sovrum(met)?|bad(et)?|dusch\w*|klä[\s-]*av|avklädd\w*|strippa\w*|intim\w*|utmanande|bröst(en)?|rumpa|skrev)(?=$|[^a-zåäö0-9])/i;
+  const HARD_RE = /(^|[^a-zåäö0-9])(schoolgirls?|skolflick(a|or)|loli(ta|con)?|shota(con)?|jailbait|barely[\s-]*legal|pedo\w*|cp|young[\s-]*looking|youthful[\s-]*looking|childlike|barnslig\w*|underage|under[\s-]*age|minderåriga?|omyndig|ungt utseende|ser ung ut)(?=$|[^a-zåäö0-9])/i;
+  const BARN_EN_RE = /\b(?:(?:the|a|an|red|old|wooden|big|abandoned|rustic|farm|in\s+a|in\s+the)\s+barns?|barns?\s+(?:doors?|owls?|roofs?|walls?|swallows?|dance|wedding|cats?|interior))\b/gi;
+  function minorText(t, lane) {
+    let s = String(t || '').toLowerCase();
+    const nsfw = (lane || st.lane) === 'nsfw';
+    if (HARD_RE.test(s)) return true;
+    if (!nsfw && !SEXUAL_RE.test(s)) s = s.replace(BARN_EN_RE, ' ');
+    let minor = TERMS_RE.test(s);
     let m; AGE_RE.lastIndex = 0;
-    while ((m = AGE_RE.exec(s))) if (Number(m[1] || m[2]) < 18) return true;
-    return false;
+    while (!minor && (m = AGE_RE.exec(s))) if (Number(m[1] || m[2]) < 18) minor = true;
+    return minor && (nsfw || SEXUAL_RE.test(s));
   }
   const REFUSE = 'Nekad: KINO gör aldrig något som rör minderåriga.';
   function puterError(e) {
@@ -992,7 +999,7 @@
     idea.value = S.idea || ''; idea.oninput = () => { S.idea = idea.value; };
     // settings
     const tplSel = h('select'); const tpls = await fetch(`${API}/script/templates`).then((x) => x.json()).catch(() => ({ templates: [{ id: 'standard', sv: 'Standard' }] }));
-    const EN = { standard: 'Standard', live: 'Livekonsert', cinematic: 'Filmisk', anime: 'Anime', vhs: 'Retro VHS / 80-tal', neon: 'Neon / Cyberpunk', dreamy: 'Drömsk', bw: 'Svartvitt', cover: 'Skivomslag' };
+    const EN = { standard: 'Standard', live: 'Livekonsert', stagekid: 'Barn upp på scen (viral)', cinematic: 'Filmisk', anime: 'Anime', vhs: 'Retro VHS / 80-tal', neon: 'Neon / Cyberpunk', dreamy: 'Drömsk', bw: 'Svartvitt', cover: 'Skivomslag' };
     tpls.templates.forEach((t) => tplSel.append(h('option', { value: t.id, selected: t.id === S.template }, EN[t.id] || t.sv)));
     tplSel.onchange = () => { S.template = tplSel.value; };
     const len = select([['15', '15 s'], ['30', '30 s'], ['45', '45 s'], ['60', '60 s']], String(S.seconds || 30)); len.onchange = () => { S.seconds = +len.value; };
