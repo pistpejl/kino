@@ -173,14 +173,14 @@
     getEngines(st.lane).then((list) => {
       const ok = list.filter((e) => e.kind === engineKind && !(kind === 'music' && e.noMusic));
       engList = ok;
-      sel.innerHTML = '';
+      [...sel.options].forEach((o) => { if (!o.dataset.keep) o.remove(); }); // keep client-side engines (Colab)
       ok.forEach((e) => sel.append(h('option', { value: e.id, title: e.detail || '' }, engineLabel(e))));
       // engines that exist but are not usable right now (missing server keys, no free image quota, queue closed): greyed, with the honest reason
       const off = kind === 'image' ? getInactive(st.lane).filter((e) => e.kind === 'image') : [];
       off.forEach((e) => sel.append(h('option', { value: '', disabled: true, title: e.note }, `${e.name} · ej aktiv${(e.tags || []).length ? ' · ' + e.tags.join(' · ') : ''}`)));
       if (off.length) { inact.hidden = false; inact.append(h('summary', {}, `Ej aktiva modeller (${off.length})`), ...off.map((e) => h('p', {}, h('b', {}, e.name), ' – ', e.note))); }
       showHint();
-      if (!ok.length) { sel.append(h('option', { value: '' }, noEngineText || 'Ingen modell svarar just nu')); sel.disabled = true; if (kind !== 'video' && kind !== 'music') go.disabled = true; }
+      if (!ok.length) { sel.append(h('option', { value: '' }, noEngineText || 'Ingen modell svarar just nu')); sel.disabled = ![...sel.options].some((o) => o.dataset.keep && !o.disabled); if (kind !== 'video' && kind !== 'music') go.disabled = true; }
       if (kind === 'edit' && !ok.length) say('Redigering fungerar inte just nu.', true);
     });
     function say(t, err) { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); }
@@ -363,6 +363,63 @@
     d.open = Boolean(open);
     return h('div', { class: 'srcrow' }, d);
   }
+  // ---- Colab (egen GPU): user's own Colab notebook, called directly from the browser; URL + token in localStorage only ----
+  const COLAB_NB = 'https://colab.research.google.com/github/pistpejl/kino/blob/main/colab/kino_colab_engine.ipynb';
+  const colabCfg = () => ({ url: (localStorage.getItem('kino.colab.url') || '').trim().replace(/\/+$/, ''), token: localStorage.getItem('kino.colab.token') || '' });
+  const colabHdr = () => ({ Authorization: `Bearer ${colabCfg().token}` });
+  async function colabHealth() {
+    const { url, token } = colabCfg(); if (!url || !token) return { state: 'none' };
+    try {
+      const r = await fetch(`${url}/health`, { headers: colabHdr(), signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return { state: 'off' };
+      const j = await r.json(); return j.auth ? { state: 'on', info: j } : { state: 'auth' };
+    } catch { return { state: 'off' }; }
+  }
+  async function colabVideo({ prompt, seconds, ratio, image, say }) {
+    const { url } = colabCfg(); const fd = new FormData();
+    fd.append('prompt', prompt); fd.append('seconds', String(Math.min(Number(seconds) || 4, 5))); fd.append('aspect', ratio || '9:16');
+    if (image) fd.append('image', image, image.name || 'bild.jpg');
+    const r = await fetch(`${url}/generate`, { method: 'POST', headers: colabHdr(), body: fd });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || `Colab svarade ${r.status}`);
+    say(`Colab jobbar…${j.note ? ' ' + j.note : ''} Ett klipp tar ofta 5–12 min på en T4.`);
+    for (;;) {
+      await new Promise((res) => setTimeout(res, 5000));
+      const s = await fetch(`${url}/status/${j.jobId}`, { headers: colabHdr() }).then((x) => x.json()).catch(() => null);
+      if (!s) throw new Error('Colab svarar inte längre (stängd flik?).');
+      if (s.status === 'error') throw new Error(`Colab misslyckades: ${s.error || ''}`);
+      if (s.status === 'done') {
+        const blob = await fetch(url + s.url, { headers: colabHdr() }).then((x) => x.blob());
+        return { name: `colab-${j.jobId}.mp4`, url: URL.createObjectURL(blob), blob, engineName: 'Colab (egen GPU) · Wan 2.1 1.3B' };
+      }
+      say(`Colab ${s.status === 'queued' ? 'i kö' : 'renderar'}… ${s.elapsed || 0} s`);
+    }
+  }
+  function colabPanel(onChange) {
+    const c = colabCfg();
+    const dot = h('span', { class: 'colab-dot', style: 'display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;margin-right:6px' });
+    const txt = h('span', {}, 'Inte inställd');
+    const url = h('input', { type: 'url', placeholder: 'https://….trycloudflare.com', value: c.url });
+    const tok = h('input', { type: 'password', placeholder: 'Token från Colab', value: c.token, autocomplete: 'off' });
+    const set = (col, t) => { dot.style.background = col; txt.textContent = t; };
+    async function check() {
+      set('#cc0', 'Kollar…'); const r = await colabHealth();
+      if (r.state === 'on') set('#2a2', `Online · ${r.info.gpu} · kö ${r.info.queue}`);
+      else if (r.state === 'auth') set('#c33', 'Fel token');
+      else if (r.state === 'off') set('#c33', 'Offline – använder gratismotorerna');
+      else set('#888', 'Inte inställd');
+      onChange(r.state === 'on');
+    }
+    const save = h('button', { type: 'button', class: 'btn', onclick: () => { localStorage.setItem('kino.colab.url', url.value.trim()); localStorage.setItem('kino.colab.token', tok.value.trim()); check(); } }, 'Spara & testa');
+    const clear = h('button', { type: 'button', class: 'btn', onclick: () => { localStorage.removeItem('kino.colab.url'); localStorage.removeItem('kino.colab.token'); url.value = ''; tok.value = ''; check(); } }, 'Rensa');
+    const open = h('a', { class: 'btn', href: COLAB_NB, target: '_blank', rel: 'noopener' }, 'Öppna i Colab');
+    const d = h('details', { class: 'clips colab' }, h('summary', {}, h('span', { class: 'ttl' }, dot, 'Colab (egen GPU)'), h('span', { class: 'count' }, txt)),
+      h('div', { class: 'clips-body' }, field('URL', url, true), field('Token', tok, true), h('div', { class: 'under' }, save, clear, open),
+        h('div', { class: 'meta' }, 'Kör anteckningsboken i Colab (gratis T4), klistra in URL och token. Sparas bara i den här webbläsaren. Max 5 s, bara SFW.')));
+    check();
+    return d;
+  }
+
   async function videoView(v) {
     const carry = st.carry; st.carry = null;
     const first = fileField('Första bildruta', 'image/*', carry);
@@ -374,6 +431,13 @@
     const c = composer({ kind: 'video', engineKind: 'video', placeholder: 'Beskriv ett klipp', settings: [first.el, last.el, field('Längd', len), field('Format', ratio), g.el],
       onGo: async ({ prompt, engine, say }) => {
         if (!prompt) return say('Skriv en prompt.', true);
+        if (engine === 'colab' && !g.cb.checked) {
+          if (minorText(prompt)) return say(REFUSE, true);
+          try {
+            const out = await colabVideo({ prompt, seconds: len.value, ratio: ratio.value, image: first.inp.files[0] || first.blob || null, say });
+            st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); return say(`Gjord av ${out.engineName}.`);
+          } catch (e) { return say(`${e.message} Välj en annan motor.`, true); }
+        }
         if (!g.cb.checked && !engine) return say('Ingen videomodell svarar just nu.', true);
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('engine', engine); fd.append('prompt', prompt); fd.append('seconds', len.value); fd.append('ratio', ratio.value); fd.append('grok', g.cb.checked ? '1' : '0');
@@ -389,7 +453,14 @@
           st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); say(`Gjord av ${out.engineName}.`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(pagehead('Video', 'Beskriv ett klipp, eller börja från en bild. Video kan ta några minuter.'), c.box, clipSources(), grid);
+    const sel = c.box.querySelector('select');
+    const colabOpt = h('option', { value: 'colab', disabled: true, 'data-keep': '1' }, 'Colab (egen GPU) · offline');
+    sel.prepend(colabOpt);
+    const panel = colabPanel((on) => {
+      colabOpt.disabled = !on; colabOpt.textContent = on ? 'Colab (egen GPU) · din GPU · max 5 s' : 'Colab (egen GPU) · offline';
+      if (on) { sel.disabled = false; if (localStorage.getItem('kino.colab.url')) sel.value = 'colab'; } else if (sel.value === 'colab') sel.selectedIndex = [...sel.options].findIndex((o) => !o.disabled);
+    });
+    v.append(pagehead('Video', 'Beskriv ett klipp, eller börja från en bild. Video kan ta några minuter.'), panel, c.box, clipSources(), grid);
   }
 
   async function musicView(v) {
