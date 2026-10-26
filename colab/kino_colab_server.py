@@ -161,18 +161,135 @@ def task_video(job):
         export_to_video(out, path, fps=FPS)
     job["files"]["video.mp4"] = path
 
+# ---------------- Bildmodeller (oppna vikter fran Hugging Face, 4-bit/nf4 + CPU-offload for T4) ----------------
+HF_TOKEN = os.environ.get("HF_TOKEN") or None  # bara for gated modeller (FLUX 3 klein); skrivs aldrig ut
+ESRGAN_REPO, ESRGAN_FILE = "ai-forever/Real-ESRGAN", "RealESRGAN_x4.pth"
+# nyckel: (etikett, HF-id, gated, steg, guidance)
+IMAGE_MODELS = {
+    "sdxl":       ("SDXL-Turbo (snabbast)", SDXL_ID, False, 2, 0.0),
+    "flux3klein": ("FLUX 3 Image Klein", "black-forest-labs/flux-3-image-klein", True, 4, 1.0),
+    "flux2klein": ("FLUX.2 klein 4B", "black-forest-labs/FLUX.2-klein-4B", False, 4, 1.0),
+    "flux1schnell": ("FLUX.1 schnell (nf4)", "magespace/FLUX.1-schnell-bnb-nf4", False, 4, 0.0),
+    "qwen21":     ("Qwen-Image 2.1", "Qwen/Qwen-Image-2.1", False, 20, 4.0),
+    "qwen2512":   ("Qwen-Image 2512 (4-bit)", "ovedrive/Qwen-Image-2512-4bit", False, 20, 4.0),
+    "zimage":     ("Z-Image Turbo", "Tongyi-MAI/Z-Image-Turbo", False, 9, 0.0),
+    "ernie":      ("ERNIE-Image Turbo", "baidu/ERNIE-Image-Turbo", False, 8, 1.0),
+}
+EDIT_MODELS = {
+    "qwenedit":   ("Qwen-Image-Edit 2511 (4-bit)", "ovedrive/Qwen-Image-Edit-2511-4bit", 20, 4.0),
+    "flux2klein": ("FLUX.2 klein 4B (redigera)", "black-forest-labs/FLUX.2-klein-4B", 4, 1.0),
+}
+def model_available(key):
+    return key in IMAGE_MODELS and (not IMAGE_MODELS[key][2] or bool(HF_TOKEN))
+
+def nf4(*components):
+    import torch
+    from diffusers.quantizers import PipelineQuantizationConfig
+    return PipelineQuantizationConfig(quant_backend="bitsandbytes_4bit", components_to_quantize=list(components),
+        quant_kwargs={"load_in_4bit": True, "bnb_4bit_quant_type": "nf4", "bnb_4bit_compute_dtype": torch.bfloat16})
+
+def load_diffusers(key, edit=False):
+    """Laddar en pipeline sa att den far plats pa en T4 (15 GB): 4-bit-vikter + modell-CPU-offload."""
+    import torch, diffusers
+    bf = torch.bfloat16
+    repo = (EDIT_MODELS if edit else IMAGE_MODELS)[key][1]
+    if key == "flux3klein":  # bara modular-pipeline i diffusers 0.42
+        from diffusers import ModularPipeline, BitsAndBytesConfig
+        from transformers import BitsAndBytesConfig as TBnb
+        qd = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=bf)
+        qt = TBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=bf)
+        p = ModularPipeline.from_pretrained(repo, token=HF_TOKEN)
+        p.load_components(torch_dtype=bf, token=HF_TOKEN, quantization_config={"transformer": qd, "text_encoder": qt})
+        p.to("cuda"); return p
+    if key == "qwenedit":
+        p = diffusers.QwenImageEditPlusPipeline.from_pretrained(repo, torch_dtype=bf)  # redan 4-bit
+    elif key == "qwen2512":
+        p = diffusers.QwenImagePipeline.from_pretrained(repo, torch_dtype=bf)  # redan 4-bit
+    elif key == "flux1schnell":
+        p = diffusers.FluxPipeline.from_pretrained(repo, torch_dtype=bf)  # redan nf4
+    elif key == "qwen21":
+        p = diffusers.QwenImage21Pipeline.from_pretrained(repo, torch_dtype=bf, quantization_config=nf4("transformer", "text_encoder"))
+    elif key == "flux2klein":
+        p = diffusers.Flux2KleinPipeline.from_pretrained(repo, torch_dtype=bf, quantization_config=nf4("transformer", "text_encoder"))
+    elif key == "zimage":
+        p = diffusers.ZImagePipeline.from_pretrained(repo, torch_dtype=bf, quantization_config=nf4("transformer", "text_encoder"))
+    elif key == "ernie":  # promptforbattraren (pe, 8 GB) hoppas over for att spara minne
+        p = diffusers.ErnieImagePipeline.from_pretrained(repo, torch_dtype=bf, pe=None, pe_tokenizer=None,
+                                                         quantization_config=nf4("transformer", "text_encoder"))
+    else: raise RuntimeError("Okänd modell: " + key)
+    p.enable_model_cpu_offload(); return p
+
+def load_esrgan():
+    import torch, spandrel
+    from huggingface_hub import hf_hub_download
+    m = spandrel.ModelLoader().load_from_file(hf_hub_download(ESRGAN_REPO, ESRGAN_FILE))
+    return m.cuda().half().eval() if torch.cuda.is_available() else m.eval()
+
+def check_output(img):
+    """Minderarsparr + NSFW pa varje utdata: InsightFace-alder under 21 = nekad."""
+    if STUB: return
+    import cv2, numpy as np
+    for f in detect(cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2BGR)):
+        if not face_age_ok(f): raise RuntimeError("Nekad: en person i resultatet bedöms vara under 21 år.")
+    if nsfw_frames([img]): raise RuntimeError("Nekad: bilden flaggades som NSFW.")
+
+def run_t2i(key, prompt, w, h, seed):
+    import torch
+    _, _, _, steps, g = IMAGE_MODELS[key]
+    gen = torch.Generator("cpu").manual_seed(seed)
+    if key == "sdxl":
+        p = use("sdxl", load_sdxl)
+        return p(prompt=f"{prompt}, {IMG_STYLE}", negative_prompt=NEGATIVE, width=w, height=h, num_inference_steps=steps,
+                 guidance_scale=g, generator=gen).images[0]
+    p = use("img:" + key, lambda: load_diffusers(key)); full = f"{prompt}, {IMG_STYLE}"
+    if key == "flux3klein":
+        return p(prompt=full, width=w, height=h, num_inference_steps=steps, generator=gen, output="images")[0]
+    if key in ("qwen21", "qwen2512"):
+        return p(prompt=full, negative_prompt=NEGATIVE, true_cfg_scale=g, width=w, height=h, num_inference_steps=steps, generator=gen).images[0]
+    if key == "flux1schnell":
+        return p(prompt=full, width=w, height=h, num_inference_steps=steps, guidance_scale=g, max_sequence_length=256, generator=gen).images[0]
+    if key == "ernie":
+        return p(prompt=full, width=w, height=h, num_inference_steps=steps, guidance_scale=g, use_pe=False, generator=gen).images[0]
+    return p(prompt=full, width=w, height=h, num_inference_steps=steps, guidance_scale=g, generator=gen).images[0]
+
 def task_image(job):
     path = os.path.join(job["dir"], "image.png"); w, h = IMG_ASPECT[job["aspect"]]
     if STUB:
         from PIL import Image; Image.new("RGB", (w // 4, h // 4), (120, 110, 100)).save(path)
     else:
-        import torch
-        p = use("sdxl", load_sdxl)
-        img = p(prompt=f"{job['prompt']}, {IMG_STYLE}", negative_prompt=NEGATIVE, width=w, height=h, num_inference_steps=2, guidance_scale=0.0,
-                generator=torch.Generator("cpu").manual_seed(job["seed"])).images[0]
-        if nsfw_frames([img]): raise RuntimeError("Nekad: bilden flaggades som NSFW.")
-        img.save(path)
-    job["files"]["image.png"] = path
+        img = run_t2i(job["model"], job["prompt"], w, h, job["seed"])
+        check_output(img); img.save(path)
+    job["files"]["image.png"] = path; job["data"] = {"model": job["model"], "modelId": IMAGE_MODELS[job["model"]][1]}
+
+def task_edit(job):
+    if not STUB: check_images([job["image"]])  # minderarsparr (InsightFace <21 nekas) + NSFW pa indata
+    from PIL import Image, ImageOps
+    path = os.path.join(job["dir"], "edit.png")
+    src = ImageOps.exif_transpose(Image.open(job["image"])).convert("RGB")
+    if STUB: src.save(path); job["files"]["edit.png"] = path; return
+    import torch
+    src.thumbnail((1024, 1024)); w, h = (src.width // 16) * 16, (src.height // 16) * 16; src = src.resize((w, h))
+    key = job["model"]; _, _, steps, g = EDIT_MODELS[key]
+    p = use("edit:" + key, lambda: load_diffusers(key, edit=True)); gen = torch.Generator("cpu").manual_seed(job["seed"])
+    if key == "qwenedit":
+        img = p(image=[src], prompt=job["prompt"], negative_prompt=" ", true_cfg_scale=g, num_inference_steps=steps, generator=gen).images[0]
+    else:
+        img = p(image=src, prompt=job["prompt"], width=w, height=h, num_inference_steps=steps, guidance_scale=g, generator=gen).images[0]
+    check_output(img); img.save(path); job["files"]["edit.png"] = path
+
+def task_upscale(job):
+    if not STUB: check_images([job["image"]])  # minderarsparr (InsightFace <21 nekas) + NSFW pa indata
+    from PIL import Image, ImageOps
+    path = os.path.join(job["dir"], "upscale.png")
+    src = ImageOps.exif_transpose(Image.open(job["image"])).convert("RGB"); src.thumbnail((768, 768))
+    if STUB: src.resize((src.width * 4, src.height * 4)).save(path); job["files"]["upscale.png"] = path; return
+    import torch, numpy as np
+    m = use("esrgan", load_esrgan); dev = next(m.model.parameters()).device
+    x = torch.from_numpy(np.array(src)).permute(2, 0, 1)[None].float().div(255).to(dev)
+    if dev.type == "cuda": x = x.half()
+    with torch.inference_mode(): y = m(x)
+    img = Image.fromarray((y[0].float().clamp(0, 1).permute(1, 2, 0).cpu().numpy() * 255).round().astype("uint8"))
+    check_output(img); img.save(path); job["files"]["upscale.png"] = path
 
 def run_demucs(src, outdir):
     """Returnerar (vocals.wav, no_vocals.wav)."""
@@ -260,6 +377,7 @@ def task_lipsync(job):
 
 # ---------------- Artistlista (bara i sessionen) + ansiktsbyte ----------------
 roster, scans = {}, {}
+_fa = {"a": None}
 def face_age_ok(face):
     age = getattr(face, "age", None)
     return age is not None and age >= MIN_AGE
@@ -267,7 +385,10 @@ def detect(img):
     if STUB:
         class F: pass
         f = F(); f.bbox = (10, 10, 60, 60); f.age = 30; f.normed_embedding = __import__("numpy").ones(4) / 2; return [f]
-    fa, _ = use("faces", load_faces); return sorted(fa.get(img), key=lambda f: -(f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+    if _fa["a"] is None:  # liten detektor som ligger kvar, sa aldersspärren inte kastar ut bildmodellen
+        from insightface.app import FaceAnalysis
+        _fa["a"] = FaceAnalysis(name="buffalo_l", providers=["CUDAExecutionProvider", "CPUExecutionProvider"]); _fa["a"].prepare(ctx_id=0, det_size=(640, 640))
+    fa = _fa["a"]; return sorted(fa.get(img), key=lambda f: -(f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
 def swap_frame(img, mapping_faces):
     """mapping_faces: lista av (malansikte-embedding, kallansikte). Byter varje hittat ansikte mot basta matchning."""
     import numpy as np
@@ -329,11 +450,11 @@ def health(authorization: Optional[str] = Header(None)):
         try:
             import torch; gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "ingen"
         except Exception: gpu = "okänd"
-    feats = ["video", "img2video", "image", "stems", "lyrics", "autocut", "musicvideo"]
+    feats = ["video", "img2video", "image", "edit", "upscale", "stems", "lyrics", "autocut", "musicvideo"]
     if STUB or os.path.exists(LS_PY): feats.append("lipsync")
     if STUB or os.path.exists(INSWAPPER): feats.append("faceswap")
     return {"ok": True, "auth": ok, "gpu": gpu, "queue": q.qsize(), "loaded": _cur["name"], "maxSeconds": MAX_SECONDS,
-            "sfwOnly": True, "features": feats, "licenseNote": LICENSE_NOTE}
+            "sfwOnly": True, "features": feats, "imageModels": [k for k in IMAGE_MODELS if model_available(k)], "editModels": list(EDIT_MODELS), "licenseNote": LICENSE_NOTE}
 
 @app.post("/generate")
 async def generate(prompt: str = Form(...), seconds: int = Form(4), aspect: str = Form("9:16"), steps: int = Form(30),
@@ -345,11 +466,36 @@ async def generate(prompt: str = Form(...), seconds: int = Form(4), aspect: str 
     go(jid)
     return {"jobId": jid, "status": "queued", "note": "Bild till video (SVD, ca 2 s)." if has_img else None}
 
+@app.get("/models")
+def models_ep(authorization: Optional[str] = Header(None)):
+    auth(authorization)
+    return {"image": [{"key": k, "label": v[0], "id": v[1], "available": model_available(k), "needsHfToken": v[2]} for k, v in IMAGE_MODELS.items()],
+            "edit": [{"key": k, "label": v[0], "id": v[1]} for k, v in EDIT_MODELS.items()],
+            "upscale": [{"key": "esrgan4x", "label": "Real-ESRGAN x4", "id": ESRGAN_REPO}]}
+
 @app.post("/image")
-async def image_ep(prompt: str = Form(...), aspect: str = Form("9:16"), seed: int = Form(-1), authorization: Optional[str] = Header(None)):
+async def image_ep(prompt: str = Form(...), aspect: str = Form("9:16"), seed: int = Form(-1), model: str = Form("sdxl"), authorization: Optional[str] = Header(None)):
     auth(authorization); check_text(prompt)
-    jid, _ = submit("image", task_image, prompt=prompt.strip()[:500], aspect=asp(aspect), seed=seed_of(seed))
+    if model not in IMAGE_MODELS: raise HTTPException(400, "Okänd bildmodell.")
+    if not model_available(model): raise HTTPException(400, "Modellen kräver HF_TOKEN (godkänn licensen på Hugging Face och lägg token i Colab-hemligheter).")
+    jid, _ = submit("image", task_image, prompt=prompt.strip()[:500], aspect=asp(aspect), seed=seed_of(seed), model=model)
     return go(jid)
+
+async def _checked_input(image, d):
+    if image is None or not image.filename: raise HTTPException(400, "Ladda upp en bild.")
+    return await save_upload(image, d, "src")  # kontrolleras i jobbet (under GPU-laset)
+
+@app.post("/edit")
+async def edit_ep(prompt: str = Form(...), image: UploadFile = File(...), model: str = Form("qwenedit"), seed: int = Form(-1), authorization: Optional[str] = Header(None)):
+    auth(authorization); check_text(prompt, True)
+    if model not in EDIT_MODELS: raise HTTPException(400, "Okänd redigeringsmodell.")
+    jid, d = submit("edit", task_edit, prompt=prompt.strip()[:500], model=model, seed=seed_of(seed))
+    return go(jid, image=await _checked_input(image, d))
+
+@app.post("/upscale")
+async def upscale_ep(image: UploadFile = File(...), authorization: Optional[str] = Header(None)):
+    auth(authorization); jid, d = submit("upscale", task_upscale)
+    return go(jid, image=await _checked_input(image, d))
 
 @app.post("/stems")
 async def stems(audio: UploadFile = File(...), authorization: Optional[str] = Header(None)):

@@ -449,11 +449,25 @@
     const num = (v) => h('input', { type: 'number', value: v, min: 0, step: 'any', style: 'width:6em' });
     const aspectSel = () => select([['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1']], '9:16');
     const need = (f, msg) => { if (!f) throw new Error(msg); return f; };
-    // Bild (SDXL-Turbo)
-    const iP = h('input', { type: 'text', placeholder: 'Beskriv en bild' }); const iA = aspectSel();
-    const tImg = tool('Bild', 'SDXL-Turbo, naturlig mobilfoto-stil', [field('Prompt', iP, true), field('Format', iA)], 'Skapa bild', async (say) => {
+    // Bild: välj modell (öppna vikter, laddas en i taget i Colab)
+    const IMG_MODELS = [['sdxl', 'SDXL-Turbo (snabbast)'], ['flux3klein', 'FLUX 3 Image Klein (kräver HF_TOKEN)'], ['flux2klein', 'FLUX.2 klein 4B'], ['flux1schnell', 'FLUX.1 schnell'],
+      ['qwen21', 'Qwen-Image 2.1 (långsam, bäst text)'], ['qwen2512', 'Qwen-Image 2512'], ['zimage', 'Z-Image Turbo'], ['ernie', 'ERNIE-Image Turbo']];
+    const iP = h('input', { type: 'text', placeholder: 'Beskriv en bild' }); const iA = aspectSel(); const iM = select(IMG_MODELS, 'flux2klein');
+    const tImg = tool('Bild', 'Välj modell. Första gången laddas modellen ner (kan ta flera minuter).', [field('Prompt', iP, true), field('Modell', iM), field('Format', iA)], 'Skapa bild', async (say) => {
       if (minorText(iP.value)) throw new Error(REFUSE);
-      const fd = new FormData(); fd.append('prompt', need(iP.value.trim(), 'Skriv en prompt.')); fd.append('aspect', iA.value); return colabJob('/image', fd, say);
+      const fd = new FormData(); fd.append('prompt', need(iP.value.trim(), 'Skriv en prompt.')); fd.append('aspect', iA.value); fd.append('model', iM.value); return colabJob('/image', fd, say);
+    });
+    // Redigera bild (Qwen-Image-Edit / FLUX.2 klein)
+    const eI = file('Bild', 'image/*'); const eP = h('input', { type: 'text', placeholder: 'Vad ska ändras? T.ex. "byt bakgrund till en strand"' });
+    const eM = select([['qwenedit', 'Qwen-Image-Edit 2511'], ['flux2klein', 'FLUX.2 klein 4B']], 'qwenedit');
+    const tEdit = tool('Redigera bild', 'Bild + instruktion. Bara SFW; personer under 21 nekas.', [eI.el, field('Instruktion', eP, true), field('Modell', eM)], 'Redigera', async (say) => {
+      if (minorText(eP.value)) throw new Error(REFUSE);
+      const fd = new FormData(); fd.append('image', need(eI.i.files[0], 'Välj en bild.')); fd.append('prompt', need(eP.value.trim(), 'Skriv en instruktion.')); fd.append('model', eM.value); return colabJob('/edit', fd, say);
+    });
+    // Skala upp (Real-ESRGAN x4)
+    const uI = file('Bild', 'image/*');
+    const tUp = tool('Skala upp', 'Real-ESRGAN x4 (max 768 px in, 4x ut)', [uI.el], 'Skala upp', async (say) => {
+      const fd = new FormData(); fd.append('image', need(uI.i.files[0], 'Välj en bild.')); return colabJob('/upscale', fd, say);
     });
     // Sång / instrumental (Demucs)
     const sA = file('Låt', 'audio/*');
@@ -542,7 +556,7 @@
       bar.value = 100; return r;
     });
     tMv.style.cssText = 'border:2px solid var(--accent, #c9a227);border-radius:12px;padding:12px';
-    const box = h('div', { class: 'colab-tools' }, tMv, h('div', { class: 'meta' }, 'Bild till video: välj Colab som motor på Video-sidan och lägg en första bildruta – den används (SVD).'), tImg, tStem, tLyr, tCut, tLip, tRos, tSwap);
+    const box = h('div', { class: 'colab-tools' }, tMv, h('div', { class: 'meta' }, 'Bild till video: välj Colab som motor på Video-sidan och lägg en första bildruta – den används (SVD).'), tImg, tEdit, tUp, tStem, tLyr, tCut, tLip, tRos, tSwap);
     return { box, onState: (on, feats) => { box.querySelectorAll('.colab-need').forEach((b) => { b.disabled = !on; }); tLip.hidden = on && feats && !feats.includes('lipsync'); tSwap.hidden = tRos.hidden = on && feats && !feats.includes('faceswap'); tMv.hidden = on && feats && !feats.includes('musicvideo'); if (on) rosterSync().catch(() => {}); } };
   }
   function colabPanel(onChange) {
