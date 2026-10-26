@@ -23,16 +23,19 @@ FPS, MAX_SECONDS, MIN_AGE = 16, 5, 21
 LICENSE_NOTE = "Ansiktsbyte använder InsightFace/inswapper: endast icke-kommersiellt bruk."
 
 # ---------------- Innehallsregler ----------------
-MINOR_RE = re.compile(r"(^|[^a-zåäö0-9])(child|children|kids?|minors?|underage|under[\s-]*age|teens?|teenage[rs]?|preteen|tween|adolescent|juvenile|loli(ta|con)?|shota(con)?|young[\s-]*looking|barely[\s-]*legal|jailbait|school[\s-]*(girl|boy|uniform)|kindergarten|toddler|baby|infant|little[\s-]*(girl|boy)|young[\s-]*(girl|boy)|barn(et|en)?|minderåriga?|omyndig|tonåring(ar)?|tonårs|flick(a|an|or)|pojk(e|en|ar)|skolflicka|skolpojke|dagis|bebis|småbarn)(?=$|[^a-zåäö0-9])", re.I)
+MINOR_RE = re.compile(r"(^|[^a-zåäö0-9])(child|children|kids?|minors?|underage|under[\s-]*age|teens?|teenage[rs]?|preteen|tween|adolescent|juvenile|loli(ta|con)?|shota(con)?|young[\s-]*looking|barely[\s-]*legal|jailbait|school[\s-]*(girl|boy|uniform)|kindergarten|toddler|baby|infant|little[\s-]*(girl|boy)|young[\s-]*(girl|boy)|barn(et|en|s)?|skolbarn(et|en)?|barnslig[a-zåäö]*|minderåriga?|omyndig|tonåring(ar)?|tonårs|flick(a|an|or)|pojk(e|en|ar)|skolflicka|skolpojke|dagis|bebis|småbarn)(?=$|[^a-zåäö0-9])", re.I)
 AGE_RE = re.compile(r"\b(\d{1,2})\s*(?:-|\s)?\s*(?:yo|y/o|yrs?|years?(?:[\s-]*old)?|år(?:ig|ing|s)?|åring)\b", re.I)
 NSFW_RE = re.compile(r"(^|[^a-zåäö0-9])(nsfw|nude|naked|nudity|porn\w*|sex\w*|explicit|erotic\w*|topless|lingerie|genital\w*|nipples?|naken|nakna|porr\w*|erotisk\w*|bröstvårtor?)(?=$|[^a-zåäö0-9])", re.I)
 STYLE = "natural handheld phone video, real-life lighting, slight camera shake, authentic, unpolished, true-to-life colors"
 IMG_STYLE = "candid phone photo, natural light, real-life, unpolished, true-to-life colors"
 NEGATIVE = "AI look, overly smooth skin, plastic, CGI, 3d render, oversaturated, cinematic color grading, glossy, airbrushed, text, watermark, blurry, deformed, extra fingers, static frame"
 
+BARN_EN_RE = re.compile(r"\b(?:(?:the|a|an|red|old|wooden|big|abandoned|rustic|farm|in\s+a|in\s+the)\s+barns?|barns?\s+(?:doors?|owls?|roofs?|walls?|swallows?|dance|wedding|cats?|interior))\b", re.I)
 def check_text(text: str, has_person_media: bool = False, nsfw: bool = False):
     """nsfw=True: minderarsspärren galler alltid (skrivna aldrar under 18 nekas; ansiktsuppskattning har marginal 21)."""
     s = (text or "").lower()
+    if not nsfw and not NSFW_RE.search(s):  # SFW: engelska "barn" (lada) i tydligt byggnadssammanhang ar inte "barn" (children)
+        s = BARN_EN_RE.sub(" ", s)
     if MINOR_RE.search(s) or any(int(m.group(1)) < 18 for m in AGE_RE.finditer(s)):
         raise HTTPException(400, "Nekad: KINO gör aldrig något som rör minderåriga.")
     if nsfw:
