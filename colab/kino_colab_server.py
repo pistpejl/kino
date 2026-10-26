@@ -29,9 +29,9 @@ IMG_STYLE = "candid phone photo, natural light, real-life, unpolished, true-to-l
 NEGATIVE = "AI look, overly smooth skin, plastic, CGI, 3d render, oversaturated, cinematic color grading, glossy, airbrushed, text, watermark, blurry, deformed, extra fingers, static frame"
 
 def check_text(text: str, has_person_media: bool = False, nsfw: bool = False):
-    """nsfw=True bara for text-till-bild utan indata: minderarsspärren galler alltid (och aldrar under 21 i NSFW)."""
+    """nsfw=True: minderarsspärren galler alltid (skrivna aldrar under 18 nekas; ansiktsuppskattning har marginal 21)."""
     s = (text or "").lower()
-    if MINOR_RE.search(s) or any(int(m.group(1)) < (MIN_AGE if nsfw else 18) for m in AGE_RE.finditer(s)):
+    if MINOR_RE.search(s) or any(int(m.group(1)) < 18 for m in AGE_RE.finditer(s)):
         raise HTTPException(400, "Nekad: KINO gör aldrig något som rör minderåriga.")
     if nsfw:
         if has_person_media: raise HTTPException(400, "Nekad: riktiga personers foton får aldrig användas i NSFW.")
@@ -229,6 +229,14 @@ def load_esrgan():
     m = spandrel.ModelLoader().load_from_file(hf_hub_download(ESRGAN_REPO, ESRGAN_FILE))
     return m.cuda().half().eval() if torch.cuda.is_available() else m.eval()
 
+GENERATED = {}  # jobb-id -> sokvag, bara bilder som servern sjalv skapat i denna session (/image, /edit)
+GEN_HASH = set()
+def sha_file(p):
+    import hashlib
+    with open(p, "rb") as f: return hashlib.sha256(f.read()).hexdigest()
+def register_generated(job, path):
+    GENERATED[job["id"]] = path; GEN_HASH.add(sha_file(path))
+
 def check_output(img, nsfw=False):
     """Minderarsparr pa varje utdata (InsightFace-alder under 21 = nekad, aven i NSFW). NSFW-klassaren hoppas bara over i NSFW-text-till-bild."""
     if STUB: return
@@ -266,23 +274,25 @@ def task_image(job):
     else:
         img = run_t2i(job["model"], job["prompt"], w, h, job["seed"], job.get("nsfw", False))
         check_output(img, job.get("nsfw", False)); img.save(path)
-    job["files"]["image.png"] = path; job["data"] = {"model": job["model"], "modelId": IMAGE_MODELS[job["model"]][1], "nsfw": job.get("nsfw", False)}
+    register_generated(job, path); job["files"]["image.png"] = path; job["data"] = {"model": job["model"], "modelId": IMAGE_MODELS[job["model"]][1], "nsfw": job.get("nsfw", False)}
 
 def task_edit(job):
-    if not STUB: check_images([job["image"]])  # minderarsparr (InsightFace <21 nekas) + NSFW pa indata
+    nsfw = job.get("nsfw", False)
+    if not STUB: check_images([job["image"]], nsfw_check=not nsfw)  # InsightFace <21 nekas alltid; NSFW-klassare bara i SFW
     from PIL import Image, ImageOps
     path = os.path.join(job["dir"], "edit.png")
     src = ImageOps.exif_transpose(Image.open(job["image"])).convert("RGB")
-    if STUB: src.save(path); job["files"]["edit.png"] = path; return
+    if STUB: src.save(path); register_generated(job, path); job["files"]["edit.png"] = path; return
     import torch
     src.thumbnail((1024, 1024)); w, h = (src.width // 16) * 16, (src.height // 16) * 16; src = src.resize((w, h))
     key = job["model"]; _, _, steps, g = EDIT_MODELS[key]
+    if nsfw: job["prompt"] += ", all people are adults"
     p = use("edit:" + key, lambda: load_diffusers(key, edit=True)); gen = torch.Generator("cpu").manual_seed(job["seed"])
     if key == "qwenedit":
-        img = p(image=[src], prompt=job["prompt"], negative_prompt=" ", true_cfg_scale=g, num_inference_steps=steps, generator=gen).images[0]
+        img = p(image=[src], prompt=job["prompt"], negative_prompt="child, teen, young-looking, childlike" if nsfw else " ", true_cfg_scale=g, num_inference_steps=steps, generator=gen).images[0]
     else:
         img = p(image=src, prompt=job["prompt"], width=w, height=h, num_inference_steps=steps, guidance_scale=g, generator=gen).images[0]
-    check_output(img); img.save(path); job["files"]["edit.png"] = path
+    check_output(img, nsfw); img.save(path); register_generated(job, path); job["files"]["edit.png"] = path
 
 def task_upscale(job):
     if not STUB: check_images([job["image"]])  # minderarsparr (InsightFace <21 nekas) + NSFW pa indata
@@ -461,7 +471,7 @@ def health(authorization: Optional[str] = Header(None)):
     if STUB or os.path.exists(LS_PY): feats.append("lipsync")
     if STUB or os.path.exists(INSWAPPER): feats.append("faceswap")
     return {"ok": True, "auth": ok, "gpu": gpu, "queue": q.qsize(), "loaded": _cur["name"], "maxSeconds": MAX_SECONDS,
-            "sfwOnly": False, "nsfwEndpoints": ["/image"], "features": feats, "imageModels": [k for k in IMAGE_MODELS if model_available(k)], "editModels": list(EDIT_MODELS), "licenseNote": LICENSE_NOTE}
+            "sfwOnly": False, "nsfwEndpoints": ["/image", "/edit"], "features": feats, "imageModels": [k for k in IMAGE_MODELS if model_available(k)], "editModels": list(EDIT_MODELS), "licenseNote": LICENSE_NOTE}
 
 @app.post("/generate")
 async def generate(prompt: str = Form(...), seconds: int = Form(4), aspect: str = Form("9:16"), steps: int = Form(30),
@@ -478,7 +488,7 @@ def models_ep(authorization: Optional[str] = Header(None)):
     auth(authorization)
     return {"image": [{"key": k, "label": v[0], "id": v[1], "available": model_available(k), "needsHfToken": v[2]} for k, v in IMAGE_MODELS.items()],
             "edit": [{"key": k, "label": v[0], "id": v[1]} for k, v in EDIT_MODELS.items()],
-            "nsfw": {"endpoints": ["/image"], "minAge": MIN_AGE,
+            "nsfw": {"endpoints": ["/image", "/edit (bara bilder skapade i denna session, via source_id)"], "minWrittenAge": 18, "minAge": MIN_AGE,
                      "note": "Ingen av modellerna här är tränad för explicit innehåll; FLUX/Qwen/Z-Image/ERNIE ger oftast ofullständiga eller censurerade resultat. SDXL-Turbo och FLUX.1 schnell är minst filtrerade. Minderårsspärren gäller alltid."},
             "upscale": [{"key": "esrgan4x", "label": "Real-ESRGAN x4", "id": ESRGAN_REPO}]}
 
@@ -498,11 +508,23 @@ async def _checked_input(image, d):
     return await save_upload(image, d, "src")  # kontrolleras i jobbet (under GPU-laset)
 
 @app.post("/edit")
-async def edit_ep(prompt: str = Form(...), image: UploadFile = File(...), model: str = Form("qwenedit"), seed: int = Form(-1), authorization: Optional[str] = Header(None)):
-    auth(authorization); check_text(prompt, True)
+async def edit_ep(prompt: str = Form(...), image: Optional[UploadFile] = File(None), source_id: str = Form(""), model: str = Form("qwenedit"),
+                  seed: int = Form(-1), nsfw: bool = Form(False), authorization: Optional[str] = Header(None)):
+    auth(authorization); check_text(prompt, not nsfw, nsfw)
     if model not in EDIT_MODELS: raise HTTPException(400, "Okänd redigeringsmodell.")
-    jid, d = submit("edit", task_edit, prompt=prompt.strip()[:500], model=model, seed=seed_of(seed))
-    return go(jid, image=await _checked_input(image, d))
+    src = GENERATED.get(source_id.strip()) if source_id else None
+    if source_id and not src: raise HTTPException(400, "Okänd bild (skapad i en tidigare Colab-session?).")
+    has_img = image is not None and bool(image.filename)
+    if not src and not has_img: raise HTTPException(400, "Ladda upp en bild eller välj en bild KINO skapat.")
+    jid, d = submit("edit", task_edit, prompt=prompt.strip()[:500], model=model, seed=seed_of(seed), nsfw=bool(nsfw))
+    if src:
+        pth = os.path.join(d, "src.png"); shutil.copy(src, pth)
+    else:
+        pth = await save_upload(image, d, "src")
+        if nsfw and sha_file(pth) not in GEN_HASH:
+            shutil.rmtree(d, ignore_errors=True); jobs.pop(jid, None)
+            raise HTTPException(400, "Uppladdade foton kan inte redigeras i NSFW – välj en bild KINO skapat.")
+    return go(jid, image=pth)
 
 @app.post("/upscale")
 async def upscale_ep(image: UploadFile = File(...), authorization: Optional[str] = Header(None)):
@@ -660,7 +682,7 @@ def svd_shot(img_path, aspect, motion, crop, seed, out):
         export_to_video(frames, out + ".tmp.mp4", fps=7)
     os.replace(out + ".tmp.mp4", out); return False
 
-def check_images(paths):
+def check_images(paths, nsfw_check=True):
     import cv2
     with_faces = False
     for pth in paths:
@@ -671,7 +693,7 @@ def check_images(paths):
         for f in fs:
             if not face_age_ok(f): raise RuntimeError("Nekad: en person på bilderna bedöms vara under 21 år.")
         with_faces = with_faces or bool(fs)
-    if nsfw_frames(paths): raise RuntimeError("Nekad: en bild flaggades som NSFW.")
+    if nsfw_check and nsfw_frames(paths): raise RuntimeError("Nekad: en bild flaggades som NSFW.")
     return with_faces
 
 def task_musicvideo(job):

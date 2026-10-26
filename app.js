@@ -123,7 +123,7 @@
       $('#gateNo').onclick = () => { $('#gate').hidden = true; };
       return;
     }
-    st.lane = l; localStorage.setItem('kino.lane', l); paintLane(); route();
+    st.lane = l; localStorage.setItem('kino.lane', l); paintLane(); route(); document.dispatchEvent(new CustomEvent('kino-lane'));
   }
   laneBtn.onclick = () => setLane(st.lane === 'nsfw' ? 'sfw' : 'nsfw');
 
@@ -454,22 +454,44 @@
       ['qwen21', 'Qwen-Image 2.1 (långsam, bäst text)'], ['qwen2512', 'Qwen-Image 2512'], ['zimage', 'Z-Image Turbo'], ['ernie', 'ERNIE-Image Turbo']];
     const iP = h('input', { type: 'text', placeholder: 'Beskriv en bild' }); const iA = aspectSel(); const iM = select(IMG_MODELS, 'flux2klein');
     // NSFW (18+): bara synlig i KINO:s NSFW-läge, bara text-till-bild, aldrig foton på riktiga personer, delas aldrig automatiskt
-    const iN = h('input', { type: 'checkbox' });
-    const iNWrap = h('label', { class: 'meta', hidden: st.lane !== 'nsfw' }, iN, ' NSFW (18+) – bara text till bild, inga foton på riktiga personer. Minderåriga blockeras alltid och ansikten under 21 avvisas.');
-    iN.onchange = () => { if (iN.checked && !confirm('Bekräfta att du är minst 18 år och att bilden bara är för dig (den delas aldrig automatiskt).')) iN.checked = false; };
+    const nsfwToggle = (text) => {
+      const i = h('input', { type: 'checkbox' }); const wrap = h('label', { class: 'meta' }, i, text);
+      const sync = () => { wrap.hidden = st.lane !== 'nsfw'; if (wrap.hidden) i.checked = false; };
+      i.onchange = () => { if (i.checked && !confirm('Bekräfta att du är minst 18 år och att bilden bara är för dig (den delas aldrig automatiskt).')) i.checked = false; };
+      document.addEventListener('kino-lane', sync); sync(); return { i, wrap };
+    };
+    const { i: iN, wrap: iNWrap } = nsfwToggle(' NSFW (18+) – bara text till bild, inga foton på riktiga personer. Minderåriga blockeras alltid och ansikten under 21 avvisas.');
     const tImg = tool('Bild', 'Välj modell. Första gången laddas modellen ner (kan ta flera minuter).', [field('Prompt', iP, true), field('Modell', iM), field('Format', iA), iNWrap], 'Skapa bild', async (say) => {
       if (minorText(iP.value)) throw new Error(REFUSE);
       const fd = new FormData(); fd.append('prompt', need(iP.value.trim(), 'Skriv en prompt.')); fd.append('aspect', iA.value); fd.append('model', iM.value);
       if (iN.checked && st.lane === 'nsfw') fd.append('nsfw', 'true');
-      return colabJob('/image', fd, say);
+      const r = await colabJob('/image', fd, say);
+      return { ...r, extra: editBtn(r) };
     });
     // Redigera bild (Qwen-Image-Edit / FLUX.2 klein)
     const eI = file('Bild', 'image/*'); const eP = h('input', { type: 'text', placeholder: 'Vad ska ändras? T.ex. "byt bakgrund till en strand"' });
     const eM = select([['qwenedit', 'Qwen-Image-Edit 2511'], ['flux2klein', 'FLUX.2 klein 4B']], 'qwenedit');
-    const tEdit = tool('Redigera bild', 'Bild + instruktion. Bara SFW; personer under 21 nekas.', [eI.el, field('Instruktion', eP, true), field('Modell', eM)], 'Redigera', async (say) => {
+    let eSrc = null; // { id, url } bild som Colab skapat i denna session
+    const eSrcBox = h('div', { class: 'meta' });
+    const setSrc = (src) => {
+      eSrc = src; eSrcBox.innerHTML = '';
+      if (src) eSrcBox.append(h('img', { src: src.url, style: 'max-width:160px;display:block' }), 'Redigerar bilden KINO skapade. ', h('button', { type: 'button', class: 'btn', onclick: () => setSrc(null) }, 'Använd egen bild i stället'));
+    };
+    const { i: eN, wrap: eNWrap } = nsfwToggle(' NSFW (18+) – bara bilder KINO skapat i denna Colab-session, aldrig uppladdade foton. Ansikten under 21 avvisas.');
+    const tEdit = tool('Redigera bild', 'Bild + instruktion. Personer under 21 nekas.', [eSrcBox, eI.el, field('Instruktion', eP, true), field('Modell', eM), eNWrap], 'Redigera', async (say) => {
       if (minorText(eP.value)) throw new Error(REFUSE);
-      const fd = new FormData(); fd.append('image', need(eI.i.files[0], 'Välj en bild.')); fd.append('prompt', need(eP.value.trim(), 'Skriv en instruktion.')); fd.append('model', eM.value); return colabJob('/edit', fd, say);
+      const nsfw = eN.checked && st.lane === 'nsfw';
+      if (nsfw && !eSrc) throw new Error('Uppladdade foton kan inte redigeras i NSFW – välj en bild KINO skapat');
+      const fd = new FormData(); fd.append('prompt', need(eP.value.trim(), 'Skriv en instruktion.')); fd.append('model', eM.value);
+      if (eSrc) fd.append('source_id', eSrc.id); else fd.append('image', need(eI.i.files[0], 'Välj en bild.'));
+      if (nsfw) fd.append('nsfw', 'true');
+      const r = await colabJob('/edit', fd, say);
+      return { ...r, extra: editBtn(r) };
     });
+    function editBtn(r) {
+      const f = (r.files || []).find((x) => x.name.endsWith('.png'));
+      return f ? h('button', { type: 'button', class: 'btn', onclick: () => { setSrc({ id: r.id, url: f.url }); tEdit.scrollIntoView({ behavior: 'smooth' }); } }, 'Redigera') : null;
+    }
     // Skala upp (Real-ESRGAN x4)
     const uI = file('Bild', 'image/*');
     const tUp = tool('Skala upp', 'Real-ESRGAN x4 (max 768 px in, 4x ut)', [uI.el], 'Skala upp', async (say) => {
