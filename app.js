@@ -453,9 +453,15 @@
     const IMG_MODELS = [['sdxl', 'SDXL-Turbo (snabbast)'], ['flux3klein', 'FLUX 3 Image Klein (kräver HF_TOKEN)'], ['flux2klein', 'FLUX.2 klein 4B'], ['flux1schnell', 'FLUX.1 schnell'],
       ['qwen21', 'Qwen-Image 2.1 (långsam, bäst text)'], ['qwen2512', 'Qwen-Image 2512'], ['zimage', 'Z-Image Turbo'], ['ernie', 'ERNIE-Image Turbo']];
     const iP = h('input', { type: 'text', placeholder: 'Beskriv en bild' }); const iA = aspectSel(); const iM = select(IMG_MODELS, 'flux2klein');
-    const tImg = tool('Bild', 'Välj modell. Första gången laddas modellen ner (kan ta flera minuter).', [field('Prompt', iP, true), field('Modell', iM), field('Format', iA)], 'Skapa bild', async (say) => {
+    // NSFW (18+): bara synlig i KINO:s NSFW-läge, bara text-till-bild, aldrig foton på riktiga personer, delas aldrig automatiskt
+    const iN = h('input', { type: 'checkbox' });
+    const iNWrap = h('label', { class: 'meta', hidden: st.lane !== 'nsfw' }, iN, ' NSFW (18+) – bara text till bild, inga foton på riktiga personer. Minderåriga blockeras alltid och ansikten under 21 avvisas.');
+    iN.onchange = () => { if (iN.checked && !confirm('Bekräfta att du är minst 18 år och att bilden bara är för dig (den delas aldrig automatiskt).')) iN.checked = false; };
+    const tImg = tool('Bild', 'Välj modell. Första gången laddas modellen ner (kan ta flera minuter).', [field('Prompt', iP, true), field('Modell', iM), field('Format', iA), iNWrap], 'Skapa bild', async (say) => {
       if (minorText(iP.value)) throw new Error(REFUSE);
-      const fd = new FormData(); fd.append('prompt', need(iP.value.trim(), 'Skriv en prompt.')); fd.append('aspect', iA.value); fd.append('model', iM.value); return colabJob('/image', fd, say);
+      const fd = new FormData(); fd.append('prompt', need(iP.value.trim(), 'Skriv en prompt.')); fd.append('aspect', iA.value); fd.append('model', iM.value);
+      if (iN.checked && st.lane === 'nsfw') fd.append('nsfw', 'true');
+      return colabJob('/image', fd, say);
     });
     // Redigera bild (Qwen-Image-Edit / FLUX.2 klein)
     const eI = file('Bild', 'image/*'); const eP = h('input', { type: 'text', placeholder: 'Vad ska ändras? T.ex. "byt bakgrund till en strand"' });
