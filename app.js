@@ -397,11 +397,12 @@
   }
 
   // ---- Colab-verktyg: bild, sång/instrumental, låttext, auto-klipp, lipsync, artistlista + ansiktsbyte ----
-  async function colabJob(path, fd, say) {
+  async function colabJob(path, fd, say, onStatus) {
     const { url } = colabCfg();
     const r = await fetch(`${url}${path}`, { method: 'POST', headers: colabHdr(), body: fd });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || `Colab svarade ${r.status}`);
+    if (onStatus) onStatus(null, j);
     for (;;) {
       await new Promise((res) => setTimeout(res, 3000));
       const s = await fetch(`${url}/status/${j.jobId}`, { headers: colabHdr() }).then((x) => x.json()).catch(() => null);
@@ -411,7 +412,7 @@
         const files = await Promise.all(s.files.map(async (f) => { const b = await fetch(url + f.url, { headers: colabHdr() }).then((x) => x.blob()); return { name: f.name, blob: b, url: URL.createObjectURL(b) }; }));
         return { ...s, files };
       }
-      say(`${s.status === 'queued' ? 'I kö' : 'Jobbar'}… ${s.elapsed || 0} s`);
+      if (onStatus) onStatus(s, j); else say(`${s.status === 'queued' ? 'I kö' : 'Jobbar'}… ${s.elapsed || 0} s`);
     }
   }
   const ROSTER_KEY = 'kino.colab.roster';
@@ -511,8 +512,38 @@
       const m = {}; sels.forEach(([i, s2]) => { if (s2.value) m[i] = s2.value; });
       const fd = new FormData(); fd.append('scan_id', scan); fd.append('mapping', JSON.stringify(m)); fd.append('start', fS.value); fd.append('length', fL.value); return colabJob('/swap', fd, say);
     });
-    const box = h('div', { class: 'colab-tools' }, h('div', { class: 'meta' }, 'Bild till video: välj Colab som motor på Video-sidan och lägg en första bildruta – den används (SVD).'), tImg, tStem, tLyr, tCut, tLip, tRos, tSwap);
-    return { box, onState: (on, feats) => { box.querySelectorAll('.colab-need').forEach((b) => { b.disabled = !on; }); tLip.hidden = on && feats && !feats.includes('lipsync'); tSwap.hidden = tRos.hidden = on && feats && !feats.includes('faceswap'); if (on) rosterSync().catch(() => {}); } };
+
+    // Bilder + låt -> musikvideo (en knapp)
+    const mI = file('Bilder (en eller flera)', 'image/*', true); const mS = file('Låt', 'audio/*');
+    const mSec = select([['start', 'Från början'], ['custom', 'Egen start'], ['chorus', 'Refrängen (gissas)']], 'start'); const mSt = num(0); const mLen = num(30); const mR = aspectSel();
+    const mK = h('input', { type: 'checkbox' }); const mLs = h('div', { class: 'chips' }); const mC = h('input', { type: 'checkbox' });
+    const stField = field('Start (s)', mSt); stField.hidden = true; mSec.onchange = () => { stField.hidden = mSec.value !== 'custom'; };
+    const fmt = (sec) => (sec >= 90 ? `${Math.round(sec / 60)} min` : `${Math.round(sec)} s`);
+    const eta = h('div', { class: 'meta' });
+    const updEta = () => { const n = mI.i.files.length; const shots = Math.min(24, Math.max(2, Math.round((Number(mLen.value) || 30) / 2.5))); eta.textContent = n ? `${n} bilder → ca ${shots} klipp. Beräknad tid på T4: ca ${fmt(shots * 150 + (mK.checked ? 120 : 0) + 30)}${mLs.querySelector('input:checked') ? ' + lipsync' : ''}.` : ''; };
+    mI.i.onchange = () => { mLs.innerHTML = ''; [...mI.i.files].forEach((f, i) => mLs.append(h('label', { class: 'chip' }, h('img', { src: URL.createObjectURL(f), style: 'height:48px;border-radius:6px' }), h('input', { type: 'checkbox', value: String(i), onchange: updEta }), ' lipsync'))); updEta(); };
+    mLen.oninput = updEta; mK.onchange = updEta;
+    const bar = h('progress', { max: 100, value: 0, style: 'width:100%', hidden: true });
+    const tMv = tool('🎵 Bilder + låt → musikvideo', 'En knapp: klipp i takt, låten utan hopp, mobilvideo-look', [mI.el, mS.el, field('Del av låten', mSec), stField, field('Längd (s)', mLen), field('Format', mR),
+      h('label', {}, mK, ' Karaoketext (Whisper)'), h('div', { class: 'meta' }, 'Lipsync på bilder (valfritt, kräver lipsync-cellen):'), mLs,
+      h('label', { class: 'wide' }, mC, ' Jag intygar att personen i klippet är vår egen artist eller AI-figur och har gett samtycke'), eta, bar], 'Skapa musikvideo', async (say) => {
+      need(mI.i.files.length, 'Välj minst en bild.'); need(mS.i.files[0], 'Välj en låt.');
+      const ls = [...mLs.querySelectorAll('input:checked')].map((x) => x.value);
+      if (ls.length && !mC.checked) throw new Error('Kryssa i samtycket för lipsync.');
+      const fd = new FormData(); [...mI.i.files].forEach((f) => fd.append('images', f)); fd.append('audio', mS.i.files[0]);
+      fd.append('section', mSec.value === 'chorus' ? 'chorus' : 'start'); fd.append('start', mSec.value === 'custom' ? mSt.value : '0'); fd.append('seconds', mLen.value); fd.append('aspect', mR.value);
+      fd.append('karaoke', mK.checked ? 'true' : 'false'); fd.append('lipsync', ls.join(',')); fd.append('consent', mC.checked ? 'true' : '');
+      bar.hidden = false; bar.value = 0; let total = 0;
+      const r = await colabJob('/musicvideo', fd, say, (st, j) => {
+        if (!st) { total = j.etaSeconds; return say(`Startat: ca ${j.shots} klipp, beräknad tid ca ${fmt(j.etaSeconds)}.`); }
+        const p = st.progress || {}; if (p.total) bar.value = Math.round((p.done / p.total) * 90);
+        say(`${st.status === 'queued' ? 'I kö' : (p.step || 'Jobbar')} · ${fmt(st.elapsed || 0)}${total ? ` av ca ${fmt(total)}` : ''}${st.info && st.info.cachedShots ? ` · ${st.info.cachedShots} klipp från cache` : ''}`);
+      });
+      bar.value = 100; return r;
+    });
+    tMv.style.cssText = 'border:2px solid var(--accent, #c9a227);border-radius:12px;padding:12px';
+    const box = h('div', { class: 'colab-tools' }, tMv, h('div', { class: 'meta' }, 'Bild till video: välj Colab som motor på Video-sidan och lägg en första bildruta – den används (SVD).'), tImg, tStem, tLyr, tCut, tLip, tRos, tSwap);
+    return { box, onState: (on, feats) => { box.querySelectorAll('.colab-need').forEach((b) => { b.disabled = !on; }); tLip.hidden = on && feats && !feats.includes('lipsync'); tSwap.hidden = tRos.hidden = on && feats && !feats.includes('faceswap'); tMv.hidden = on && feats && !feats.includes('musicvideo'); if (on) rosterSync().catch(() => {}); } };
   }
   function colabPanel(onChange) {
     const c = colabCfg();
@@ -528,7 +559,7 @@
       else if (r.state === 'auth') set('#c33', 'Fel token');
       else if (r.state === 'off') set('#c33', 'Offline – använder gratismotorerna');
       else set('#888', 'Inte inställd');
-      const on = r.state === 'on'; d.classList.toggle('on', on); tools.onState(on, on ? r.info.features : null);
+      const on = r.state === 'on'; d.classList.toggle('on', on); if (on) d.open = true; tools.onState(on, on ? r.info.features : null);
       onChange(on);
     }
     const save = h('button', { type: 'button', class: 'btn', onclick: () => { localStorage.setItem('kino.colab.url', url.value.trim()); localStorage.setItem('kino.colab.token', tok.value.trim()); check(); } }, 'Spara & testa');

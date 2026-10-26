@@ -78,7 +78,7 @@ def load_faces():
     from insightface.app import FaceAnalysis
     import insightface
     fa = FaceAnalysis(name="buffalo_l", providers=["CUDAExecutionProvider", "CPUExecutionProvider"]); fa.prepare(ctx_id=0, det_size=(640, 640))
-    sw = insightface.model_zoo.get_model(INSWAPPER, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    sw = insightface.model_zoo.get_model(INSWAPPER, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]) if os.path.exists(INSWAPPER) else None
     return fa, sw
 _nsfw = {"p": None}
 def nsfw_frames(paths_or_imgs):
@@ -234,6 +234,16 @@ def task_autocut(job):
        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", out)
     job["files"]["autocut.mp4"] = out; job["data"] = {"cuts": len(segs), "beats": len(beats), "seconds": round(dur, 2)}
 
+def ls_run(video25, wav16k, out, steps=20, tmp="/tmp/ls"):
+    if STUB: shutil.copy(video25, out); return
+    free_vram()
+    if not os.path.exists(LS_PY): raise RuntimeError("LatentSync är inte installerat: kör lipsync-cellen i notebooken.")
+    r = subprocess.run([LS_PY, "-m", "scripts.inference", "--unet_config_path", "configs/unet/stage2.yaml",
+                        "--inference_ckpt_path", "checkpoints/latentsync_unet.pt", "--inference_steps", str(steps),
+                        "--guidance_scale", "1.5", "--video_path", video25, "--audio_path", wav16k, "--video_out_path", out,
+                        "--temp_dir", tmp], cwd=LS_DIR, capture_output=True, text=True)
+    if r.returncode or not os.path.exists(out): raise RuntimeError("LatentSync: " + (r.stdout + r.stderr)[-500:])
+
 def task_lipsync(job):
     d, s, e = job["dir"], job["start"], job["end"]
     v25, wav, orig = os.path.join(d, "in25.mp4"), os.path.join(d, "cond.wav"), os.path.join(d, "orig.wav")
@@ -243,15 +253,7 @@ def task_lipsync(job):
     cond = run_demucs(orig, d)[0] if job["vocals"] else orig
     ff("-i", cond, "-ar", "16000", "-ac", "1", wav)
     raw = os.path.join(d, "ls_raw.mp4")
-    if STUB: shutil.copy(v25, raw)
-    else:
-        free_vram()
-        if not os.path.exists(LS_PY): raise RuntimeError("LatentSync är inte installerat: kör lipsync-cellen i notebooken.")
-        r = subprocess.run([LS_PY, "-m", "scripts.inference", "--unet_config_path", "configs/unet/stage2.yaml",
-                            "--inference_ckpt_path", "checkpoints/latentsync_unet.pt", "--inference_steps", str(job["steps"]),
-                            "--guidance_scale", "1.5", "--video_path", v25, "--audio_path", wav, "--video_out_path", raw,
-                            "--temp_dir", os.path.join(d, "tmp")], cwd=LS_DIR, capture_output=True, text=True)
-        if r.returncode or not os.path.exists(raw): raise RuntimeError("LatentSync: " + (r.stdout + r.stderr)[-500:])
+    ls_run(v25, wav, raw, job["steps"], os.path.join(d, "tmp"))
     out = os.path.join(d, "lipsync.mp4")
     ff("-i", raw, "-i", orig, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", out)
     job["files"]["lipsync.mp4"] = out
@@ -327,7 +329,7 @@ def health(authorization: Optional[str] = Header(None)):
         try:
             import torch; gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "ingen"
         except Exception: gpu = "okänd"
-    feats = ["video", "img2video", "image", "stems", "lyrics", "autocut"]
+    feats = ["video", "img2video", "image", "stems", "lyrics", "autocut", "musicvideo"]
     if STUB or os.path.exists(LS_PY): feats.append("lipsync")
     if STUB or os.path.exists(INSWAPPER): feats.append("faceswap")
     return {"ok": True, "auth": ok, "gpu": gpu, "queue": q.qsize(), "loaded": _cur["name"], "maxSeconds": MAX_SECONDS,
@@ -448,6 +450,157 @@ async def swap(scan_id: str = Form(...), mapping: str = Form(...), start: float 
     jid, _ = submit("swap", task_swap, scan=scan_id, mapping=m, start=max(0.0, float(start)), length=max(0.0, float(length)))
     return {**go(jid), "licenseNote": LICENSE_NOTE}
 
+
+# ---------------- Bilder + lat -> musikvideo (orkestrerat jobb) ----------------
+CACHE = os.environ.get("KINO_CACHE", "/content/kino_cache" if os.path.isdir("/content") else os.path.join(tempfile.gettempdir(), "kino_cache"))
+MOTIONS = [90, 127, 160, 110, 70, 140]
+CROPS = [(0.5, 0.5), (0.35, 0.5), (0.65, 0.5), (0.5, 0.35), (0.5, 0.65)]
+SVD_SECONDS = 14 / 7  # 14 bildrutor i 7 fps
+ETA = {"shot": 150, "karaoke": 120, "lipsync": 240, "edit": 30}  # sekunder pa en T4, grovt
+
+def progress(job, step, done=0, total=0):
+    job["progress"] = {"step": step, "done": done, "total": total}
+
+def find_chorus(path, length):
+    """Gissar refrangen: det mest energirika fonstret (inte i forsta 10 %). Returnerar starttid i sekunder."""
+    import librosa, numpy as np
+    y, sr = librosa.load(path, sr=11025, mono=True)
+    rms = librosa.feature.rms(y=y, hop_length=512)[0]; hop = 512 / sr
+    win = max(1, int(length / hop)); total = len(rms) * hop
+    if total <= length: return 0.0
+    cs = np.concatenate([[0], np.cumsum(rms)]); best, bt = -1, 0.0
+    for i in range(int(0.1 * len(rms)), len(rms) - win, max(1, int(0.5 / hop))):
+        m = cs[i + win] - cs[i]
+        if m > best: best, bt = m, i * hop
+    return round(bt, 2)
+
+def plan_shots(audio, start, dur):
+    import librosa
+    y, sr = librosa.load(audio, sr=22050, offset=start, duration=dur)
+    tempo, bf = librosa.beat.beat_track(y=y, sr=sr)
+    beats = [float(t) for t in librosa.frames_to_time(bf, sr=sr)]
+    bpm = float(tempo[0] if hasattr(tempo, "__len__") else tempo) or 120.0
+    per = max(1, round(2.5 / (60.0 / bpm)))  # ca 2,5 s per bild, alltid pa ett slag
+    cuts = [0.0] + [b for b in beats[per::per] if 0.8 < b < dur - 0.8] + [dur]
+    if len(cuts) < 3 and dur > 5: cuts = [x * dur / max(2, round(dur / 2.5)) for x in range(int(max(2, round(dur / 2.5))) + 1)]
+    while len(cuts) - 1 > 24: cuts = cuts[::2] + ([dur] if cuts[::2][-1] != dur else [])  # max 24 klipp
+    return cuts, bpm, len(beats)
+
+def svd_shot(img_path, aspect, motion, crop, seed, out):
+    if os.path.exists(out): return True  # cache: redan gjord
+    sw, sh = (576, 1024) if aspect == "9:16" else (1024, 576) if aspect == "16:9" else (768, 768)
+    if STUB:
+        ff("-loop", "1", "-i", img_path, "-t", f"{SVD_SECONDS}", "-vf", f"scale={sw // 4}:{sh // 4}:force_original_aspect_ratio=increase,crop={sw // 4}:{sh // 4},fps=7", "-pix_fmt", "yuv420p", out + ".tmp.mp4")
+    else:
+        import torch
+        from PIL import Image, ImageOps
+        from diffusers.utils import export_to_video
+        p = use("svd", load_svd)
+        img = ImageOps.fit(Image.open(img_path).convert("RGB"), (sw, sh), centering=crop)
+        frames = p(img, decode_chunk_size=2, num_frames=14, motion_bucket_id=motion, noise_aug_strength=0.02,
+                   generator=torch.Generator("cpu").manual_seed(seed)).frames[0]
+        export_to_video(frames, out + ".tmp.mp4", fps=7)
+    os.replace(out + ".tmp.mp4", out); return False
+
+def check_images(paths):
+    import cv2
+    with_faces = False
+    for pth in paths:
+        img = cv2.imread(pth)
+        if img is None: raise RuntimeError("En bild gick inte att läsa.")
+        try: fs = detect(img)
+        except Exception as e: raise RuntimeError("Ålderskontrollen kunde inte köras (kör installationscellen): " + str(e)[:120])
+        for f in fs:
+            if not face_age_ok(f): raise RuntimeError("Nekad: en person på bilderna bedöms vara under 21 år.")
+        with_faces = with_faces or bool(fs)
+    if nsfw_frames(paths): raise RuntimeError("Nekad: en bild flaggades som NSFW.")
+    return with_faces
+
+def task_musicvideo(job):
+    d, imgs, aspect = job["dir"], job["images"], job["aspect"]; w, h = ASPECT[aspect]
+    progress(job, "Kontrollerar bilder"); check_images(imgs)
+    song_len = probe_dur(job["audio"])
+    dur = min(job["seconds"], song_len)
+    start = find_chorus(job["audio"], dur) if job["section"] == "chorus" else min(job["start"], max(0.0, song_len - dur))
+    dur = min(dur, song_len - start)
+    progress(job, "Hittar takten"); cuts, bpm, nbeats = plan_shots(job["audio"], start, dur)
+    n = len(cuts) - 1
+    job["data"] = {"start": start, "seconds": round(dur, 2), "shots": n, "bpm": round(bpm), "beats": nbeats}
+    # 1) Klipp med SVD, cachade per bild/rorelse/beskarning sa en omstart hoppar over fardiga klipp
+    import hashlib
+    os.makedirs(os.path.join(CACHE, "shots"), exist_ok=True); shots, cached = [], 0
+    for i in range(n):
+        progress(job, f"Klipp {i + 1}/{n}", i, n)
+        k = i % len(imgs); motion = MOTIONS[(i // len(imgs) + k) % len(MOTIONS)]; crop = CROPS[(i // len(imgs)) % len(CROPS)]
+        key = hashlib.sha1(open(imgs[k], "rb").read() + f"{aspect}{motion}{crop}{STUB}".encode()).hexdigest()[:16]
+        out = os.path.join(CACHE, "shots", key + ".mp4")
+        cached += svd_shot(imgs[k], aspect, motion, crop, int(key[:6], 16), out); shots.append(out)
+    free_vram(); job["data"]["cachedShots"] = cached
+    section = os.path.join(d, "section.wav"); ff("-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", job["audio"], "-ac", "2", "-ar", "44100", section)
+    vocals = None
+    # 2) Karaoke: Demucs -> Whisper -> SRT
+    srt = None
+    if job["karaoke"] or job["lipsync"]:
+        progress(job, "Isolerar sång (Demucs)"); vocals = run_demucs(section, d)[0]
+    if job["karaoke"]:
+        progress(job, "Låttext (Whisper)")
+        if STUB_AUDIO: segs = [{"start": 0.5, "end": min(dur, 3.0), "text": "Stubbtext i refrängen"}]
+        else:
+            m = use("whisper", load_whisper); r = m.transcribe(vocals, language=job["lang"] or None, fp16=not STUB)
+            segs = [{"start": s_["start"], "end": s_["end"], "text": s_["text"].strip()} for s_ in r["segments"] if s_["text"].strip()]
+            free_vram()
+        srt = os.path.join(d, "lyrics.srt")
+        open(srt, "w").write("\n".join(f"{i}\n{srt_time(x['start'])} --> {srt_time(x['end'])}\n{x['text']}\n" for i, x in enumerate(segs, 1)))
+        job["files"]["lyrics.srt"] = srt
+    # 3) Lipsync pa valda klipp (bara med samtycke, bara om LatentSync finns)
+    segfiles = []
+    for i in range(n):
+        seg_len = cuts[i + 1] - cuts[i]; sp = os.path.join(d, f"seg{i:03}.mp4")
+        speed = max(0.25, SVD_SECONDS / seg_len)  # dra ut/korta SVD-klippet till exakt klipplangd
+        ff("-i", shots[i], "-vf", f"setpts=PTS/{speed:.4f},{fit_filter(w, h)},tpad=stop_mode=clone:stop_duration=1", "-t", f"{seg_len:.3f}", "-an",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", sp)
+        if (i % len(imgs)) in job["lipsync"] and vocals:
+            progress(job, f"Lipsync klipp {i + 1}/{n}", i, n)
+            v25, wav, lo = sp + ".25.mp4", sp + ".wav", sp + ".ls.mp4"
+            ff("-i", sp, "-r", "25", "-c:v", "libx264", "-pix_fmt", "yuv420p", v25)
+            ff("-ss", f"{cuts[i]:.3f}", "-t", f"{seg_len:.3f}", "-i", vocals, "-ar", "16000", "-ac", "1", wav)
+            ls_run(v25, wav, lo, 20, sp + "_tmp")
+            ff("-i", lo, "-vf", fit_filter(w, h), "-t", f"{seg_len:.3f}", "-an", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", sp)
+        segfiles.append(sp)
+    free_vram()
+    # 4) Klipp ihop + mobilvideo-look + lat i ett enda stycke + kort uttoning
+    progress(job, "Klipper ihop", n, n)
+    lst = os.path.join(d, "list.txt"); open(lst, "w").write("".join(f"file '{x}'\n" for x in segfiles))
+    silent = os.path.join(d, "silent.mp4"); ff("-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", silent)
+    fade = min(1.5, dur / 4)
+    look = (f"crop=iw-16:ih-16:8+5*sin(t*2.1):8+4*cos(t*1.7),scale={w}:{h},eq=saturation=0.88:contrast=1.03,"
+            f"noise=alls=7:allf=t,vignette=PI/7")
+    if srt: look += f",subtitles={srt}:force_style='FontName=DejaVu Sans,Fontsize=15,Bold=1,PrimaryColour=&H0000EBFF,OutlineColour=&H00000000,Outline=2,Shadow=0,Alignment=2,MarginV=60'"
+    look += f",fade=t=out:st={dur - fade:.3f}:d={fade:.3f},format=yuv420p"
+    out = os.path.join(d, "musikvideo.mp4")
+    ff("-i", silent, "-i", section, "-filter_complex", f"[0:v]{look}[v];[1:a]afade=t=out:st={dur - fade:.3f}:d={fade:.3f}[a]",
+       "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
+    job["files"] = {"musikvideo.mp4": out, **job["files"]}
+    progress(job, "Klar", n, n)
+
+@app.post("/musicvideo")
+async def musicvideo(images: List[UploadFile] = File(...), audio: UploadFile = File(...), section: str = Form("start"), start: float = Form(0),
+                     seconds: float = Form(30), aspect: str = Form("9:16"), karaoke: bool = Form(False), language: str = Form("sv"),
+                     lipsync: str = Form(""), consent: str = Form(""), description: str = Form(""), authorization: Optional[str] = Header(None)):
+    """lipsync: kommaseparerade bildindex (0, 1, ...) som ska fa lipsync. Kraver consent=true."""
+    auth(authorization); check_text(description, True)
+    if not images or len(images) > 20: raise HTTPException(400, "Ladda upp 1–20 bilder.")
+    ls = sorted({int(x) for x in lipsync.split(",") if x.strip().isdigit()})
+    if ls and consent != "true": raise HTTPException(400, "Nekad: lipsync kräver att du intygar samtycke.")
+    if ls and not (STUB or os.path.exists(LS_PY)): raise HTTPException(400, "Lipsync-cellen är inte körd i Colab.")
+    secs = max(5.0, min(float(seconds), 180.0))
+    jid, d = submit("musicvideo", task_musicvideo, section="chorus" if section == "chorus" else "start", start=max(0.0, float(start)),
+                    seconds=secs, aspect=asp(aspect), karaoke=karaoke, lang=(language or "")[:5], lipsync=ls)
+    shots = int(min(24, max(2, secs / 2.5)))
+    eta = shots * ETA["shot"] + (ETA["karaoke"] if karaoke else 0) + len(ls) * max(1, shots // max(1, len(images))) * ETA["lipsync"] + ETA["edit"]
+    res = go(jid, images=[await save_upload(f, d, f"img{i:02}") for i, f in enumerate(images)], audio=await save_upload(audio, d, "song"))
+    return {**res, "etaSeconds": eta, "shots": shots}
+
 @app.get("/status/{jid}")
 def status(jid: str, authorization: Optional[str] = Header(None)):
     auth(authorization); j = jobs.get(jid)
@@ -455,7 +608,8 @@ def status(jid: str, authorization: Optional[str] = Header(None)):
     files = [{"name": n, "url": f"/result/{jid}?file={n}"} for n in j["files"]] if j["status"] == "done" else []
     return {"id": jid, "kind": j["kind"], "status": j["status"], "error": j.get("error"), "data": j["data"] if j["status"] == "done" else None,
             "files": files, "url": files[0]["url"] if files else None,
-            "elapsed": round((j.get("finished") or time.time()) - j.get("started", time.time())), "queue": q.qsize()}
+            "elapsed": round((j.get("finished") or time.time()) - j.get("started", time.time())), "queue": q.qsize(),
+            "progress": j.get("progress"), "info": j["data"] if j["kind"] == "musicvideo" else None}
 
 @app.get("/result/{jid}")
 def result(jid: str, file: Optional[str] = Query(None), authorization: Optional[str] = Header(None)):
