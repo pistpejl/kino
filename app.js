@@ -365,6 +365,7 @@
   }
   // ---- Colab (egen GPU): user's own Colab notebook, called directly from the browser; URL + token in localStorage only ----
   const COLAB_NB = 'https://colab.research.google.com/github/pistpejl/kino/blob/main/colab/kino_colab_engine.ipynb';
+  const KAGGLE_NB_GH = 'https://github.com/pistpejl/kino/blob/main/kaggle/kino_kaggle_engine.ipynb';
   const colabCfg = () => ({ url: (localStorage.getItem('kino.colab.url') || '').trim().replace(/\/+$/, ''), token: localStorage.getItem('kino.colab.token') || '' });
   const colabHdr = () => ({ Authorization: `Bearer ${colabCfg().token}` });
   async function colabHealth() {
@@ -390,7 +391,7 @@
       if (s.status === 'error') throw new Error(`Colab misslyckades: ${s.error || ''}`);
       if (s.status === 'done') {
         const blob = await fetch(url + s.url, { headers: colabHdr() }).then((x) => x.blob());
-        return { name: `colab-${j.jobId}.mp4`, url: URL.createObjectURL(blob), blob, engineName: 'Colab (egen GPU) · Wan 2.1 1.3B' };
+        return { name: `colab-${j.jobId}.mp4`, url: URL.createObjectURL(blob), blob, engineName: 'Colab / Kaggle (egen GPU) · Wan 2.1 1.3B' };
       }
       say(`Colab ${s.status === 'queued' ? 'i kö' : 'renderar'}… ${s.elapsed || 0} s`);
     }
@@ -607,9 +608,19 @@
     const save = h('button', { type: 'button', class: 'btn', onclick: () => { localStorage.setItem('kino.colab.url', url.value.trim()); localStorage.setItem('kino.colab.token', tok.value.trim()); check(); } }, 'Spara & testa');
     const clear = h('button', { type: 'button', class: 'btn', onclick: () => { localStorage.removeItem('kino.colab.url'); localStorage.removeItem('kino.colab.token'); url.value = ''; tok.value = ''; check(); } }, 'Rensa');
     const open = h('a', { class: 'btn', href: COLAB_NB, target: '_blank', rel: 'noopener' }, 'Öppna i Colab');
-    const d = h('details', { class: 'clips colab' }, h('summary', {}, h('span', { class: 'ttl' }, dot, 'Colab (egen GPU)'), h('span', { class: 'count' }, txt)),
+    const kOpen = h('a', { class: 'btn', href: 'https://www.kaggle.com/code', target: '_blank', rel: 'noopener' }, 'Öppna Kaggle');
+    const kCopy = h('button', { type: 'button', class: 'btn', onclick: () => { navigator.clipboard && navigator.clipboard.writeText(KAGGLE_NB_GH); kCopy.textContent = 'Länk kopierad'; } }, 'Kopiera Kaggle-länk');
+    const kHelp = h('details', { class: 'meta' }, h('summary', {}, 'Colab ansluter inte? Kör samma motor på Kaggle'),
+      h('ol', {},
+        h('li', {}, 'Gå till kaggle.com → Create → New Notebook.'),
+        h('li', {}, 'File → Import Notebook → klistra in länken: ', h('code', { style: 'user-select:all' }, KAGGLE_NB_GH)),
+        h('li', {}, 'Settings (högerpanelen): Accelerator → GPU T4 x2, Internet → On (kräver telefonverifierat konto).'),
+        h('li', {}, 'Valfritt: Add-ons → Secrets → HF_TOKEN (bara för FLUX 3 Image Klein).'),
+        h('li', {}, 'Run All. Klistra in adressen och nyckeln från den gröna rutan här ovanför och tryck Spara & testa.')),
+      h('div', { class: 'under' }, kOpen, kCopy));
+    const d = h('details', { class: 'clips colab' }, h('summary', {}, h('span', { class: 'ttl' }, dot, 'Colab / Kaggle (egen GPU)'), h('span', { class: 'count' }, txt)),
       h('div', { class: 'clips-body' }, field('URL', url, true), field('Token', tok, true), h('div', { class: 'under' }, save, clear, open),
-        h('div', { class: 'meta' }, 'Kör anteckningsboken i Colab (gratis T4), klistra in URL och token. Sparas bara i den här webbläsaren. Max 5 s, bara SFW.'), tools.box));
+        h('div', { class: 'meta' }, 'Kör anteckningsboken i Colab eller Kaggle (gratis T4), klistra in URL och token. Sparas bara i den här webbläsaren. Video max 5 s.'), kHelp, tools.box));
     check();
     return d;
   }
@@ -648,10 +659,10 @@
         } catch (e) { say(e.message, true); }
       } });
     const sel = c.box.querySelector('select');
-    const colabOpt = h('option', { value: 'colab', disabled: true, 'data-keep': '1' }, 'Colab (egen GPU) · offline');
+    const colabOpt = h('option', { value: 'colab', disabled: true, 'data-keep': '1' }, 'Colab / Kaggle (egen GPU) · offline');
     sel.prepend(colabOpt);
     const panel = colabPanel((on) => {
-      colabOpt.disabled = !on; colabOpt.textContent = on ? 'Colab (egen GPU) · din GPU · max 5 s' : 'Colab (egen GPU) · offline';
+      colabOpt.disabled = !on; colabOpt.textContent = on ? 'Colab / Kaggle (egen GPU) · din GPU · max 5 s' : 'Colab / Kaggle (egen GPU) · offline';
       if (on) { sel.disabled = false; if (localStorage.getItem('kino.colab.url')) sel.value = 'colab'; } else if (sel.value === 'colab') sel.selectedIndex = [...sel.options].findIndex((o) => !o.disabled);
     });
     v.append(pagehead('Video', 'Beskriv ett klipp, eller börja från en bild. Video kan ta några minuter.'), panel, c.box, clipSources(), grid);

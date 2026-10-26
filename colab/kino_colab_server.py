@@ -14,8 +14,10 @@ WAN_ID = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 SVD_ID = "stabilityai/stable-video-diffusion-img2vid"
 SDXL_ID = "stabilityai/sdxl-turbo"
 NSFW_ID = "Falconsai/nsfw_image_detection"
-LS_DIR, LS_PY = "/content/LatentSync", "/content/ls_env/bin/python"
-INSWAPPER = os.environ.get("KINO_INSWAPPER", "/content/models/inswapper_128.onnx")
+PLATFORM = os.environ.get("KINO_PLATFORM", "colab")  # "colab" eller "kaggle": samma kod for bada
+BASE = "/kaggle/working" if PLATFORM == "kaggle" else "/content"
+LS_DIR, LS_PY = f"{BASE}/LatentSync", f"{BASE}/ls_env/bin/python"
+INSWAPPER = os.environ.get("KINO_INSWAPPER", f"{BASE}/models/inswapper_128.onnx")
 WORK = tempfile.mkdtemp(prefix="kino_")
 FPS, MAX_SECONDS, MIN_AGE = 16, 5, 21
 LICENSE_NOTE = "Ansiktsbyte använder InsightFace/inswapper: endast icke-kommersiellt bruk."
@@ -470,7 +472,7 @@ def health(authorization: Optional[str] = Header(None)):
     feats = ["video", "img2video", "image", "edit", "upscale", "stems", "lyrics", "autocut", "musicvideo"]
     if STUB or os.path.exists(LS_PY): feats.append("lipsync")
     if STUB or os.path.exists(INSWAPPER): feats.append("faceswap")
-    return {"ok": True, "auth": ok, "gpu": gpu, "queue": q.qsize(), "loaded": _cur["name"], "maxSeconds": MAX_SECONDS,
+    return {"ok": True, "auth": ok, "platform": PLATFORM, "gpu": gpu, "queue": q.qsize(), "loaded": _cur["name"], "maxSeconds": MAX_SECONDS,
             "sfwOnly": False, "nsfwEndpoints": ["/image", "/edit"], "features": feats, "imageModels": [k for k in IMAGE_MODELS if model_available(k)], "editModels": list(EDIT_MODELS), "licenseNote": LICENSE_NOTE}
 
 @app.post("/generate")
@@ -632,7 +634,7 @@ async def swap(scan_id: str = Form(...), mapping: str = Form(...), start: float 
 
 
 # ---------------- Bilder + lat -> musikvideo (orkestrerat jobb) ----------------
-CACHE = os.environ.get("KINO_CACHE", "/content/kino_cache" if os.path.isdir("/content") else os.path.join(tempfile.gettempdir(), "kino_cache"))
+CACHE = os.environ.get("KINO_CACHE", f"{BASE}/kino_cache" if os.path.isdir(BASE) else os.path.join(tempfile.gettempdir(), "kino_cache"))
 MOTIONS = [90, 127, 160, 110, 70, 140]
 CROPS = [(0.5, 0.5), (0.35, 0.5), (0.65, 0.5), (0.5, 0.35), (0.5, 0.65)]
 SVD_SECONDS = 14 / 7  # 14 bildrutor i 7 fps
