@@ -102,7 +102,7 @@
   const blobB64 = (b) => new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(b); });
   const PUTER_RATIO = { '1:1': { w: 1, h: 1 }, '9:16': { w: 9, h: 16 }, '16:9': { w: 16, h: 9 }, '4:5': { w: 4, h: 5 } };
   /** Must be called from a tap/Enter handler: sign-in popup first (user gesture), then server text check, then Puter. */
-  async function seedream({ engineId, prompt, ratio, ref }) {
+  async function seedream({ engineId, prompt, ratio, ref, signal }) {
     const m = PUTER_MODELS.find((x) => x.id === engineId);
     if (!m || st.lane !== 'sfw') throw new Error('Seedream är bara för SFW.');
     if (minorText(prompt)) throw new Error(REFUSE);
@@ -117,13 +117,15 @@
     const base = { ratio: PUTER_RATIO[ratio] || PUTER_RATIO['1:1'] };
     if (ref) Object.assign(base, { input_image: await blobB64(ref), input_image_mime_type: ref.type || 'image/jpeg' });
     let img; let label = m.name; let note = '';
-    try { img = await p.ai.txt2img(prompt.slice(0, 1800), { ...base, model: m.model, provider: m.provider }); if (!img || !img.src) throw new Error('Seedream är upptaget'); } catch (e) {
+    try { img = await abortable(p.ai.txt2img(prompt.slice(0, 1800), { ...base, model: m.model, provider: m.provider }), signal); if (!img || !img.src) throw new Error('Seedream är upptaget'); } catch (e) {
+      if (e && e.cancelled) throw e;
       // reserv: FLUX via Puter (Cloudflare), sagt rakt ut i statusraden
       const why = e && e.message && /^Seedream/.test(e.message) ? e.message : puterError(e);
-      try { img = await p.ai.txt2img(prompt.slice(0, 1800), { ...base, model: PUTER_FLUX.model, provider: PUTER_FLUX.provider }); } catch (e2) { throw new Error(`${why}. Reserven FLUX svarade inte heller – försök igen eller välj en annan modell.`); }
+      try { img = await abortable(p.ai.txt2img(prompt.slice(0, 1800), { ...base, model: PUTER_FLUX.model, provider: PUTER_FLUX.provider }), signal); } catch (e2) { if (e2 && e2.cancelled) throw e2; throw new Error(`${why}. Reserven FLUX svarade inte heller – försök igen eller välj en annan modell.`); }
       if (!img || !img.src) throw new Error(`${why}. Reserven FLUX gav ingen bild.`);
       label = PUTER_FLUX.name; note = `${why} – bilden gjordes i stället med ${PUTER_FLUX.name}.`;
     }
+    if (signal && signal.aborted) throw cancelledErr();
     const blob = await imgToBlob(img);
     const returned = (img.dataset && (img.dataset.model || img.dataset.modelName)) || null;
     if (returned && !note) label = String(returned);
@@ -158,10 +160,36 @@
   }
   laneBtn.onclick = () => setLane(st.lane === 'nsfw' ? 'sfw' : 'nsfw');
 
+  // ---- avbryt: every running job registers here, so one job card or 'Stoppa alla jobb' can stop it ----
+  const cancelledErr = () => Object.assign(new Error('Avbrutet.'), { cancelled: true });
+  // Puter calls cannot be aborted on their side: race them against the signal and drop the late result
+  const abortable = (pr, signal) => (!signal ? pr : new Promise((res, rej) => {
+    if (signal.aborted) return rej(cancelledErr());
+    const on = () => rej(cancelledErr()); signal.addEventListener('abort', on, { once: true });
+    pr.then((v) => { signal.removeEventListener('abort', on); res(v); }, (e) => { signal.removeEventListener('abort', on); rej(e); });
+  }));
+  const RUNNING = new Set();
+  function track(label, cancel) { const e = { label, cancel }; RUNNING.add(e); document.dispatchEvent(new CustomEvent('kino-jobs')); return () => { RUNNING.delete(e); document.dispatchEvent(new CustomEvent('kino-jobs')); }; }
+  async function cancelAllJobs() {
+    const list = [...RUNNING];
+    await Promise.all(list.map((e) => Promise.resolve().then(e.cancel).catch(() => null)));
+    // belt and braces: server-side stop-all on Render and on the own-GPU engine (if one is set up)
+    await fetch(`${API}/jobs/cancel-all`, { method: 'POST' }).catch(() => null);
+    const { url, token } = colabCfg(); if (url && token) await fetch(`${url}/cancel_all`, { method: 'POST', headers: colabHdr(), signal: AbortSignal.timeout(8000) }).catch(() => null);
+    return list.length;
+  }
+  function stopAllButton() {
+    const b = h('button', { class: 'text cancel stopall', type: 'button' });
+    const paint = () => { b.textContent = RUNNING.size ? `Stoppa alla jobb (${RUNNING.size})` : 'Stoppa alla jobb'; };
+    b.onclick = async () => { b.disabled = true; b.textContent = 'Stoppar…'; const n = await cancelAllJobs(); b.disabled = false; paint(); b.title = n ? `${n} jobb stoppade` : 'Inga jobb körs i den här fliken (motorerna fick ändå stoppsignalen)'; };
+    document.addEventListener('kino-jobs', paint); paint(); return b;
+  }
+
   // ---- jobs ----
-  async function poll(id, onMsg) {
+  async function poll(id, onMsg, signal) {
     for (;;) {
       await new Promise((r) => setTimeout(r, 2500));
+      if (signal && signal.aborted) throw cancelledErr();
       const j = await fetch(`${API}/jobs/${id}`).then((x) => x.json()).catch(() => null);
       if (!j) continue;
       if (j.status === 'done') return j.result;
@@ -192,7 +220,11 @@
     const hint = h('div', { class: 'hint', hidden: true });
     const inact = h('details', { class: 'inact', hidden: true });
     let engList = [];
-    const setCancel = (fn) => { cancelBtn.hidden = !fn; cancelBtn.disabled = false; cancelBtn.onclick = fn ? async () => { cancelBtn.disabled = true; cancelBtn.textContent = 'Avbryter…'; try { await fn(); } finally { cancelBtn.textContent = 'Avbryt'; } } : null; };
+    let run = null; // { ac, extra } for the job in flight
+    const stopRun = async () => { const r = run; if (!r || r.ac.signal.aborted) return; r.ac.abort(); if (r.extra) await Promise.resolve().then(r.extra).catch(() => null); };
+    const paintCancel = (on) => { cancelBtn.hidden = !on; cancelBtn.disabled = false; cancelBtn.textContent = 'Avbryt'; cancelBtn.onclick = on ? async () => { cancelBtn.disabled = true; cancelBtn.textContent = 'Avbryter…'; await stopRun(); } : null; };
+    // onGo may add an engine-specific cancel (Render DELETE, own-GPU /cancel); the abort signal always fires too. null keeps the generic abort.
+    const setCancel = (fn) => { if (run) { run.extra = fn || null; paintCancel(true); } else paintCancel(false); };
     const showHint = () => { const e = engList.find((x) => x.id === sel.value); engDetail.textContent = e ? `Modell: ${engineLabel(e)}` : (sel.value === 'colab' ? 'Modell: din egen GPU (Colab / Kaggle)' : ''); hint.hidden = !(e && e.async); hint.textContent = e && e.async ? `${e.name}: ${QUEUE_HINT}${e.detail ? ` Läget nu: ${e.detail}.` : ''}` : ''; };
     sel.addEventListener('change', showHint);
     sel.append(h('option', { value: '' }, 'Laddar modeller…')); // replaced when the engine list arrives
@@ -236,10 +268,20 @@
       go.disabled = true; cta.disabled = true; cta.classList.add('busy'); go.classList.add('busy'); comp.classList.add('is-busy'); status.classList.add('busy');
       const t0 = Date.now(); $('.jobtop b', job).textContent = 'Jobbar…'; job.hidden = false; job.classList.add('on'); job.classList.remove('pct', 'err');
       const tick = () => { $('.jobtime', job).textContent = `${fmtClock((Date.now() - t0) / 1000)} · ${ETA[kind] || ''}`; }; tick(); jobTimer = setInterval(tick, 1000);
-      try { await onGo({ prompt: ta.value.trim(), engine: sel.value, say, setCancel }); } catch (e) { say(e.message, !e.cancelled); } finally {
+      const ac = new AbortController(); run = { ac, extra: null }; paintCancel(true);
+      const untrack = track(CTA[kind] || 'Jobb', stopRun);
+      const sayRun = (t, err) => { if (!ac.signal.aborted) say(t, err); }; // late messages from a stopped job are ignored
+      sayRun.signal = ac.signal; sayRun.setCancel = setCancel;
+      const stopped = new Promise((_, rej) => ac.signal.addEventListener('abort', () => rej(cancelledErr()), { once: true }));
+      let cancelled = false;
+      try { await Promise.race([onGo({ prompt: ta.value.trim(), engine: sel.value, say: sayRun, setCancel, signal: ac.signal }), stopped]); } catch (e) {
+        cancelled = Boolean(e.cancelled || ac.signal.aborted);
+        if (cancelled) say('Avbrutet. Jobbet stoppades och resultatet sparas inte.'); else say(e.message, true);
+      } finally {
         clearInterval(jobTimer); jobTimer = null; job.classList.remove('on');
-        setCancel(null); go.disabled = false; cta.disabled = false; cta.classList.remove('busy'); go.classList.remove('busy'); comp.classList.remove('is-busy'); status.classList.remove('busy'); job.hidden = !status.textContent;
-        $('.jobtop b', job).textContent = status.classList.contains('err') ? 'Något gick fel' : 'Klart';
+        run = null; untrack(); paintCancel(false); go.disabled = false; cta.disabled = false; cta.classList.remove('busy'); go.classList.remove('busy'); comp.classList.remove('is-busy'); status.classList.remove('busy'); job.hidden = !status.textContent;
+        $('.jobtop b', job).textContent = cancelled ? 'Avbrutet' : status.classList.contains('err') ? 'Något gick fel' : 'Klart';
+        job.classList.toggle('cancelled', cancelled);
       }
     }
     go.onclick = fire; cta.onclick = fire;
@@ -393,7 +435,7 @@
   function verkView(v) {
     const kinds = [['music', 'Musikvideor'], ['video', 'Video'], ['image', 'Bilder'], ['edit', 'Redigerade bilder']];
     const n = kinds.reduce((a, [k]) => a + st.results[k].length, 0);
-    v.append(pagehead('Mina verk', 'Allt du skapat i den här sessionen. Ladda ned det du vill spara – det försvinner när du stänger sidan.'));
+    v.append(pagehead('Mina verk', 'Allt du skapat i den här sessionen. Ladda ned det du vill spara – det försvinner när du stänger sidan.'), h('div', { class: 'stoprow' }, stopAllButton(), h('span', { class: 'meta' }, 'Stoppar allt som körs: Render-servern, din egen GPU och Seedream i den här fliken.')));
     if (!n) return v.append(empty('Inget här än.', 'Det du skapar visas här.'), h('div', { class: 'quick' }, h('a', { class: 'text primary', href: '#/skapa' }, 'Skapa något')));
     kinds.forEach(([k, t]) => { if (st.results[k].length) v.append(h('h2', { class: 'sect' }, `${t} (${st.results[k].length})`), results(k)); });
   }
@@ -402,7 +444,7 @@
     const laneCard = h('section', { class: 'setcard' }, h('div', {}, h('b', {}, 'Läge'), h('small', {}, st.lane === 'nsfw' ? 'NSFW: bara för vuxna 21+. Minderåriga blockeras alltid.' : 'SFW. Vuxenläget (21+) kräver ålderskontroll.')), laneBtn);
     const panel = colabPanel((on) => paintPill(on));
     panel.open = true;
-    v.append(pagehead(/^#\/motor/.test(location.hash) ? 'Egen GPU' : 'Inställningar', 'Motor och läge. Allt sparas bara i den här webbläsaren.'), laneCard, h('h2', { class: 'sect' }, 'Motor: Colab / Kaggle (egen GPU)'), panel);
+    v.append(pagehead(/^#\/motor/.test(location.hash) ? 'Egen GPU' : 'Inställningar', 'Motor och läge. Allt sparas bara i den här webbläsaren.'), laneCard, h('div', { class: 'stoprow' }, stopAllButton()), h('h2', { class: 'sect' }, 'Motor: Colab / Kaggle (egen GPU)'), panel);
     if (tool) setTimeout(() => { const el = document.getElementById(`tool-${tool}`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 300);
   }
 
@@ -413,19 +455,19 @@
     const lora = select([['auto', 'auto'], ['none', 'ingen'], ['photo', 'foto'], ['cinematic', 'filmisk']], 'auto');
     const grid = results('image');
     const c = composer({ kind: 'image', engineKind: 'image', placeholder: 'Beskriv en bild', settings: [field('Format', ratio), field('Upplösning', res), field('Antal', count), field('LoRA', lora)],
-      onGo: async ({ prompt, engine, say, setCancel }) => {
+      onGo: async ({ prompt, engine, say, setCancel, signal }) => {
         if (!prompt) return say('Skriv en prompt.', true);
         if (engine.startsWith('puter:')) {
           const n = Math.max(1, Math.min(4, +count.value || 1));
           for (let i = 0; i < n; i++) {
             say(i ? `Seedream ${i + 1}/${n}…` : 'Seedream (Puter)… första gången ber den dig logga in hos Puter.');
-            const item = await seedream({ engineId: engine, prompt, ratio: ratio.value });
+            const item = await seedream({ engineId: engine, prompt, ratio: ratio.value, signal });
             st.results.image.unshift(item); grid.prepend(resultCard(item, 'image'));
           }
           return say(`Gjord av ${st.results.image[0].engineName}.${st.results.image[0].note ? ' ' + st.results.image[0].note.trim() : ''}${lora.value === 'photo' || lora.value === 'cinematic' ? ' LoRA finns inte för Seedream.' : ''}`);
         }
         say('Skapar…');
-        const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine, prompt, ratio: ratio.value, resolution: res.value, count: count.value, lora: lora.value }) });
+        const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine, prompt, ratio: ratio.value, resolution: res.value, count: count.value, lora: lora.value }), signal });
         if (!r.ok) return say(await errMsg(r), true);
         let j = await r.json();
         if (j.async) {
@@ -493,41 +535,60 @@
     const { url } = colabCfg(); const fd = new FormData();
     fd.append('prompt', prompt); fd.append('seconds', String(Math.min(Number(seconds) || 4, 5))); fd.append('aspect', ratio || '9:16');
     if (image) fd.append('image', image, image.name || 'bild.jpg');
-    const r = await fetch(`${url}/generate`, { method: 'POST', headers: colabHdr(), body: fd });
+    const signal = say && say.signal;
+    const r = await fetch(`${url}/generate`, { method: 'POST', headers: colabHdr(), body: fd, signal });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || `Colab svarade ${r.status}`);
+    const untrack = colabCancelable(j.jobId, say);
+    try {
     say(`Colab jobbar…${j.note ? ' ' + j.note : ''} Ett klipp tar ofta 5–12 min på en T4.`);
     for (;;) {
       await new Promise((res) => setTimeout(res, 5000));
+      if (signal && signal.aborted) throw cancelledErr();
       const s = await fetch(`${url}/status/${j.jobId}`, { headers: colabHdr() }).then((x) => x.json()).catch(() => null);
       if (!s) throw new Error('Colab svarar inte längre (stängd flik?).');
+      if (s.status === 'cancelled') throw cancelledErr();
       if (s.status === 'error') throw new Error(`Colab misslyckades: ${s.error || ''}`);
       if (s.status === 'done') {
-        const blob = await fetch(url + s.url, { headers: colabHdr() }).then((x) => x.blob());
+        const blob = await fetch(url + s.url, { headers: colabHdr(), signal }).then((x) => x.blob());
         return { name: `colab-${j.jobId}.mp4`, url: URL.createObjectURL(blob), blob, engineName: 'Colab / Kaggle (egen GPU) · Wan 2.1 1.3B' };
       }
       say(`Colab ${s.status === 'queued' ? 'i kö' : 'renderar'}… ${s.elapsed || 0} s`);
     }
+    } finally { untrack(); }
+  }
+  // own-GPU job: Avbryt (job card or tool) and 'Stoppa alla jobb' call POST /cancel/{id} on the engine
+  function colabCancelable(id, say) {
+    const cancel = () => fetch(`${colabCfg().url}/cancel/${id}`, { method: 'POST', headers: colabHdr(), signal: AbortSignal.timeout(8000) }).catch(() => null);
+    if (say && say.setCancel) say.setCancel(cancel);
+    if (say) say.cancel = cancel;
+    return say && say.setCancel ? () => {} : track('Egen GPU', () => { if (say && say.abort) say.abort(); return cancel(); }); // composer jobs are already tracked
   }
 
   // ---- Colab-verktyg: bild, sång/instrumental, låttext, auto-klipp, lipsync, artistlista + ansiktsbyte ----
   async function colabJob(path, fd, say, onStatus) {
-    const { url } = colabCfg();
-    const r = await fetch(`${url}${path}`, { method: 'POST', headers: colabHdr(), body: fd });
+    const { url } = colabCfg(); const signal = say && say.signal;
+    const r = await fetch(`${url}${path}`, { method: 'POST', headers: colabHdr(), body: fd, signal });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || `Colab svarade ${r.status}`);
-    if (onStatus) onStatus(null, j);
-    for (;;) {
-      await new Promise((res) => setTimeout(res, 3000));
-      const s = await fetch(`${url}/status/${j.jobId}`, { headers: colabHdr() }).then((x) => x.json()).catch(() => null);
-      if (!s) throw new Error('Colab svarar inte längre (stängd flik?).');
-      if (s.status === 'error') throw new Error(s.error || 'Colab misslyckades');
-      if (s.status === 'done') {
-        const files = await Promise.all(s.files.map(async (f) => { const b = await fetch(url + f.url, { headers: colabHdr() }).then((x) => x.blob()); return { name: f.name, blob: b, url: URL.createObjectURL(b) }; }));
-        return { ...s, files };
+    if (!j.jobId) return j;
+    const untrack = colabCancelable(j.jobId, say);
+    try {
+      if (onStatus) onStatus(null, j);
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 3000));
+        if (signal && signal.aborted) throw cancelledErr();
+        const s = await fetch(`${url}/status/${j.jobId}`, { headers: colabHdr() }).then((x) => x.json()).catch(() => null);
+        if (!s) throw new Error('Colab svarar inte längre (stängd flik?).');
+        if (s.status === 'cancelled') throw cancelledErr();
+        if (s.status === 'error') throw new Error(s.error || 'Colab misslyckades');
+        if (s.status === 'done') {
+          const files = await Promise.all(s.files.map(async (f) => { const b = await fetch(url + f.url, { headers: colabHdr(), signal }).then((x) => x.blob()); return { name: f.name, blob: b, url: URL.createObjectURL(b) }; }));
+          return { ...s, files };
+        }
+        if (onStatus) onStatus(s, j); else say(`${s.status === 'queued' ? 'I kö' : 'Jobbar'}… ${s.elapsed || 0} s`);
       }
-      if (onStatus) onStatus(s, j); else say(`${s.status === 'queued' ? 'I kö' : 'Jobbar'}… ${s.elapsed || 0} s`);
-    }
+    } finally { untrack(); }
   }
   const ROSTER_KEY = 'kino.colab.roster';
   const rosterLocal = () => { try { return JSON.parse(localStorage.getItem(ROSTER_KEY) || '[]'); } catch { return []; } };
@@ -555,9 +616,18 @@
     }));
     const tool = (title, sub, inputs, btnText, run) => {
       const st = h('div', { class: 'meta' }); const out = h('div');
-      const say = (t, err) => { st.textContent = t; st.classList.toggle('err', Boolean(err)); };
-      const btn = h('button', { type: 'button', class: 'btn colab-need', onclick: async () => { btn.disabled = true; out.innerHTML = ''; say('Skickar…'); try { const r = await run(say); if (r) { out.append(outBox(r.files)); if (r.extra) out.append(r.extra); say('Klart.'); } } catch (e) { say(e.message, true); } finally { btn.disabled = !st.closest('.colab').classList.contains('on'); } } }, btnText);
-      return h('section', { class: 'cgroup' }, h('h3', {}, title, h('small', {}, sub)), ...inputs, btn, st, out);
+      const stop = h('button', { type: 'button', class: 'text cancel', hidden: true }, 'Avbryt');
+      const btn = h('button', { type: 'button', class: 'btn colab-need', onclick: async () => {
+        const ac = new AbortController(); let done = false;
+        const say = (t, err) => { if (ac.signal.aborted && !done) return; st.textContent = t; st.classList.toggle('err', Boolean(err)); };
+        say.signal = ac.signal; say.abort = () => ac.abort();
+        stop.onclick = async () => { stop.disabled = true; stop.textContent = 'Avbryter…'; ac.abort(); if (say.cancel) await say.cancel(); };
+        btn.disabled = true; stop.hidden = false; stop.disabled = false; stop.textContent = 'Avbryt'; out.innerHTML = ''; say('Skickar…');
+        try { const r = await run(say); if (ac.signal.aborted) throw cancelledErr(); if (r) { out.append(outBox(r.files)); if (r.extra) out.append(r.extra); say('Klart.'); } }
+        catch (e) { done = true; if (e.cancelled || ac.signal.aborted) { st.textContent = 'Avbrutet. Jobbet stoppades på motorn.'; st.classList.remove('err'); } else say(e.message, true); }
+        finally { done = true; stop.hidden = true; btn.disabled = !st.closest('.colab').classList.contains('on'); }
+      } }, btnText);
+      return h('section', { class: 'cgroup' }, h('h3', {}, title, h('small', {}, sub)), ...inputs, h('div', { class: 'toolbtns' }, btn, stop), st, out);
     };
     const file = (label, accept, multiple) => { const i = h('input', { type: 'file', accept, multiple: Boolean(multiple) }); return { el: field(label, i, true), i }; };
     const num = (v) => h('input', { type: 'number', value: v, min: 0, step: 'any', style: 'width:6em' });
@@ -882,14 +952,14 @@
     const g = await grokToggle();
     const grid = results('video');
     const c = composer({ kind: 'video', engineKind: 'video', placeholder: 'Beskriv ett klipp', settings: [first.el, last.el, field('Längd', len), field('Format', ratio), g.el],
-      onGo: async ({ prompt, engine, say, setCancel }) => {
+      onGo: async ({ prompt, engine, say, setCancel, signal }) => {
         if (!prompt) return say('Skriv en prompt.', true);
         if (engine === 'colab' && !g.cb.checked) {
           if (minorText(prompt)) return say(REFUSE, true);
           try {
             const out = await colabVideo({ prompt, seconds: len.value, ratio: ratio.value, image: first.inp.files[0] || first.blob || null, say });
             st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); return say(`Gjord av ${out.engineName}.`);
-          } catch (e) { return say(`${e.message} Välj en annan motor.`, true); }
+          } catch (e) { if (e.cancelled) throw e; return say(`${e.message} Välj en annan motor.`, true); }
         }
         if (!g.cb.checked && !engine) return say('Ingen videomodell svarar just nu.', true);
         const fd = new FormData();
@@ -905,7 +975,7 @@
         try {
           const out = await poll(j.jobId, (m) => say(m));
           st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); say(`Gjord av ${out.engineName}.`);
-        } catch (e) { say(e.message, true); }
+        } catch (e) { if (e.cancelled) throw e; say(e.message, true); }
       } });
     const sel = c.box.querySelector('select');
     const colabOpt = h('option', { value: 'colab', disabled: true, 'data-keep': '1' }, 'Colab / Kaggle (egen GPU) · offline');
@@ -970,7 +1040,7 @@
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'Vad handlar videon om?', noEngineText: 'Ingen bildmodell svarar (behövs utan egna bilder)',
       settings: [field('Genre', genre), field('Format', ratio), field('Längd', len), field('Utseende', look), field('Handling', action), field('Rörelse', motion, true), field('Stockklipp', srcToggle, true), field('Text i bild', overlay), g.el, field('Låttext', lyrics, true)],
-      onGo: async ({ prompt, engine, say, setCancel }) => {
+      onGo: async ({ prompt, engine, say, setCancel, signal }) => {
         const cancelJob = (id) => setCancel(async () => { await fetch(`${API}/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
         if (motion.value === 'stock') {
           if (!song) return say('Stockläge kräver en uppladdad låt.', true);
@@ -987,7 +1057,7 @@
             out.credits = { ...out.credits, images: `${lbl}: ${by}` };
             st.results.music.unshift(out); grid.prepend(resultCard(out, 'music'));
             say(`${out.engineName} · ${lbl} · Låt: ${out.credits.song} · Material: ${by}`);
-          } catch (e) { say(e.message, true); }
+          } catch (e) { if (e.cancelled) throw e; say(e.message, true); }
           return;
         }
         if (!imgs.length && !engine) return say('Ladda upp bilder: ingen bildmodell svarar just nu.', true);
@@ -1005,7 +1075,7 @@
           const out = await poll(j.jobId, (m) => say(m));
           st.results.music.unshift(out); grid.prepend(resultCard(out, 'music'));
           say(`Låt: ${out.credits.song} · Bilder: ${out.credits.images} · Rörelse: ${out.credits.motion}`);
-        } catch (e) { say(e.message, true); }
+        } catch (e) { if (e.cancelled) throw e; say(e.message, true); }
       } });
     if (st.preset === 'stock' && st.lane === 'sfw' && [...motion.options].some((o) => o.value === 'stock')) {
       motion.value = 'stock'; c.panel.hidden = false;
@@ -1036,13 +1106,13 @@
     const top = h('div', { class: 'uploads' }, imgIn, h('div', { class: 'tl-top' }, seg(h('span', { class: 'on', 'aria-current': 'page' }, 'Redigera'), h('a', { href: '#/timeline' }, 'Tidslinje'))), h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Lägg till referensbilder')), thumbs));
     const grid = results('edit');
     const c = composer({ kind: 'edit', engineKind: 'edit', placeholder: 'Vad ska ändras?', noEngineText: 'Redigering fungerar inte just nu.',
-      onGo: async ({ prompt, engine, say, setCancel }) => {
+      onGo: async ({ prompt, engine, say, setCancel, signal }) => {
         if (!prompt) return say('Skriv en prompt.', true);
         if (!files.length && !refs.length) return say('Lägg till en referensbild.', true);
         if (engine.startsWith('puter:')) {
           const ref = files[0] || (refs[0] && (refs[0].blob || await fetch(abs(refs[0].url)).then((x) => x.blob())));
           say('Seedream (Puter)… första gången ber den dig logga in hos Puter.');
-          const item = await seedream({ engineId: engine, prompt, ratio: '1:1', ref });
+          const item = await seedream({ engineId: engine, prompt, ratio: '1:1', ref, signal });
           st.results.edit.unshift(item); grid.prepend(resultCard(item, 'edit'));
           return say(`Gjord av ${item.engineName}.${item.note ? ' ' + item.note.trim() : ''}${files.length + refs.length > 1 ? ' Seedream via Puter tar en referens; den första användes.' : ''}`);
         }
@@ -1056,7 +1126,7 @@
         try {
           const out = await poll(j.jobId, (m) => say(m));
           st.results.edit.unshift(out); grid.prepend(resultCard(out, 'edit')); say(out.note || `Gjord av ${out.engineName}.`);
-        } catch (e) { say(e.message, true); }
+        } catch (e) { if (e.cancelled) throw e; say(e.message, true); }
       } });
     v.classList.add('two');
     v.append(top, pagehead('Redigera', 'Lägg till en bild och skriv vad som ska ändras.'), c.box, clipSources(), grid);
@@ -1219,7 +1289,7 @@
         const res = await poll(j.jobId, (m) => say(`Renderar · ${m}`));
         st.results.video.unshift(res); out.prepend(resultCard(res, 'video'));
         say(`Exporterad ${res.width}×${res.height}, ${res.duration.toFixed(1)} s. Uppladdade filer raderades från servern.`);
-      } catch (e) { say(e.message, true); }
+      } catch (e) { say(e.cancelled ? 'Avbrutet.' : e.message, !e.cancelled); }
     }
     const prevBtn = h('button', { class: 'text', onclick: preview }, 'Förhandsvisa');
     v.append(
@@ -1242,14 +1312,20 @@
   const BASE = API.replace(/\/api\/kino$/, '');
   const musicTabs = (on) => h('div', { class: 'tl-top' }, seg(on === 'mv' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Musikvideo') : h('a', { href: '#/music' }, 'Musikvideo'), on === 'script' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Manus') : h('a', { href: '#/script' }, 'Manus')));
   async function pollScript(id, onMsg) {
+    let stop = false;
+    const untrack = track('Manus', async () => { stop = true; await fetch(`${API}/script/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
+    try {
     for (;;) {
       await new Promise((r) => setTimeout(r, 2500));
+      if (stop) throw cancelledErr();
       const j = await fetch(`${API}/script/jobs/${id}`).then((x) => x.json()).catch(() => null);
       if (!j) continue;
+      if (j.status === 'cancelled') throw cancelledErr();
       if (j.status === 'done') return j.result;
       if (j.status === 'error') throw new Error(j.error);
       onMsg && onMsg(j.message);
     }
+    } finally { untrack(); }
   }
   async function scriptView(v) {
     const S = st.sc;
@@ -1398,7 +1474,7 @@
         if (out.song) { S.song = { ...out.song, fileName: `${f.name} (audio)` }; S.section = { start: 0, cut: null }; S.seconds = Math.round(out.seconds); }
         paintPeople(); paintSong(); paintCards();
         say(`${out.scenes.length} scener analyserade av ${out.model}. ${out.note || ''} Ändra Huvudpersoner och korten och tryck sedan Skapa scener.`);
-      } catch (e) { say(e.message, true); }
+      } catch (e) { say(e.cancelled ? 'Avbrutet.' : e.message, !e.cancelled); }
     });
     // honest per-scene generation: a busy/failed engine is reported on the card with alternatives; never silently swapped
     async function makeOne(s, kind, engine) {
@@ -1448,7 +1524,7 @@
         const out = await pollScript((await r.json()).jobId, (m) => say(m));
         S.scenes = out.scenes.map((x) => newScene(x)); S.title = out.title;
         paintCards(); say(out.note || `Manus ”${out.title}” av ${out.model || out.via}. Ändra, flytta eller ta bort scener och tryck sedan Skapa scener.`);
-      } catch (e) { say(e.message, true); }
+      } catch (e) { say(e.cancelled ? 'Avbrutet.' : e.message, !e.cancelled); }
     }
     async function makeAll() {
       const kind = laneSel.value; const engine = engSel.value;
@@ -1593,16 +1669,22 @@
       out.append(finputsaLink('kl-wide'));
     }
     async function pollKlipp(id, on) {
+      let stop = false;
+      const untrack = track('Klipp', async () => { stop = true; await fetch(`${API}/klipp/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
+      try {
       for (let miss = 0; ;) {
         await new Promise((r) => setTimeout(r, 2500));
+        if (stop) throw cancelledErr();
         const r = await fetch(`${API}/klipp/jobs/${id}`).catch(() => null);
         if (!r) { if (++miss > 20) throw new Error('Tappade kontakten med servern.'); continue; }
         if (r.status === 404) throw new Error('Jobbet finns inte längre (servern kan ha startat om, eller så har filerna raderats). Ladda upp videon igen.');
         const j = await r.json().catch(() => null); if (!j) continue; miss = 0;
         on && on(j.progress, j.message, j);
+        if (j.status === 'cancelled') throw cancelledErr();
         if (j.status === 'done') return j.result;
         if (j.status === 'error') throw Object.assign(new Error(j.error || 'Något gick fel.'), { refused: j.refused, info: j.info });
       }
+      } finally { untrack(); }
     }
     async function follow(id) {
       go.disabled = true; K.job = id; K.error = null;
@@ -1610,8 +1692,8 @@
         const res = await pollKlipp(id, (p, m, j) => { K.progress = p; K.message = m; K.info = j.info || {}; setBar(p); paintHow(K.info); say(`${m} (${Math.round(p * 100)} %)`, false, true); });
         K.result = res; K.status = 'done'; setBar(null); say('Klart! Spela upp, ladda ner eller skapa om med annan längd.'); paintResult();
       } catch (e) {
-        K.status = 'error'; K.error = e.message; setBar(null); if (e.info) { K.info = e.info; paintHow(e.info); }
-        say(e.message, true);
+        K.status = e.cancelled ? 'cancelled' : 'error'; K.error = e.message; setBar(null); if (e.info) { K.info = e.info; paintHow(e.info); }
+        say(e.cancelled ? 'Avbrutet. Jobbet stoppades på servern.' : e.message, !e.cancelled);
       } finally { go.disabled = false; K.following = false; }
     }
     go.onclick = async () => {

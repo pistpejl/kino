@@ -511,3 +511,8 @@ input[type=url], input[type=password] { font:inherit; font-size:16px; color:var(
 html { scroll-padding-bottom:calc(var(--navh) + 96px + env(safe-area-inset-bottom)); }
 .compbox { padding-bottom:4px; }
 @media (max-width:760px) { main { padding-bottom:calc(var(--navh) + 140px + env(safe-area-inset-bottom)); } }
+/* avbryt */
+.stoprow { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin:4px 0 18px; }
+.toolbtns { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+.jobcard.cancelled .jobtop b { color:var(--dim); }
+.jobcard.cancelled .jobbar { opacity:.35; }
