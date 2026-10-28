@@ -122,6 +122,15 @@
     const n = st.lane === 'nsfw';
     laneBtn.classList.toggle('nsfw', n); laneBtn.setAttribute('aria-checked', n ? 'true' : 'false');
     laneBtn.setAttribute('aria-label', `Läge: ${n ? 'NSFW' : 'SFW'}. Tryck för att byta till ${n ? 'SFW' : 'NSFW'}`);
+    paintPill();
+  }
+  // header status pill: "● Motor: Auto · SFW" -> Inställningar
+  let gpuOn = false;
+  function paintPill(on) {
+    if (on != null) gpuOn = on;
+    const p = $('#pill'); if (!p) return;
+    p.classList.toggle('gpu', gpuOn); p.classList.toggle('nsfw', st.lane === 'nsfw');
+    $('span', p).textContent = `Motor: ${gpuOn ? 'Egen GPU' : 'Auto'} · ${st.lane === 'nsfw' ? 'NSFW' : 'SFW'}`;
   }
   function setLane(l) {
     if (l === 'nsfw' && localStorage.getItem('kino.21') !== '1') {
@@ -148,9 +157,18 @@
   }
 
   // ---- composer ----
-  function composer({ kind, placeholder, engineKind, settings, onGo, extraTop, noEngineText }) {
+  // plain engine names: "Snabb" / "Bästa kvalitet"; the real model name stays visible in the option and in a details line
+  const plainName = (e) => (e.async || (e.tags || []).some((t) => /kö/i.test(t)) ? 'Bästa kvalitet' : 'Snabb');
+  const CTA = { image: 'Skapa bild', video: 'Skapa video', music: 'Skapa musikvideo', edit: 'Redigera bild' };
+  const ETA = { image: 'brukar ta 10 s – 2 min', video: 'brukar ta 1–10 min', music: 'brukar ta 1–5 min', edit: 'brukar ta 20 s – 2 min' };
+  const fmtClock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  function composer({ kind, placeholder, engineKind, settings, onGo, extraTop, noEngineText, ctaText }) {
     const ta = h('textarea', { rows: 2, placeholder });
     const go = h('button', { class: 'go', title: 'Skapa', 'aria-label': 'Skapa' }, '↑');
+    const cta = h('button', { class: 'text primary cta-main', type: 'button' }, ctaText || CTA[kind] || 'Skapa');
+    const engDetail = h('div', { class: 'meta engdetail' });
+    const job = h('div', { class: 'jobcard', hidden: true }, h('div', { class: 'jobtop' }, h('b', {}, 'Jobbar…'), h('span', { class: 'jobtime meta' })), h('div', { class: 'jobbar' }, h('i')));
+    let jobTimer = null;
     const sel = h('select', { 'aria-label': 'Modell' });
     const panel = h('div', { class: 'panel', hidden: true }, settings || []);
     const setBtn = h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Inställningar');
@@ -160,7 +178,7 @@
     const inact = h('details', { class: 'inact', hidden: true });
     let engList = [];
     const setCancel = (fn) => { cancelBtn.hidden = !fn; cancelBtn.disabled = false; cancelBtn.onclick = fn ? async () => { cancelBtn.disabled = true; cancelBtn.textContent = 'Avbryter…'; try { await fn(); } finally { cancelBtn.textContent = 'Avbryt'; } } : null; };
-    const showHint = () => { const e = engList.find((x) => x.id === sel.value); hint.hidden = !(e && e.async); hint.textContent = e && e.async ? `${e.name}: ${QUEUE_HINT}${e.detail ? ` Läget nu: ${e.detail}.` : ''}` : ''; };
+    const showHint = () => { const e = engList.find((x) => x.id === sel.value); engDetail.textContent = e ? `Modell: ${engineLabel(e)}` : (sel.value === 'colab' ? 'Modell: din egen GPU (Colab / Kaggle)' : ''); hint.hidden = !(e && e.async); hint.textContent = e && e.async ? `${e.name}: ${QUEUE_HINT}${e.detail ? ` Läget nu: ${e.detail}.` : ''}` : ''; };
     sel.addEventListener('change', showHint);
     sel.append(h('option', { value: '' }, 'Laddar modeller…')); // replaced when the engine list arrives
     // optional Swedish/any-language prompt rewrite (GMV /api/prompt/enhance), minors check first
@@ -176,27 +194,39 @@
       } catch (e) { status.textContent = `Det gick inte att förbättra: ${e.message}`.slice(0, 200); status.classList.add('err'); } finally { enhBtn.disabled = false; status.classList.remove('busy'); }
     } }, 'Förbättra prompt');
     const comp = h('div', { class: 'composer' }, h('div', { class: 'row' }, ta, go), h('div', { class: 'under' }, sel, settings ? setBtn : null, kind === 'image' || kind === 'video' ? enhBtn : null), panel);
-    const box = h('div', {}, extraTop || null, comp, hint, status, h('div', { class: 'cancelrow' }, cancelBtn), inact);
+    comp.insertBefore(engDetail, panel);
+    job.append(status, h('div', { class: 'cancelrow' }, cancelBtn));
+    const box = h('div', { class: 'compbox' }, extraTop || null, comp, hint, job, inact, h('div', { class: 'ctabar' }, cta));
     getEngines(st.lane).then((list) => {
       const ok = list.filter((e) => e.kind === engineKind && !(kind === 'music' && e.noMusic));
       engList = ok;
       [...sel.options].forEach((o) => { if (!o.dataset.keep) o.remove(); }); // keep client-side engines (Colab)
-      ok.forEach((e) => sel.append(h('option', { value: e.id, title: e.detail || '' }, engineLabel(e))));
+      ok.forEach((e) => sel.append(h('option', { value: e.id, title: e.detail || '' }, `${plainName(e)} · ${engineLabel(e)}`)));
       // engines that exist but are not usable right now (missing server keys, no free image quota, queue closed): greyed, with the honest reason
       const off = kind === 'image' ? getInactive(st.lane).filter((e) => e.kind === 'image') : [];
       off.forEach((e) => sel.append(h('option', { value: '', disabled: true, title: e.note }, `${e.name} · ej aktiv${(e.tags || []).length ? ' · ' + e.tags.join(' · ') : ''}`)));
       if (off.length) { inact.hidden = false; inact.append(h('summary', {}, `Ej aktiva modeller (${off.length})`), ...off.map((e) => h('p', {}, h('b', {}, e.name), ' – ', e.note))); }
       showHint();
-      if (!ok.length) { sel.append(h('option', { value: '' }, noEngineText || 'Ingen modell svarar just nu')); sel.disabled = ![...sel.options].some((o) => o.dataset.keep && !o.disabled); if (kind !== 'video' && kind !== 'music') go.disabled = true; }
+      if (!ok.length) { sel.append(h('option', { value: '' }, noEngineText || 'Ingen modell svarar just nu')); sel.disabled = ![...sel.options].some((o) => o.dataset.keep && !o.disabled); if (kind !== 'video' && kind !== 'music') { go.disabled = true; cta.disabled = true; } }
       if (kind === 'edit' && !ok.length) say('Redigering fungerar inte just nu.', true);
     });
-    function say(t, err) { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); }
+    function say(t, err) {
+      status.textContent = t || ''; status.classList.toggle('err', Boolean(err));
+      job.hidden = !t && !jobTimer; job.classList.toggle('err', Boolean(err));
+      const m = /(\d{1,3})\s?%/.exec(t || ''); const bi = $('.jobbar i', job); if (m) { job.classList.add('pct'); bi.style.width = `${Math.min(100, +m[1])}%`; }
+    }
     async function fire() {
       if (go.disabled) return;
-      go.disabled = true; go.classList.add('busy'); comp.classList.add('is-busy'); status.classList.add('busy');
-      try { await onGo({ prompt: ta.value.trim(), engine: sel.value, say, setCancel }); } catch (e) { say(e.message, !e.cancelled); } finally { setCancel(null); go.disabled = false; go.classList.remove('busy'); comp.classList.remove('is-busy'); status.classList.remove('busy'); }
+      go.disabled = true; cta.disabled = true; cta.classList.add('busy'); go.classList.add('busy'); comp.classList.add('is-busy'); status.classList.add('busy');
+      const t0 = Date.now(); $('.jobtop b', job).textContent = 'Jobbar…'; job.hidden = false; job.classList.add('on'); job.classList.remove('pct', 'err');
+      const tick = () => { $('.jobtime', job).textContent = `${fmtClock((Date.now() - t0) / 1000)} · ${ETA[kind] || ''}`; }; tick(); jobTimer = setInterval(tick, 1000);
+      try { await onGo({ prompt: ta.value.trim(), engine: sel.value, say, setCancel }); } catch (e) { say(e.message, !e.cancelled); } finally {
+        clearInterval(jobTimer); jobTimer = null; job.classList.remove('on');
+        setCancel(null); go.disabled = false; cta.disabled = false; cta.classList.remove('busy'); go.classList.remove('busy'); comp.classList.remove('is-busy'); status.classList.remove('busy'); job.hidden = !status.textContent;
+        $('.jobtop b', job).textContent = status.classList.contains('err') ? 'Något gick fel' : 'Klart';
+      }
     }
-    go.onclick = fire;
+    go.onclick = fire; cta.onclick = fire;
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); fire(); } });
     // optional Gemini prompt rewrite (free text model; SFW lane only; image output is paid-only at Google so there is no Gemini image engine)
     if (kind === 'image' && st.lane === 'sfw') getConfig().then((c) => {
@@ -214,7 +244,8 @@
       } }, 'Förbättra med Gemini');
       $('.under', comp).append(gb);
     });
-    return { box, ta, sel, say, panel };
+    sel.addEventListener('change', () => { cta.disabled = go.disabled; });
+    return { box, ta, sel, say, panel, cta, setCancel };
   }
   const field = (label, input, wide) => h('label', { class: wide ? 'wide' : null }, label, input);
   const select = (opts, val) => { const s = h('select'); opts.forEach(([v, t]) => s.append(h('option', { value: v, selected: v === val }, t))); return s; };
@@ -255,6 +286,11 @@
     timeline: '<rect x="3" y="6" width="7" height="12" rx="2"/><rect x="12" y="6" width="9" height="12" rx="2"/>',
     klipp: '<circle cx="6" cy="6.5" r="2.5"/><circle cx="6" cy="17.5" r="2.5"/><path d="M8.2 7.8 20 16M8.2 16.2 14 12.3"/><rect x="15" y="4" width="6" height="6" rx="1.5"/>',
   };
+  Object.assign(ICONS, {
+    lipsync: '<path d="M4 12c2-3 5-4 8-4s6 1 8 4c-2 3-5 4-8 4s-6-1-8-4z"/><path d="M4 12h16"/>',
+    face: '<circle cx="12" cy="12" r="8"/><circle cx="9" cy="10.5" r=".8"/><circle cx="15" cy="10.5" r=".8"/><path d="M9 15c1.7 1.3 4.3 1.3 6 0"/>',
+    voice: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  });
   const icon = (k) => { const e = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); e.setAttribute('viewBox', '0 0 24 24'); e.setAttribute('aria-hidden', 'true'); e.innerHTML = ICONS[k]; return e; };
   async function home(v) {
     const nsfw = st.lane === 'nsfw';
@@ -277,17 +313,25 @@
     };
     const models = h('details', { class: 'models' }, h('summary', {}, h('span', { class: 'ttl' }, 'Kollar vilka modeller som svarar…')));
     models.classList.add('loading');
+    st.homeTiles = TILES; st.tile = tile;
+    const big = ([ic, t, d, href, grad]) => h('a', { class: 'bigcard' + (grad ? ' grad' : ''), href }, h('span', { class: 'ti' }, icon(ic)), h('span', {}, h('b', {}, t), h('small', {}, d)), h('span', { class: 'arr', 'aria-hidden': 'true' }, '›'));
+    const last = localStorage.getItem('kino.last'); const lastT = LAST_NAMES[last];
+    const nRes = Object.values(st.results).reduce((a, x) => a + x.length, 0);
     v.append(
       h('section', { class: 'hero' },
-        h('p', { class: 'eyebrow' }, 'AI-studio för bild, video och musik'),
-        h('h1', {}, 'Gör bild, video och musikvideo', h('em', {}, '.')),
-        h('p', { class: 'lede' }, 'Beskriv en idé, släpp in en låt eller ett klipp så gör KINO resten. Skriv på svenska eller engelska.'),
-        h('div', { class: 'cta' }, h('a', { class: 'text primary lg', href: '#/image' }, 'Skapa bild'), h('a', { class: 'text lg', href: '#/music' }, 'Musikvideo'))),
-      h('h2', { class: 'sect' }, 'Vad vill du göra?'),
-      h('div', { class: 'tiles' }, TILES.map(tile)),
+        h('h1', {}, 'Vad vill du skapa?'),
+        h('p', { class: 'lede' }, 'Skriv på svenska eller engelska.')),
+      h('div', { class: 'bigcards' },
+        big(['music', 'Musikvideo', 'Låt + idé blir en klippt video', '#/music', true]),
+        big(['video', 'Video', 'Text eller bild blir ett klipp', '#/video']),
+        big(['image', 'Bild', 'Skriv en text, få en bild', '#/image'])),
+      ...((lastT || nRes) ? [h('h2', { class: 'sect' }, 'Fortsätt där du var'), h('div', { class: 'continue' },
+        lastT ? h('a', { class: 'contcard', href: '#/' + last }, h('b', {}, lastT), h('small', {}, 'Senast öppnad')) : null,
+        nRes ? h('a', { class: 'contcard', href: '#/verk' }, h('b', {}, `Mina verk (${nRes})`), h('small', {}, 'Från den här sessionen')) : null)] : []),
+      h('div', { class: 'quick' }, h('a', { class: 'text dim', href: '#/skapa' }, 'Allt du kan skapa'), h('a', { class: 'text dim', href: '#/verktyg' }, 'Verktyg')),
       h('p', { class: 'lanenote' + (nsfw ? ' nsfw' : '') }, nsfw
-        ? 'NSFW-läge är på: endast för vuxna 21+. Minderåriga blockeras alltid, inga foton på riktiga personer, modellnamn visas ärligt och det finns ingen tyst reservmodell. Byt tillbaka med SFW-knappen uppe till höger.'
-        : 'Läge: SFW. Vuxeninnehåll (21+) finns bakom NSFW-knappen uppe till höger.'),
+        ? 'NSFW-läge är på: endast för vuxna 21+. Minderåriga blockeras alltid, inga foton på riktiga personer, modellnamn visas ärligt och det finns ingen tyst reservmodell. Byt läge under Inställningar (Motor-knappen uppe till höger).'
+        : 'Läge: SFW. Vuxenläget (21+) finns under Inställningar.'),
       models);
     const list = await getEngines(st.lane);
     const kinds = { image: 'Bild', video: 'Video', edit: 'Redigera', music: 'Låt' };
@@ -299,6 +343,51 @@
     getInactive(st.lane).forEach((e) => ul.append(h('li', { class: 'off', title: e.note }, h('b', {}, e.name, ...(e.tags || []).map((t) => h('span', { class: 'etag' }, t)), h('span', { class: 'etag off' }, 'ej aktiv')), h('span', { class: 'why' }, e.note))));
     if (!list.length) ul.append(h('li', {}, 'Ingen modell svarar just nu.'));
     models.append(ul);
+  }
+
+  const LAST_NAMES = { image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video' };
+  const hub = (v, title, sub, items) => {
+    const nsfw = st.lane === 'nsfw';
+    v.append(pagehead(title, sub), h('div', { class: 'hub' }, items.map(([ic, t, d, href, preset, sfwOnly]) => {
+      const off = Boolean(sfwOnly && nsfw);
+      return h('a', { class: 'hubcard' + (off ? ' off' : ''), href: off ? null : href, 'aria-disabled': off ? 'true' : null, onclick: () => { st.preset = preset || null; } }, h('span', { class: 'ti' }, icon(ic)), h('span', {}, h('b', {}, t), h('small', {}, off ? 'Bara i SFW-läget' : d)), h('span', { class: 'arr', 'aria-hidden': 'true' }, '›'));
+    })));
+  };
+  function skapaView(v) {
+    hub(v, 'Skapa', 'Välj vad du vill göra.', [
+      ['music', 'Musikvideo', 'Låt + idé blir en klippt video', '#/music'],
+      ['video', 'Video', 'Text eller bild blir ett klipp', '#/video'],
+      ['image', 'Bild', 'Skriv en text, få en bild', '#/image'],
+      ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
+      ['stock', 'Stockklipp till låt', 'Riktiga klipp i takt med musiken', '#/music', 'stock', true],
+    ]);
+  }
+  function verktygView(v) {
+    hub(v, 'Verktyg', 'Ändra, klipp och byt. Verktyg märkta "egen GPU" kräver Colab eller Kaggle.', [
+      ['edit', 'Redigera', 'Ändra en bild med text', '#/edit'],
+      ['klipp', 'Klipp', 'Lång video blir korta klipp med text', '#/klipp'],
+      ['timeline', 'Tidslinje', 'Klipp ihop och exportera mp4', '#/timeline'],
+      ['analyze', 'Analysera video', 'Ladda upp ett klipp, få scener', '#/script', 'analyze'],
+      ['lipsync', 'Lip-sync', 'Egen GPU · munnen följer låten', '#/motor?t=lipsync'],
+      ['face', 'Ansiktsbyte', 'Egen GPU · bara samtyckta artister', '#/motor?t=faceswap'],
+      ['voice', 'Röstbyte', 'Egen GPU · röster ur din röstlista', '#/motor?t=voice'],
+      ['music', 'Fler GPU-verktyg', 'Sång/instrumental, låttext, auto-klipp, skala upp', '#/motor'],
+    ]);
+  }
+  function verkView(v) {
+    const kinds = [['music', 'Musikvideor'], ['video', 'Video'], ['image', 'Bilder'], ['edit', 'Redigerade bilder']];
+    const n = kinds.reduce((a, [k]) => a + st.results[k].length, 0);
+    v.append(pagehead('Mina verk', 'Allt du skapat i den här sessionen. Ladda ned det du vill spara – det försvinner när du stänger sidan.'));
+    if (!n) return v.append(empty('Inget här än.', 'Det du skapar visas här.'), h('div', { class: 'quick' }, h('a', { class: 'text primary', href: '#/skapa' }, 'Skapa något')));
+    kinds.forEach(([k, t]) => { if (st.results[k].length) v.append(h('h2', { class: 'sect' }, `${t} (${st.results[k].length})`), results(k)); });
+  }
+  function settingsView(v, q) {
+    const tool = new URLSearchParams(q || '').get('t');
+    const laneCard = h('section', { class: 'setcard' }, h('div', {}, h('b', {}, 'Läge'), h('small', {}, st.lane === 'nsfw' ? 'NSFW: bara för vuxna 21+. Minderåriga blockeras alltid.' : 'SFW. Vuxenläget (21+) kräver ålderskontroll.')), laneBtn);
+    const panel = colabPanel((on) => paintPill(on));
+    panel.open = true;
+    v.append(pagehead(/^#\/motor/.test(location.hash) ? 'Egen GPU' : 'Inställningar', 'Motor och läge. Allt sparas bara i den här webbläsaren.'), laneCard, h('h2', { class: 'sect' }, 'Motor: Colab / Kaggle (egen GPU)'), panel);
+    if (tool) setTimeout(() => { const el = document.getElementById(`tool-${tool}`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 300);
   }
 
   async function imageView(v) {
@@ -332,7 +421,8 @@
         j.images.forEach((i) => { st.results.image.unshift(i); grid.prepend(resultCard(i, 'image')); });
         say(j.loraNote || (j.images[0] && j.images[0].waitedSeconds != null ? `Gjord av ${j.engineName} (${j.images[0].waitedSeconds} s totalt).${j.note ? ' ' + j.note : ''}` : `Gjord av ${j.engineName}.`));
       } });
-    v.append(pagehead('Bild', 'Skriv vad du vill se. Välj modell och format under Inställningar.'), c.box, grid);
+    v.classList.add('two');
+    v.append(pagehead('Bild', 'Skriv vad du vill se. Format och antal finns under Inställningar.'), c.box, grid);
   }
 
   function fileField(label, accept, carry) {
@@ -626,7 +716,8 @@
       const r = await colabJob('/voiceswap', fd, say, (s) => { if (!s) return say('Startat…'); const p = s.progress || {}; if (p.total) sBar.value = Math.round((p.done / p.total) * 100); say(`${s.status === 'queued' ? 'I kö' : (p.step || 'Jobbar')} · ${s.elapsed || 0} s`); });
       sBar.value = 100; return r;
     });
-    const tVoices = h('div', {}, tVoice, tVsw);
+    const tVoices = h('div', { id: 'tool-voice' }, tVoice, tVsw);
+    tLip.id = 'tool-lipsync'; tSwap.id = 'tool-faceswap'; tRos.id = 'tool-roster'; tStem.id = 'tool-stems'; tLyr.id = 'tool-lyrics'; tCut.id = 'tool-autocut'; tUp.id = 'tool-upscale';
     // Bilder + låt -> musikvideo (en knapp)
     const mI = file('Bilder (en eller flera)', 'image/*', true); const mS = file('Låt', 'audio/*');
     const mSec = select([['start', 'Från början'], ['custom', 'Egen start'], ['chorus', 'Refrängen (gissas)']], 'start'); const mSt = num(0); const mLen = num(30); const mR = aspectSel();
@@ -655,7 +746,7 @@
       });
       bar.value = 100; return r;
     });
-    tMv.style.cssText = 'border:2px solid var(--accent, #c9a227);border-radius:12px;padding:12px';
+    tMv.classList.add('hl'); tMv.id = 'tool-mv';
     const box = h('div', { class: 'colab-tools' }, tMv, h('div', { class: 'meta' }, 'Bild till video: välj Colab som motor på Video-sidan och lägg en första bildruta – den används (SVD).'), tImg, tEdit, tUp, tStem, tLyr, tCut, tLip, tRos, tSwap, tVoices);
     return { box, onState: (on, feats) => { box.querySelectorAll('.colab-need').forEach((b) => { b.disabled = !on; }); tLip.hidden = on && feats && !feats.includes('lipsync'); tSwap.hidden = tRos.hidden = on && feats && !feats.includes('faceswap'); tMv.hidden = on && feats && !feats.includes('musicvideo'); tVoices.hidden = on && feats && !feats.includes('voiceswap'); if (on) { rosterSync().catch(() => {}); voicesSync(); } } };
   }
@@ -752,18 +843,18 @@
     };
     const refresh = () => { out.value = combine(); info.textContent = sel.length ? `Valda: ${sel.map((i) => all[i][0]).join(' + ')} (max 3)` : 'Välj 1–3 prompter och/eller skriv egna idéer.'; };
     own.oninput = refresh;
-    const chip = (it) => { const i = all.indexOf(it); const b = h('button', { class: 'chip', type: 'button', title: it[1], 'aria-pressed': 'false', onclick: () => { const at = sel.indexOf(i); if (at >= 0) sel.splice(at, 1); else { if (sel.length >= 3) sel.shift(); sel.push(i); } body.querySelectorAll('.chip[data-i]').forEach((c) => { const on = sel.includes(+c.dataset.i); c.setAttribute('aria-pressed', String(on)); c.style.borderColor = on ? '#ff3b30' : ''; }); refresh(); } }, h('span', { class: 'cn' }, it[0]), h('span', { class: 'ch' }, it[1])); b.dataset.i = i; return b; };
+    const chip = (it) => { const i = all.indexOf(it); const b = h('button', { class: 'chip', type: 'button', title: it[1], 'aria-pressed': 'false', onclick: () => { const at = sel.indexOf(i); if (at >= 0) sel.splice(at, 1); else { if (sel.length >= 3) sel.shift(); sel.push(i); } body.querySelectorAll('.chip[data-i]').forEach((c) => { const on = sel.includes(+c.dataset.i); c.setAttribute('aria-pressed', String(on)); c.classList.toggle('on', on); }); refresh(); } }, h('span', { class: 'cn' }, it[0]), h('span', { class: 'ch' }, it[1])); b.dataset.i = i; return b; };
     const MK = 'kino.mymixes'; const load = () => { try { return JSON.parse(localStorage.getItem(MK)) || []; } catch { return []; } };
     const paintMine = () => { mineBox.innerHTML = ''; const m = load(); if (!m.length) return mineBox.append(h('span', { class: 'meta' }, 'Inga egna mallar ännu.')); m.forEach((x, k) => mineBox.append(h('span', { class: 'chip' }, h('button', { class: 'text', type: 'button', onclick: () => { out.value = x.prompt; info.textContent = `Egen mall: ${x.title}`; } }, x.title), h('button', { class: 'text dim danger', type: 'button', 'aria-label': 'Ta bort', onclick: () => { const n = load(); n.splice(k, 1); localStorage.setItem(MK, JSON.stringify(n)); paintMine(); } }, 'Ta bort')))); };
     const tplOf = () => (sel.length ? all[sel[0]][3] : 'standard');
-    const use = h('button', { class: 'text primary', type: 'button', onclick: () => { if (!out.value.trim()) return (info.textContent = 'Välj en prompt eller skriv egna idéer först.'); onPick({ title: sel.length ? sel.map((i) => all[i][0]).join(' + ') : 'Egen idé', prompt: out.value.trim(), negative: NEG, template: tplOf() }); } }, 'Använd prompt');
+    const use = h('button', { class: 'text', type: 'button', onclick: () => { if (!out.value.trim()) return (info.textContent = 'Välj en prompt eller skriv egna idéer först.'); onPick({ title: sel.length ? sel.map((i) => all[i][0]).join(' + ') : 'Egen idé', prompt: out.value.trim(), negative: NEG, template: tplOf() }); } }, 'Använd prompt');
     const save = h('button', { class: 'text', type: 'button', onclick: () => { if (!out.value.trim()) return; const title = (prompt('Namn på mallen:', sel.map((i) => all[i][0]).join(' + ') || 'Min mix') || '').trim(); if (!title) return; const n = load(); n.unshift({ title, prompt: out.value.trim() }); localStorage.setItem(MK, JSON.stringify(n.slice(0, 50))); paintMine(); } }, 'Spara som egen mall');
     const body = h('div', { class: 'clips-body' },
       PRESETS.map((grp) => h('section', { class: 'cgroup' }, h('h3', {}, grp.g, h('small', {}, `${grp.items.length} st`)), h('div', { class: 'chips' }, grp.items.map(chip)))),
       h('label', { class: 'wide' }, 'Egna idéer', own), info, h('label', { class: 'wide' }, 'Kombinerad prompt (redigerbar)', out),
       h('div', { class: 'under' }, use, save), h('section', { class: 'cgroup' }, h('h3', {}, 'Mina mallar'), mineBox));
     refresh(); paintMine();
-    return h('details', { class: 'clips presets' }, h('summary', {}, h('span', { class: 'ttl' }, 'Färdiga prompter'), h('span', { class: 'count' }, 'välj 1–3 + egna idéer')), body);
+    return h('details', { class: 'clips presets' }, h('summary', {}, h('span', { class: 'ttl' }, 'Stilar'), h('span', { class: 'count' }, 'välj 1–3'), h('span', { class: 'chev', 'aria-hidden': 'true' })), body);
   }
 
   async function videoView(v) {
@@ -775,7 +866,7 @@
     const g = await grokToggle();
     const grid = results('video');
     const c = composer({ kind: 'video', engineKind: 'video', placeholder: 'Beskriv ett klipp', settings: [first.el, last.el, field('Längd', len), field('Format', ratio), g.el],
-      onGo: async ({ prompt, engine, say }) => {
+      onGo: async ({ prompt, engine, say, setCancel }) => {
         if (!prompt) return say('Skriv en prompt.', true);
         if (engine === 'colab' && !g.cb.checked) {
           if (minorText(prompt)) return say(REFUSE, true);
@@ -794,6 +885,7 @@
         if (!r.ok) return say(await errMsg(r), true);
         const j = await r.json();
         say(`${j.engineName} jobbar… video kan ta några minuter.`);
+        setCancel(async () => { await fetch(`${API}/jobs/${j.jobId}`, { method: 'DELETE' }).catch(() => null); });
         try {
           const out = await poll(j.jobId, (m) => say(m));
           st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); say(`Gjord av ${out.engineName}.`);
@@ -802,33 +894,43 @@
     const sel = c.box.querySelector('select');
     const colabOpt = h('option', { value: 'colab', disabled: true, 'data-keep': '1' }, 'Colab / Kaggle (egen GPU) · offline');
     sel.prepend(colabOpt);
-    const panel = colabPanel((on) => {
+    const onColab = (on) => {
       colabOpt.disabled = !on; colabOpt.textContent = on ? 'Colab / Kaggle (egen GPU) · din GPU · max 5 s' : 'Colab / Kaggle (egen GPU) · offline';
       if (on) { sel.disabled = false; if (localStorage.getItem('kino.colab.url')) sel.value = 'colab'; } else if (sel.value === 'colab') sel.selectedIndex = [...sel.options].findIndex((o) => !o.disabled);
-    });
+      sel.dispatchEvent(new Event('change'));
+    };
+    colabHealth().then((r) => { onColab(r.state === 'on'); paintPill(r.state === 'on'); });
+    const gpuNote = h('a', { class: 'meta gpulink', href: '#/installningar' }, 'Egen GPU (Colab / Kaggle) ställs in under Inställningar ›');
     const pre = presetsBox(({ prompt, negative, title }) => { const ta = c.box.querySelector('textarea'); if (ta) { ta.value = prompt; ta.dispatchEvent(new Event('input')); ta.focus(); } ratio.value = '9:16'; c.box.querySelector('.status') && (c.box.querySelector('.status').textContent = `${title} ifylld · format 9:16 · negativ prompt (om motorn stöder det): ${negative}`); });
-    v.append(pagehead('Video', 'Beskriv ett klipp, eller börja från en bild. Video kan ta några minuter.'), panel, pre, c.box, clipSources(), grid);
+    pre.open = true; c.box.querySelector('.composer').after(pre);
+    v.classList.add('two');
+    v.append(pagehead('Video', 'Beskriv ett klipp eller börja från en bild.'), c.box, gpuNote, clipSources(), grid);
   }
 
   async function musicView(v) {
     const songIn = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-m4a,audio/mp4', hidden: true });
     const imgIn = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
-    let song = null; let imgs = [];
+    let song = null; let imgs = []; const stepSync = { fn: () => {} };
     const songBox = h('div', { class: 'drop' });
     const thumbs = h('div', { class: 'thumbs' });
     function paintSong() {
-      songBox.innerHTML = '';
-      if (!song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Ladda upp låt'), h('span', { class: 'meta' }, 'mp3, wav, m4a · max 20 MB')));
+      songBox.innerHTML = ''; stepSync.fn();
+      if (!song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Välj låt')));
       songBox.append(h('div', { class: 'hintline' }, h('b', {}, song.name), h('button', { class: 'text dim', onclick: () => { song = null; paintSong(); } }, 'Ta bort låt')), h('audio', { controls: true, src: URL.createObjectURL(song) }));
     }
     function paintImgs() {
-      thumbs.innerHTML = '';
+      thumbs.innerHTML = ''; stepSync.fn();
       imgs.forEach((f, i) => thumbs.append(h('div', { class: 'thumb' }, h('img', { src: URL.createObjectURL(f) }), h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: () => { imgs.splice(i, 1); paintImgs(); } }, '×'))));
     }
     songIn.onchange = () => { const f = songIn.files[0]; songIn.value = ''; if (!f) return; if (f.size > 20 * 1024 * 1024 || !/\.(mp3|wav|m4a)$/i.test(f.name)) return alert('Låten måste vara mp3, wav eller m4a, max 20 MB.'); song = f; paintSong(); };
     imgIn.onchange = () => { imgs = imgs.concat([...imgIn.files]).slice(0, 8); imgIn.value = ''; paintImgs(); };
     paintSong();
-    const top = h('div', { class: 'uploads' }, songIn, imgIn, songBox, h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Ladda upp bilder'), h('span', { class: 'meta' }, 'upp till 8')), thumbs));
+    // 3-step guide: Låt -> Idé/stil -> Bilder (valfritt), fixed "Skapa musikvideo" button
+    const stepHead = (n, t, sub) => h('div', { class: 'stephead' }, h('span', { class: 'stepn' }, String(n)), h('div', {}, h('b', {}, t), h('small', {}, sub)), h('span', { class: 'stepok', 'aria-hidden': 'true' }, '✓'));
+    const step1 = h('section', { class: 'step' }, stepHead(1, 'Låt', 'mp3, wav eller m4a · max 20 MB'), songIn, songBox);
+    const step3 = h('section', { class: 'step' }, stepHead(3, 'Bilder (valfritt)', 'Upp till 8 – annars skapar KINO dem'), imgIn, h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Välj bilder')), thumbs));
+    const bars = h('div', { class: 'steps', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'));
+    const top = h('div', { class: 'uploads' }, step1);
     const cfg = await getConfig();
     const genre = select((cfg.genres || ['pop', 'r&b', 'rap', 'rock', 'hyperpop', 'ballad', 'rave', 'score']).map((x) => [x, x]), 'pop');
     const ratio = select([['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1']], '9:16');
@@ -852,7 +954,8 @@
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'Vad handlar videon om?', noEngineText: 'Ingen bildmodell svarar (behövs utan egna bilder)',
       settings: [field('Genre', genre), field('Format', ratio), field('Längd', len), field('Utseende', look), field('Handling', action), field('Rörelse', motion, true), field('Stockklipp', srcToggle, true), field('Text i bild', overlay), g.el, field('Låttext', lyrics, true)],
-      onGo: async ({ prompt, engine, say }) => {
+      onGo: async ({ prompt, engine, say, setCancel }) => {
+        const cancelJob = (id) => setCancel(async () => { await fetch(`${API}/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
         if (motion.value === 'stock') {
           if (!song) return say('Stockläge kräver en uppladdad låt.', true);
           const sf = new FormData();
@@ -860,7 +963,7 @@
           say('Laddar upp…');
           const r0 = await fetch(`${API}/stock`, { method: 'POST', body: sf });
           if (!r0.ok) return say(await errMsg(r0), true);
-          const j0 = await r0.json();
+          const j0 = await r0.json(); cancelJob(j0.jobId);
           try {
             const out = await poll(j0.jobId, (m) => say(m));
             const by = out.credits.footage.map((f) => f.by).join('; ');
@@ -881,7 +984,7 @@
         say('Laddar upp…');
         const r = await fetch(`${API}/music`, { method: 'POST', body: fd });
         if (!r.ok) return say(await errMsg(r), true);
-        const j = await r.json();
+        const j = await r.json(); cancelJob(j.jobId);
         try {
           const out = await poll(j.jobId, (m) => say(m));
           st.results.music.unshift(out); grid.prepend(resultCard(out, 'music'));
@@ -893,7 +996,13 @@
       c.say('Stockklipp: ladda upp en låt, välj källa under Inställningar och skapa.');
     }
     st.preset = null;
-    v.append(musicTabs('mv'), pagehead('Musikvideo', 'Ladda upp en låt och bilder, eller låt KINO göra stillbilderna. Stockklipp finns under Inställningar.'), top, c.box, grid);
+    const pre = presetsBox(({ prompt, title }) => { c.ta.value = prompt; c.ta.dispatchEvent(new Event('input')); c.say(`${title} ifylld. Ändra texten om du vill.`); });
+    c.box.querySelector('.composer').after(pre);
+    const step2 = h('section', { class: 'step' }, stepHead(2, 'Vad handlar den om?', 'Skriv själv eller välj stilar'), c.box);
+    const syncSteps = () => { const done = [Boolean(song), Boolean(c.ta.value.trim()), imgs.length > 0]; [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('done', done[i])); const cur = done.indexOf(false); [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('cur', i === (cur < 0 ? 2 : cur))); [...bars.children].forEach((b, i) => b.classList.toggle('on', done[i])); };
+    stepSync.fn = syncSteps; c.ta.addEventListener('input', syncSteps); syncSteps();
+    v.classList.add('two');
+    v.append(musicTabs('mv'), pagehead('Ny musikvideo', '3 steg. Stockklipp och fler val finns under Inställningar i steg 2.'), bars, top, step2, step3, grid);
   }
 
   async function editView(v) {
@@ -911,7 +1020,7 @@
     const top = h('div', { class: 'uploads' }, imgIn, h('div', { class: 'tl-top' }, seg(h('span', { class: 'on', 'aria-current': 'page' }, 'Redigera'), h('a', { href: '#/timeline' }, 'Tidslinje'))), h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Lägg till referensbilder')), thumbs));
     const grid = results('edit');
     const c = composer({ kind: 'edit', engineKind: 'edit', placeholder: 'Vad ska ändras?', noEngineText: 'Redigering fungerar inte just nu.',
-      onGo: async ({ prompt, engine, say }) => {
+      onGo: async ({ prompt, engine, say, setCancel }) => {
         if (!prompt) return say('Skriv en prompt.', true);
         if (!files.length && !refs.length) return say('Lägg till en referensbild.', true);
         if (engine.startsWith('puter:')) {
@@ -927,13 +1036,14 @@
         say('Skickar…');
         const r = await fetch(`${API}/edit`, { method: 'POST', body: fd });
         if (!r.ok) return say(await errMsg(r), true);
-        const j = await r.json();
+        const j = await r.json(); setCancel(async () => { await fetch(`${API}/jobs/${j.jobId}`, { method: 'DELETE' }).catch(() => null); });
         try {
           const out = await poll(j.jobId, (m) => say(m));
           st.results.edit.unshift(out); grid.prepend(resultCard(out, 'edit')); say(out.note || `Gjord av ${out.engineName}.`);
         } catch (e) { say(e.message, true); }
       } });
-    v.append(top, pagehead('Redigera', 'Ändra en bild med text. Lägg till en eller flera referensbilder.'), c.box, clipSources(), grid);
+    v.classList.add('two');
+    v.append(top, pagehead('Redigera', 'Lägg till en bild och skriv vad som ska ändras.'), c.box, clipSources(), grid);
   }
 
 
@@ -1525,16 +1635,35 @@
     if (K.job && K.status !== 'done' && K.status !== 'error' && !K.following) { K.following = true; follow(K.job); }
   }
 
-  const VIEWS = { klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView };
+  const VIEWS = { klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
+    skapa: skapaView, verktyg: verktygView, verk: verkView, installningar: settingsView, motor: settingsView };
+  const ALIAS = { create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
+  const SECTION = { '': '', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', verk: 'verk' };
   function route() {
-    const k = (location.hash.replace(/^#\/?/, '').split('?')[0]) || '';
+    let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
+    let [k, q] = raw.split('?'); k = k || '';
+    if (k in ALIAS) { location.replace(`#/${ALIAS[k]}${q ? '?' + q : ''}`); return; }
+    const sec = SECTION[k];
     document.querySelectorAll('nav a').forEach((a) => {
-      const on = a.getAttribute('href') === `#/${k === 'timeline' ? 'edit' : k === 'script' ? 'music' : k}`;
+      const on = a.dataset.sec === sec;
       a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
-    const v = $('#view'); v.innerHTML = ''; window.scrollTo(0, 0);
-    (VIEWS[k] || home)(v);
+    if (LAST_NAMES[k]) localStorage.setItem('kino.last', k);
+    const v = $('#view'); v.innerHTML = ''; v.className = ''; v.dataset.route = k; window.scrollTo(0, 0);
+    (VIEWS[k] || home)(v, q);
   }
   window.addEventListener('hashchange', route);
+  // custom Swedish upload box for every visible file input (the input stays in place, so .files / onchange keep working)
+  function dressFile(inp) {
+    if (inp.dataset.dressed || inp.hidden) return; inp.dataset.dressed = '1';
+    const multi = inp.multiple; const isVid = /video/.test(inp.accept); const isAud = /audio/.test(inp.accept) && !isVid;
+    const name = h('span', { class: 'upname' }, 'Ingen fil vald');
+    const btn = h('button', { type: 'button', class: 'upbox' }, h('span', { class: 'upicon', 'aria-hidden': 'true' }, '＋'), h('span', {}, h('b', {}, multi ? `Välj ${isVid ? 'filer' : isAud ? 'ljudfiler' : 'filer'}` : `Välj ${isVid ? 'video' : isAud ? 'ljudfil' : 'fil'}`), name));
+    btn.onclick = (e) => { e.preventDefault(); inp.click(); };
+    const upd = () => { const n = inp.files ? inp.files.length : 0; name.textContent = !n ? 'Ingen fil vald' : n === 1 ? inp.files[0].name : `${n} filer valda`; btn.classList.toggle('has', n > 0); };
+    inp.addEventListener('change', upd); inp.classList.add('vh'); inp.tabIndex = -1; inp.after(btn);
+  }
+  new MutationObserver(() => document.querySelectorAll('#view input[type=file]').forEach(dressFile)).observe($('#view'), { childList: true, subtree: true });
   paintLane(); route();
+  colabHealth().then((r) => paintPill(r.state === 'on'));
 })();
