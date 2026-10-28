@@ -56,7 +56,7 @@ nav a.on svg { stroke:var(--accent-fg); }
 
 main { max-width:980px; margin:0 auto; padding:18px 16px calc(var(--navh) + 40px + env(safe-area-inset-bottom)); }
 @media (min-width:761px) { main { padding:28px 28px 80px; } }
-#view > * { animation:rise .35s var(--ease) both; }
+#view > * { animation:rise .35s var(--ease) backwards; /* not "both": a filled transform would trap the fixed .ctabar */ }
 #view > *:nth-child(2) { animation-delay:.04s; } #view > *:nth-child(3) { animation-delay:.08s; } #view > *:nth-child(n+4) { animation-delay:.12s; }
 @keyframes rise { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
 @keyframes grow { from { transform:scaleX(.2); opacity:0; } to { transform:none; opacity:1; } }
@@ -507,3 +507,7 @@ input[type=url], input[type=password] { font:inherit; font-size:16px; color:var(
 .colab-tools .chips { padding:2px 0 6px; }
 .colab details summary { cursor:pointer; min-height:var(--tap); display:flex; align-items:center; }
 .colab-tools input[type=text] { width:100%; }
+/* keep status/error boxes clear of the fixed primary button + bottom nav */
+html { scroll-padding-bottom:calc(var(--navh) + 96px + env(safe-area-inset-bottom)); }
+.compbox { padding-bottom:4px; }
+@media (max-width:760px) { main { padding-bottom:calc(var(--navh) + 140px + env(safe-area-inset-bottom)); } }

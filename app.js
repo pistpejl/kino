@@ -41,8 +41,9 @@
   // ---- Seedream via Puter.js (client-side, SFW only, user's own Puter account) ----
   const PUTER_SRC = 'https://js.puter.com/v2/';
   const PUTER_MODELS = [
-    { id: 'puter:byteplus/seedream-4-5-251128', model: 'byteplus/seedream-4-5-251128', name: 'Seedream 4.5' },
-    { id: 'puter:byteplus/seedream-5-0-lite-260128', model: 'byteplus/seedream-5-0-lite-260128', name: 'Seedream 5 Lite' },
+    // ids per docs.puter.com/AI/txt2img (BytePlus): plain model id + provider hint; the old puter: ids stay as option values
+    { id: 'puter:byteplus/seedream-4-5-251128', model: 'seedream-4-5-251128', provider: 'byteplus', name: 'Seedream 4.5' },
+    { id: 'puter:byteplus/seedream-5-0-lite-260128', model: 'seedream-5-0-lite-260128', provider: 'byteplus', name: 'Seedream 5 Lite' },
   ];
   const puterEngines = (lane) => (lane === 'sfw' ? PUTER_MODELS.flatMap((m) => [
     { id: m.id, name: `${m.name} (via Puter)`, kind: 'image', puter: true, status: 'via Puter' },
@@ -83,12 +84,20 @@
     if (code === 402 || code === 429 || /credit|fund|balance|quota|limit|insufficient|busy|rate|overload|unavailable/.test(msg)) return 'Seedream är upptaget';
     return `Seedream misslyckades: ${msg.slice(0, 120)}`;
   }
+  // Never export a canvas here: Puter images are often cross-origin, so canvas.toBlob/toDataURL throws "Tainted canvases may not be exported".
+  // fetch() works for data:, blob: and CORS-enabled https; otherwise return null and the caller shows the <img> src directly.
+  // scroll so a status/error box sits above the fixed CTA bar + bottom nav
+  function keepClear(el) {
+    if (!el || !el.isConnected) return;
+    const r = el.getBoundingClientRect(); const bar = document.querySelector('.ctabar');
+    const fixed = bar && getComputedStyle(bar).position === 'fixed';
+    const limit = (fixed ? bar.getBoundingClientRect().top : innerHeight) - 12;
+    if (r.bottom > limit) window.scrollBy({ top: Math.min(r.bottom - limit, Math.max(0, r.top - 70)), behavior: 'smooth' });
+  }
   async function imgToBlob(img) {
-    if (!img.complete || !img.naturalWidth) await new Promise((r, j) => { img.onload = r; img.onerror = () => j(new Error('Seedream returnerade en oläsbar bild')); });
-    try { const r = await fetch(img.src); if (r.ok) return await r.blob(); } catch { /* canvas fallback */ }
-    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
-    c.getContext('2d').drawImage(img, 0, 0);
-    return new Promise((r, j) => c.toBlob((b) => (b ? r(b) : j(new Error('Kunde inte läsa Seedream-bilden'))), 'image/jpeg', 0.92));
+    const src = img && img.src; if (!src) return null;
+    try { const r = await fetch(src); if (r.ok) return await r.blob(); } catch { /* CORS: show src directly */ }
+    return null;
   }
   const blobB64 = (b) => new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(b); });
   const PUTER_RATIO = { '1:1': { w: 1, h: 1 }, '9:16': { w: 9, h: 16 }, '16:9': { w: 16, h: 9 }, '4:5': { w: 4, h: 5 } };
@@ -105,16 +114,22 @@
     if (p.auth && p.auth.isSignedIn && !p.auth.isSignedIn()) throw new Error('Seedream kräver inloggning hos Puter');
     const chk = await fetch(`${API}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: prompt }) }).catch(() => null);
     if (!chk || !chk.ok) throw new Error(chk && chk.status === 422 ? REFUSE : 'Säkerhetskontrollen är inte tillgänglig, så Seedream kördes inte.');
-    const opts = { model: m.model, ratio: PUTER_RATIO[ratio] || PUTER_RATIO['1:1'] };
-    if (ref) Object.assign(opts, { input_image: await blobB64(ref), input_image_mime_type: ref.type || 'image/jpeg' });
-    let img;
-    try { img = await p.ai.txt2img(prompt.slice(0, 1800), opts); } catch (e) { throw new Error(puterError(e)); }
-    if (!img || !img.src) throw new Error('Seedream är upptaget');
+    const base = { ratio: PUTER_RATIO[ratio] || PUTER_RATIO['1:1'] };
+    if (ref) Object.assign(base, { input_image: await blobB64(ref), input_image_mime_type: ref.type || 'image/jpeg' });
+    let img; let label = m.name; let note = '';
+    try { img = await p.ai.txt2img(prompt.slice(0, 1800), { ...base, model: m.model, provider: m.provider }); if (!img || !img.src) throw new Error('Seedream är upptaget'); } catch (e) {
+      // reserv: FLUX via Puter (Cloudflare), sagt rakt ut i statusraden
+      const why = e && e.message && /^Seedream/.test(e.message) ? e.message : puterError(e);
+      try { img = await p.ai.txt2img(prompt.slice(0, 1800), { ...base, model: PUTER_FLUX.model, provider: PUTER_FLUX.provider }); } catch (e2) { throw new Error(`${why}. Reserven FLUX svarade inte heller – försök igen eller välj en annan modell.`); }
+      if (!img || !img.src) throw new Error(`${why}. Reserven FLUX gav ingen bild.`);
+      label = PUTER_FLUX.name; note = `${why} – bilden gjordes i stället med ${PUTER_FLUX.name}.`;
+    }
     const blob = await imgToBlob(img);
-    const returned = (img.dataset && (img.dataset.model || img.dataset.modelName)) || img.model || null;
-    const label = returned ? String(returned) : m.name;
-    return { name: `seedream-${Date.now()}.jpg`, url: URL.createObjectURL(blob), blob, engine: m.id, engineName: `${label} (via Puter)` };
+    const returned = (img.dataset && (img.dataset.model || img.dataset.modelName)) || null;
+    if (returned && !note) label = String(returned);
+    return { name: `seedream-${Date.now()}.jpg`, url: blob ? URL.createObjectURL(blob) : img.src, blob, engine: m.id, engineName: `${label} (via Puter)`, note: note + (blob ? '' : ' Bilden visas direkt från Puter; använd Ladda ned för att spara den.') };
   }
+  const PUTER_FLUX = { model: '@cf/black-forest-labs/flux-1-schnell', provider: 'cloudflare', name: 'FLUX.1 schnell' };
 
   // ---- lane ----
   const laneBtn = $('#lane');
@@ -213,6 +228,7 @@
     function say(t, err) {
       status.textContent = t || ''; status.classList.toggle('err', Boolean(err));
       job.hidden = !t && !jobTimer; job.classList.toggle('err', Boolean(err));
+      if (t) requestAnimationFrame(() => keepClear(job));
       const m = /(\d{1,3})\s?%/.exec(t || ''); const bi = $('.jobbar i', job); if (m) { job.classList.add('pct'); bi.style.width = `${Math.min(100, +m[1])}%`; }
     }
     async function fire() {
@@ -406,7 +422,7 @@
             const item = await seedream({ engineId: engine, prompt, ratio: ratio.value });
             st.results.image.unshift(item); grid.prepend(resultCard(item, 'image'));
           }
-          return say(`Gjord av ${st.results.image[0].engineName}.${lora.value === 'photo' || lora.value === 'cinematic' ? ' LoRA finns inte för Seedream.' : ''}`);
+          return say(`Gjord av ${st.results.image[0].engineName}.${st.results.image[0].note ? ' ' + st.results.image[0].note.trim() : ''}${lora.value === 'photo' || lora.value === 'cinematic' ? ' LoRA finns inte för Seedream.' : ''}`);
         }
         say('Skapar…');
         const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine, prompt, ratio: ratio.value, resolution: res.value, count: count.value, lora: lora.value }) });
@@ -428,7 +444,7 @@
   function fileField(label, accept, carry) {
     const inp = h('input', { type: 'file', accept });
     const wrap = h('label', {}, label, inp);
-    const o = { el: wrap, inp, ref: carry && !carry.blob ? carry.name : null, blob: carry && carry.blob ? carry.blob : null };
+    const o = { el: wrap, inp, ref: carry && !carry.blob && !/^(https?:|blob:|data:)/.test(carry.url) ? carry.name : null, blob: carry && carry.blob ? carry.blob : null };
     if (carry) {
       const t = h('div', { class: 'thumb' }, h('img', { src: abs(carry.url) }), h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: (e) => { e.preventDefault(); o.ref = null; o.blob = null; t.remove(); } }, '×'));
       wrap.append(t);
@@ -1028,11 +1044,11 @@
           say('Seedream (Puter)… första gången ber den dig logga in hos Puter.');
           const item = await seedream({ engineId: engine, prompt, ratio: '1:1', ref });
           st.results.edit.unshift(item); grid.prepend(resultCard(item, 'edit'));
-          return say(`Gjord av ${item.engineName}.${files.length + refs.length > 1 ? ' Seedream via Puter tar en referens; den första användes.' : ''}`);
+          return say(`Gjord av ${item.engineName}.${item.note ? ' ' + item.note.trim() : ''}${files.length + refs.length > 1 ? ' Seedream via Puter tar en referens; den första användes.' : ''}`);
         }
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('engine', engine); fd.append('prompt', prompt);
-        files.forEach((f) => fd.append('images', f)); refs.forEach((r) => (r.blob ? fd.append('images', r.blob, 'seedream.jpg') : fd.append('refs', r.name)));
+        files.forEach((f) => fd.append('images', f)); refs.forEach((r) => (r.blob ? fd.append('images', r.blob, 'seedream.jpg') : /^(https?:|blob:|data:)/.test(r.url) ? null : fd.append('refs', r.name)));
         say('Skickar…');
         const r = await fetch(`${API}/edit`, { method: 'POST', body: fd });
         if (!r.ok) return say(await errMsg(r), true);
