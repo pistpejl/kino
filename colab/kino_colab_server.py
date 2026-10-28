@@ -73,7 +73,56 @@ def free_vram():
 def use(name, loader):
     if _cur["name"] != name:
         free_vram(); _cur["obj"] = loader(); _cur["name"] = name
-    return _cur["obj"]
+    return _Interruptible(_cur["obj"])
+
+# ---------------- Avbryt ----------------
+class Cancelled(Exception): pass
+_now = {"job": None}  # jobbet som kor just nu (en GPU-arbetare)
+def check_cancel(job=None):
+    j = job or _now["job"]
+    if j is not None and j.get("cancel"): raise Cancelled("Avbrutet")
+def run_proc(cmd, cwd=None, capture_output=True, text=True, **kw):
+    """subprocess.run som gar att avbryta: Popen-handtaget sparas pa jobbet och dodas vid /cancel."""
+    check_cancel(); j = _now["job"]
+    pr = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE if capture_output else None, stderr=subprocess.PIPE if capture_output else None,
+                          text=text, start_new_session=True, **kw)
+    if j is not None: j.setdefault("procs", []).append(pr)
+    try:
+        while True:
+            try: out, err = pr.communicate(timeout=0.5); break
+            except subprocess.TimeoutExpired:
+                if j is not None and j.get("cancel"): _kill(pr); pr.communicate(); raise Cancelled("Avbrutet")
+    finally:
+        if j is not None and pr in j.get("procs", []): j["procs"].remove(pr)
+    check_cancel()
+    return subprocess.CompletedProcess(cmd, pr.returncode, out, err)
+def _kill(pr):
+    import signal
+    try: os.killpg(pr.pid, signal.SIGKILL)  # hela processgruppen (LatentSync/Seed-VC startar barnprocesser)
+    except Exception:
+        try: pr.kill()
+        except Exception: pass
+class _Interruptible:
+    """Wrappar en laddad modell: diffusers-pipelines far callback_on_step_end som avbryter mellan steg."""
+    def __init__(self, obj): object.__setattr__(self, "_o", obj)
+    def __getattr__(self, k): return getattr(self._o, k)
+    def __setattr__(self, k, v): setattr(self._o, k, v)
+    def __iter__(self): return iter(self._o)
+    def __getitem__(self, i): return self._o[i]
+    def __call__(self, *a, **kw):
+        check_cancel(); o = self._o
+        try:
+            import inspect; ok = "callback_on_step_end" in inspect.signature(o.__call__).parameters
+        except Exception: ok = False
+        if ok and "callback_on_step_end" not in kw:
+            def cb(pipe, i, t, ckw):
+                if _now["job"] is not None and _now["job"].get("cancel"):
+                    try: pipe._interrupt = True
+                    except Exception: pass
+                    raise Cancelled("Avbrutet")
+                return ckw
+            kw["callback_on_step_end"] = cb
+        r = o(*a, **kw); check_cancel(); return r
 
 def load_wan():
     import torch
@@ -115,13 +164,13 @@ def nsfw_frames(paths_or_imgs, thr=0.6):
 
 # ---------------- Hjalp ----------------
 def ff(*args):
-    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *map(str, args)], capture_output=True, text=True)
+    r = run_proc(["ffmpeg", "-y", "-loglevel", "error", *map(str, args)], capture_output=True, text=True)
     if r.returncode: raise RuntimeError("ffmpeg: " + r.stderr[-400:])
 def probe_dur(p):
-    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", p], capture_output=True, text=True)
+    r = run_proc(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", p], capture_output=True, text=True)
     return float(r.stdout.strip() or 0)
 def has_audio(p):
-    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", p], capture_output=True, text=True)
+    r = run_proc(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", p], capture_output=True, text=True)
     return bool(r.stdout.strip())
 async def save_upload(u: UploadFile, d, name=None):
     ext = os.path.splitext(u.filename or "")[1][:8] or ".bin"
@@ -144,15 +193,35 @@ def go(jid, **extra):
     jobs[jid].update(extra); q.put(jobs[jid]); return {"jobId": jid, "status": "queued"}
 def worker():
     while True:
-        job = q.get(); job["status"] = "running"; job["started"] = time.time()
+        job = q.get()
+        if job.get("cancel"): job["status"] = "cancelled"; job["finished"] = job["started"] = time.time(); continue
+        job["status"] = "running"; job["started"] = time.time()
         try:
-            with _lock: job["fn"](job)
+            with _lock:
+                _now["job"] = job
+                try: job["fn"](job); check_cancel(job)
+                finally: _now["job"] = None
             job["status"] = "done"
         except Exception as e:
-            job["status"] = "error"; job["error"] = str(e)[:400]
+            if job.get("cancel") or isinstance(e, Cancelled): job["status"] = "cancelled"; job["error"] = "Avbrutet"
+            else: job["status"] = "error"; job["error"] = str(e)[:400]
         finally:
             job["finished"] = time.time()
-            if job["kind"] in ("lipsync", "voiceswap", "voicetrain"): free_vram()
+            if job["kind"] in ("lipsync", "voiceswap", "voicetrain") or job["status"] == "cancelled": free_vram()
+            if job["status"] == "cancelled": _empty_cache()
+def _empty_cache():
+    gc.collect()
+    if STUB: return
+    try:
+        import torch
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+    except Exception: pass
+def cancel_job(j):
+    if j["status"] in ("done", "error", "cancelled"): return False
+    j["cancel"] = True
+    if j["status"] == "queued": j["status"] = "cancelled"; j["error"] = "Avbrutet"; j["finished"] = time.time()
+    for pr in list(j.get("procs", [])): _kill(pr)
+    return True
 threading.Thread(target=worker, daemon=True).start()
 
 # ---------------- Uppgifter ----------------
@@ -352,7 +421,7 @@ def run_demucs(src, outdir):
     free_vram()
     import torch
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    r = subprocess.run([sys.executable, "-m", "demucs", "-n", "htdemucs", "--two-stems=vocals", "-d", dev, "-o", outdir, src], capture_output=True, text=True)
+    r = run_proc([sys.executable, "-m", "demucs", "-n", "htdemucs", "--two-stems=vocals", "-d", dev, "-o", outdir, src], capture_output=True, text=True)
     if r.returncode: raise RuntimeError("Demucs: " + r.stderr[-400:])
     base = os.path.join(outdir, "htdemucs", os.path.splitext(os.path.basename(src))[0])
     return os.path.join(base, "vocals.wav"), os.path.join(base, "no_vocals.wav")
@@ -390,6 +459,7 @@ def task_autocut(job):
     clips = job["clips"]; lens = [max(0.5, probe_dur(c)) for c in clips]; pos = [0.0] * len(clips)
     segs = []
     for i in range(len(cuts) - 1):
+        check_cancel()
         k = i % len(clips); seg_len = cuts[i + 1] - cuts[i]
         if pos[k] + seg_len > lens[k]: pos[k] = 0.0
         sp = os.path.join(d, f"s{i:04}.mp4")
@@ -408,7 +478,7 @@ def ls_run(video25, wav16k, out, steps=20, tmp="/tmp/ls"):
     if STUB: shutil.copy(video25, out); return
     free_vram()
     if not os.path.exists(LS_PY): raise RuntimeError("LatentSync är inte installerat: kör lipsync-cellen i notebooken.")
-    r = subprocess.run([LS_PY, "-m", "scripts.inference", "--unet_config_path", "configs/unet/stage2.yaml",
+    r = run_proc([LS_PY, "-m", "scripts.inference", "--unet_config_path", "configs/unet/stage2.yaml",
                         "--inference_ckpt_path", "checkpoints/latentsync_unet.pt", "--inference_steps", str(steps),
                         "--guidance_scale", "1.5", "--video_path", video25, "--audio_path", wav16k, "--video_out_path", out,
                         "--temp_dir", tmp], cwd=LS_DIR, capture_output=True, text=True)
@@ -454,7 +524,7 @@ def detect(img):
 def swap_frame(img, mapping_faces):
     """mapping_faces: lista av (malansikte-embedding, kallansikte). Byter varje hittat ansikte mot basta matchning."""
     import numpy as np
-    faces = detect(img)
+    check_cancel(); faces = detect(img)
     for f in faces:
         if not face_age_ok(f): raise RuntimeError("Nekad: ett ansikte i klippet bedöms vara under 21 år.")
     if STUB: return img
@@ -537,7 +607,7 @@ def _voicetrain(job):
         cfg = yaml.safe_load(open(os.path.join(SVC_DIR, SVC_CFG))); cfg["log_dir"] = os.path.join(d, "runs")
         cfgp = os.path.join(d, "ft_config.yml"); yaml.safe_dump(cfg, open(cfgp, "w"))
         free_vram()
-        r = subprocess.run([SVC_PY, "train.py", "--config", cfgp, "--dataset-dir", ds, "--run-name", "ft", "--batch-size", "2",
+        r = run_proc([SVC_PY, "train.py", "--config", cfgp, "--dataset-dir", ds, "--run-name", "ft", "--batch-size", "2",
                             "--max-steps", str(job.get("steps", 300)), "--max-epochs", "1000", "--save-every", "100000", "--num-workers", "0"],
                            cwd=SVC_DIR, capture_output=True, text=True)
         ck = os.path.join(d, "runs", "ft", "ft_model.pth")
@@ -585,7 +655,7 @@ def download_media(url, d, limit=300 * 1024 * 1024):
     return p
 
 def has_video(p):
-    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=codec_name", "-of", "csv=p=0", p], capture_output=True, text=True)
+    r = run_proc(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=codec_name", "-of", "csv=p=0", p], capture_output=True, text=True)
     return bool(r.stdout.strip()) and not r.stdout.strip().startswith(("mjpeg", "png"))  # omslagsbild i mp3 raknas inte
 
 def svc_convert(src, voice, out_dir, pitch=0, steps=30):
@@ -595,7 +665,7 @@ def svc_convert(src, voice, out_dir, pitch=0, steps=30):
     cmd = [SVC_PY, "inference.py", "--source", src, "--target", voice["ref"], "--output", out_dir, "--diffusion-steps", str(steps),
            "--f0-condition", "True", "--auto-f0-adjust", "False", "--semi-tone-shift", str(int(pitch)), "--fp16", "True", "--inference-cfg-rate", "0.7"]
     if voice.get("ckpt"): cmd += ["--checkpoint", voice["ckpt"], "--config", voice["config"]]
-    r = subprocess.run(cmd, cwd=SVC_DIR, capture_output=True, text=True)
+    r = run_proc(cmd, cwd=SVC_DIR, capture_output=True, text=True)
     outs = sorted((os.path.join(out_dir, f) for f in os.listdir(out_dir) if f.endswith(".wav")), key=os.path.getmtime)
     if r.returncode or not outs: raise RuntimeError("Seed-VC: " + (r.stderr or r.stdout)[-400:])
     return outs[-1]
@@ -648,7 +718,7 @@ def health(authorization: Optional[str] = Header(None)):
         try:
             import torch; gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "ingen"
         except Exception: gpu = "okänd"
-    feats = ["video", "img2video", "image", "edit", "upscale", "stems", "lyrics", "autocut", "musicvideo"]
+    feats = ["cancel", "video", "img2video", "image", "edit", "upscale", "stems", "lyrics", "autocut", "musicvideo"]
     if STUB or os.path.exists(LS_PY): feats.append("lipsync")
     if STUB or os.path.exists(INSWAPPER): feats.append("faceswap")
     if STUB or os.path.exists(SVC_PY): feats.append("voiceswap")
@@ -821,6 +891,7 @@ SVD_SECONDS = 14 / 7  # 14 bildrutor i 7 fps
 ETA = {"shot": 150, "karaoke": 120, "lipsync": 240, "edit": 30}  # sekunder pa en T4, grovt
 
 def progress(job, step, done=0, total=0):
+    check_cancel(job)
     job["progress"] = {"step": step, "done": done, "total": total}
 
 def find_chorus(path, length):
@@ -868,6 +939,7 @@ def check_images(paths, nsfw_check=True, min_age=MIN_AGE):
     import cv2
     with_faces = False
     for pth in paths:
+        check_cancel()
         img = cv2.imread(pth)
         if img is None: raise RuntimeError("En bild gick inte att läsa.")
         try: fs = detect(img)
@@ -892,6 +964,7 @@ def task_musicvideo(job):
     import hashlib
     os.makedirs(os.path.join(CACHE, "shots"), exist_ok=True); shots, cached = [], 0
     for i in range(n):
+        check_cancel()
         progress(job, f"Klipp {i + 1}/{n}", i, n)
         k = i % len(imgs); motion = MOTIONS[(i // len(imgs) + k) % len(MOTIONS)]; crop = CROPS[(i // len(imgs)) % len(CROPS)]
         key = hashlib.sha1(open(imgs[k], "rb").read() + f"{aspect}{motion}{crop}{STUB}".encode()).hexdigest()[:16]
@@ -917,6 +990,7 @@ def task_musicvideo(job):
     # 3) Lipsync pa valda klipp (bara med samtycke, bara om LatentSync finns)
     segfiles = []
     for i in range(n):
+        check_cancel()
         seg_len = cuts[i + 1] - cuts[i]; sp = os.path.join(d, f"seg{i:03}.mp4")
         speed = max(0.25, SVD_SECONDS / seg_len)  # dra ut/korta SVD-klippet till exakt klipplangd
         ff("-i", shots[i], "-vf", f"setpts=PTS/{speed:.4f},{fit_filter(w, h)},tpad=stop_mode=clone:stop_duration=1", "-t", f"{seg_len:.3f}", "-an",
@@ -1010,6 +1084,26 @@ async def voiceswap(voice_id: str = Form(...), media: Optional[UploadFile] = Fil
     jid, d = submit("voiceswap", task_voiceswap, voice=voice_id, url=src_url, separate=bool(separate), pitch=max(-12, min(int(pitch), 12)),
                     steps=max(10, min(int(steps), 60)), mux=bool(mux))
     return go(jid, media=await save_upload(media, d, "input") if media else None)
+
+@app.post("/cancel/{jid}")
+def cancel_ep(jid: str, authorization: Optional[str] = Header(None)):
+    auth(authorization); j = jobs.get(jid)
+    if not j: raise HTTPException(404, "Okänt jobb")
+    hit = cancel_job(j)
+    return {"id": jid, "cancelled": hit, "status": ("cancelling" if j["status"] == "running" else "cancelled") if hit else j["status"],
+            "note": "Avbryts efter pågående steg." if hit and j["status"] == "running" else None}
+
+@app.post("/cancel_all")
+def cancel_all_ep(authorization: Optional[str] = Header(None)):
+    auth(authorization); ids = [j["id"] for j in list(jobs.values()) if cancel_job(j)]
+    return {"cancelled": ids, "count": len(ids)}
+
+@app.get("/jobs")
+def jobs_ep(authorization: Optional[str] = Header(None)):
+    auth(authorization)
+    act = [j for j in jobs.values() if j["status"] in ("queued", "running")]
+    return {"jobs": [{"id": j["id"], "kind": j["kind"], "status": j["status"], "cancelling": bool(j.get("cancel")), "progress": j.get("progress"),
+                      "elapsed": round(time.time() - j.get("started", j["created"]))} for j in sorted(act, key=lambda j: j["created"])]}
 
 @app.get("/status/{jid}")
 def status(jid: str, authorization: Optional[str] = Header(None)):
