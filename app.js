@@ -696,6 +696,52 @@
     return d;
   }
 
+  // ---- Färdiga prompter (musikvideo-presets) ----
+  const NEG = 'blurry, low quality, distorted faces, extra fingers, warped hands, watermark, logo, text artifacts, flicker, jitter, deformed body, oversaturated';
+  const VS = ', vertical 9:16 framing, subject centered with headroom for captions, smooth motion, high detail, no text';
+  const PRESETS = [
+    { g: 'Färdiga prompter', items: [
+      ['Neonnatt i stan', 'Bilfärd genom regnvåt neonstad', 'cinematic night drive through a rain-slick neon city, camera mounted on car hood looking at the singer behind the wheel, magenta and cyan reflections sliding across the windshield, bokeh traffic lights, slow push-in, moody synth atmosphere', 'neon'],
+      ['Arenashow', 'Stor scen, publik och ljusshow', 'epic live arena concert, performer on a huge stage with sweeping moving-head lights and haze, crowd of raised hands in silhouette in the foreground, low-angle crane shot rising over the audience, confetti burst on the drop, euphoric energy', 'live'],
+      ['Gatuframträdande one-take', 'Rå, obruten tagning på gatan', 'gritty one-take handheld street performance, singer walking toward camera through a busy urban alley at dusk, continuous tracking shot, passersby reacting, sodium streetlights, raw documentary texture, slight film grain', 'standard'],
+      ['VHS 90-talshemvideo', 'Nostalgisk camcorder-känsla', '1990s home video shot on a VHS camcorder, friends dancing in a living room, tracking lines, chroma bleed, washed colors, date stamp feel, shaky zooms, warm nostalgic mood', 'vhs'],
+      ['Slowmotion-dans', 'Filmisk dans i ultrarapid', 'cinematic slow-motion contemporary dance, dancer in flowing fabric in an empty warehouse, single hard backlight through dust, 120fps feel, fabric and hair floating, slow orbiting camera, emotional and graceful', 'cinematic'],
+      ['Ökenroadtrip i gyllene timmen', 'Vägresa, solnedgång och frihet', 'desert road trip at golden hour, vintage convertible on an endless highway, singer standing up in the passenger seat with arms out, lens flares, warm orange light, drone follow then cut to close-up, carefree summer mood', 'cinematic'],
+      ['Regnigt tak', 'Melankoli på ett tak i regnet', 'rainy rooftop at night, singer alone under city skyline, heavy rain backlit by a single spotlight, droplets in slow motion, slow dolly around the subject, blue and amber palette, melancholic and intimate', 'cinematic'],
+      ['Klubb med strobe', 'Svettig klubbfest med blixtljus', 'packed nightclub party, strobe lights freezing dancers mid-motion, laser beams cutting through haze, handheld camera moving through the crowd, quick beat-synced cuts, red and white light, high energy', 'neon'],
+      ['Drömsk skogsfantasi', 'Sagolik skog med ljusstrålar', 'dreamy fantasy forest, soft god rays through mist, floating glowing particles, performer in a flowing gown walking between ancient trees, slow gliding camera, pastel ethereal colors, magical calm', 'dreamy'],
+      ['Animemontage', 'Tecknad anime-stil, snabba klipp', 'anime-style music video montage, cel-shaded characters on a train platform at sunset, wind in hair, speed lines, dramatic close-ups of eyes, cherry blossoms, vibrant colors, energetic cuts on the beat', 'anime'],
+      ['Svartvit noir', 'Kontrastrik film noir', 'black and white film noir, singer under a single streetlamp in fog, venetian blind shadows, deep contrast, cigarette-free smoky haze, slow push-in, mysterious and elegant', 'bw'],
+      ['Festival filmad med mobil', 'Äkta publikklipp från festivalen', 'festival crowd clip filmed on a phone, shaky handheld from inside the audience, stage lights flaring, people singing along, slight digital noise, authentic amateur feel, summer evening sky', 'live'],
+      ['Studioframträdande med band', 'Bandet spelar live i studio', 'live studio session with a full band, warm tungsten lighting, wood panels, microphones and amps in frame, slow slider shots between drummer, guitarist and singer, intimate and polished', 'standard'],
+      ['Retro 80-tal synthwave', 'Neonsol, rutnät och palmer', 'retro 1980s synthwave aesthetic, neon grid horizon, giant striped sunset, palm silhouettes, chrome sports car, VHS glow, pink and purple palette, slow forward camera movement', 'vhs'],
+      ['Episk drönarvy', 'Svepande landskap från ovan', 'epic drone shot over dramatic mountain landscape, performer standing on a cliff edge, camera pulling back and rising to reveal vast valley and clouds, golden light, grand cinematic scale', 'cinematic'],
+      ['Lyrikvideo (viral)', 'Text på skärmen över vardagsklipp', 'lyric video style, simple everyday b-roll of a person walking at sunset, clean empty space in the center for large on-screen lyrics, soft natural light, calm steady handheld, minimal and readable', 'standard'],
+      ['TikTok-hook första 3 sek', 'Stark öppning direkt på refrängen', 'scroll-stopping opening: extreme close-up of the singer snapping into frame on the first beat, instant whip-pan into a wide shot, bold color, punchy fast cuts in the first three seconds, high energy', 'standard'],
+      ['Monokrom mode-look', 'Minimalistisk, en färg', 'minimal one-color fashion look, model in an all-red outfit against a seamless red studio backdrop, sharp editorial lighting, slow controlled poses, graphic composition, high-fashion mood', 'cover'],
+      ['Skivomslag i rörelse', 'Levande albumomslag', 'animated album cover, centered portrait in a striking pose, subtle looping motion of hair and light, rich textured background, dramatic studio lighting, iconic composition', 'cover'],
+    ] },
+    { g: 'Viralt på TikTok', items: [
+      ['Publiken sjunger med', 'Hela publiken tar refrängen', 'concert crowd singing the chorus loudly together, camera on stage looking out over thousands of phone lights, performer stepping back to listen, goosebumps moment, warm stage wash', 'live'],
+      ['Mikrofonen till publiken', 'Artisten räcker ut micken', 'performer holding the microphone out toward the front row, a fan in the crowd sings the line, camera close on the mic between them then cutting to the cheering crowd, spotlight, joyful', 'live'],
+      ['Fan upp på scen', 'Vuxen fan bjuds upp och sjunger', 'adult fan invited up on stage, nervous then confident, singing next to the performer, crowd erupting, handheld phone angle from the audience, emotional surprise', 'stagekid'],
+      ['Första lyssningen – reaktion', 'Ärlig reaktion på låten', 'first-listen reaction video, young adult wearing headphones in a cozy bedroom, face lighting up as the beat drops, natural window light, static phone camera, genuine expressions', 'standard'],
+      ['Bilsingalong', 'Kompisar sjunger högt i bilen', 'car singalong, group of adult friends in a car belting the chorus, dashboard camera angle, sunlight flickering through windows, laughing and air-drumming, summer road', 'standard'],
+      ['Dansutmaning', 'Lätt koreografi att härma', 'dance challenge, dancer performing a simple catchy repeatable routine facing the camera, full body in frame, clean bright background, locked-off phone shot, crisp moves on the beat', 'standard'],
+      ['POV-text och läppsynk', 'Känslosam POV med lip-sync', 'emotional POV lip-sync, close-up of a young adult mouthing the lyrics to camera, soft moody bedroom lighting, slow zoom in, space at top for POV caption text, relatable feeling', 'standard'],
+      ['Före/efter-avslöjande', 'Glow-up-transition på droppet', 'before and after reveal transition, person in casual clothes covers the lens with hand, on the beat drop cut to the same person in a stunning stage outfit with dramatic lighting, seamless match cut', 'standard'],
+      ['Duett i lip-sync', 'Två som avslutar varandras rader', 'lip-sync duet, two adult friends side by side finishing each other\'s lyrics, playful glances, split-screen feel, bright natural light, quick reaction cuts', 'standard'],
+      ['Lugnt till galet', 'Calm-to-crazy-transition', 'calm to crazy transition, person sitting still in a quiet room, on the drop the room explodes into colored lights, wind and dancing, hard cut on the beat, energetic chaos', 'neon'],
+      ['Hushållsföremål som mikrofon', 'Sjunger i en hårborste', 'person dancing around the kitchen singing into a hairbrush as a microphone, playful overacting, morning sunlight, handheld phone camera, fun and relatable', 'standard'],
+      ['Sommarmontage', 'Snabba klipp från en sommar', 'summer montage, quick cuts of adult friends at a lake, sparklers at dusk, road trip snacks, film-photo warmth, light leaks, nostalgic and joyful, cuts on every beat', 'dreamy'],
+    ] },
+  ];
+  function presetsBox(onPick) {
+    const body = h('div', { class: 'clips-body' }, PRESETS.map((grp) => h('section', { class: 'cgroup' }, h('h3', {}, grp.g, h('small', {}, `${grp.items.length} st`)),
+      h('div', { class: 'chips' }, grp.items.map(([t, d, p, tpl]) => h('button', { class: 'chip', type: 'button', title: d, onclick: () => onPick({ title: t, prompt: p + VS, negative: NEG, template: tpl }) }, h('span', { class: 'cn' }, t), h('span', { class: 'ch' }, d)))))));
+    return h('details', { class: 'clips presets' }, h('summary', {}, h('span', { class: 'ttl' }, 'Färdiga prompter'), h('span', { class: 'count' }, 'tryck för att fylla i')), body);
+  }
+
   async function videoView(v) {
     const carry = st.carry; st.carry = null;
     const first = fileField('Första bildruta', 'image/*', carry);
@@ -736,7 +782,8 @@
       colabOpt.disabled = !on; colabOpt.textContent = on ? 'Colab / Kaggle (egen GPU) · din GPU · max 5 s' : 'Colab / Kaggle (egen GPU) · offline';
       if (on) { sel.disabled = false; if (localStorage.getItem('kino.colab.url')) sel.value = 'colab'; } else if (sel.value === 'colab') sel.selectedIndex = [...sel.options].findIndex((o) => !o.disabled);
     });
-    v.append(pagehead('Video', 'Beskriv ett klipp, eller börja från en bild. Video kan ta några minuter.'), panel, c.box, clipSources(), grid);
+    const pre = presetsBox(({ prompt, negative, title }) => { const ta = c.box.querySelector('textarea'); if (ta) { ta.value = prompt; ta.dispatchEvent(new Event('input')); ta.focus(); } ratio.value = '9:16'; c.box.querySelector('.status') && (c.box.querySelector('.status').textContent = `${title} ifylld · format 9:16 · negativ prompt (om motorn stöder det): ${negative}`); });
+    v.append(pagehead('Video', 'Beskriv ett klipp, eller börja från en bild. Video kan ta några minuter.'), panel, pre, c.box, clipSources(), grid);
   }
 
   async function musicView(v) {
@@ -1289,6 +1336,7 @@
     const tlBtn = h('button', { class: 'text', hidden: true, onclick: () => toTimeline(true).catch((e) => say(e.message, true)) }, 'Öppna i Redigera');
     const writeBtn = h('button', { class: 'go', title: 'Skriv manus', 'aria-label': 'Skriv manus', onclick: () => withBusy(status, writeScript).catch((e) => say(e.message, true)) }, '↑');
     v.append(musicTabs('script'), pagehead('Manus', 'Skriv en idé eller analysera en video, justera scenkorten och skapa scenerna.'), songIn, vidIn,
+      presetsBox(({ prompt, title, template }) => { idea.value = prompt; S.idea = prompt; if ([...tplSel.options].some((o) => o.value === template)) { tplSel.value = template; S.template = template; } say(`${title} ifylld · mall: ${tplSel.options[tplSel.selectedIndex] ? tplSel.options[tplSel.selectedIndex].text : ''}`); idea.focus(); }),
       h('div', { class: 'composer' }, h('div', { class: 'row' }, idea, writeBtn), h('div', { class: 'under' }, h('span', {}, 'Skriv manus'), h('button', { class: 'text', type: 'button', onclick: () => vidIn.click() }, 'Analysera video'), h('label', { class: 'meta' }, keepAudio, ' behåll ljudet som låt'), h('button', { class: 'text dim', type: 'button', onclick: () => { panel.hidden = !panel.hidden; } }, 'Inställningar')), panel),
       h('div', { class: 'uploads' }, songBox), peopleBox, status,
       h('div', { class: 'under sc-total' }, total, prog), cards,
