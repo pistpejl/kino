@@ -20,6 +20,7 @@ LS_DIR, LS_PY = f"{BASE}/LatentSync", f"{BASE}/ls_env/bin/python"
 INSWAPPER = os.environ.get("KINO_INSWAPPER", f"{BASE}/models/inswapper_128.onnx")
 WORK = tempfile.mkdtemp(prefix="kino_")
 FPS, MAX_SECONDS, MIN_AGE = 16, 5, 21
+SVC_NOTE = "Röstbyte använder Seed-VC (GPL-3.0). Bara röster ur din samtyckta röstlista."
 LICENSE_NOTE = "Ansiktsbyte använder InsightFace/inswapper: endast icke-kommersiellt bruk."
 
 # ---------------- Innehallsregler ----------------
@@ -151,7 +152,7 @@ def worker():
             job["status"] = "error"; job["error"] = str(e)[:400]
         finally:
             job["finished"] = time.time()
-            if job["kind"] in ("lipsync",): free_vram()
+            if job["kind"] in ("lipsync", "voiceswap", "voicetrain"): free_vram()
 threading.Thread(target=worker, daemon=True).start()
 
 # ---------------- Uppgifter ----------------
@@ -496,6 +497,142 @@ def task_swap(job):
     job["files"]["swap.mp4"] = res
 
 # ---------------- API ----------------
+# ---------------- Rostbyte (Seed-VC, zero-shot + valfri finjustering) med samtyckt rostlista ----------------
+# Seed-VC (Plachtaa/seed-vc, GPL-3.0) kors i en egen Python 3.10-miljo (egna torch/transformers-pins), som LatentSync.
+SVC_DIR, SVC_PY = f"{BASE}/seed-vc", f"{BASE}/svc_env/bin/python"
+SVC_CFG = "configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml"  # sangmodellen (44,1 kHz, f0)
+VOICE_MIN, VOICE_MAX, REF_SECONDS = 60, 600, 25
+voices = {}  # id -> {id, name, consent, added, dir, ref, ckpt, config, status}
+BLOCKED_HOSTS = ("spotify.", "music.apple.", "tidal.", "deezer.", "youtube.", "youtu.be", "soundcloud.")
+SUNO_RE = re.compile(r"^https?://(?:www\.|app\.)?suno\.(?:com|ai)/(?:song|s|embed)/([A-Za-z0-9-]+)")
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+def to_wav(src, dst, sr=44100, ch=1):
+    ff("-i", src, "-vn", "-ac", ch, "-ar", sr, dst); return dst
+
+def task_voicetrain(job):
+    try: _voicetrain(job)
+    except Exception:
+        if job["voice"] in voices: voices[job["voice"]]["status"] = "error"
+        raise
+def _voicetrain(job):
+    v = voices[job["voice"]]; d = v["dir"]
+    progress(job, "Förbereder träningsljud", 0, 3)
+    parts = [to_wav(p, os.path.join(d, f"part{i:02}.wav")) for i, p in enumerate(job["audio"])]
+    lst = os.path.join(d, "parts.txt")
+    with open(lst, "w") as f: f.writelines(f"file '{p}'\n" for p in parts)
+    allw = os.path.join(d, "all.wav"); ff("-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", allw)
+    # ta bort tystnad sa referensen bara innehaller rost
+    clean = os.path.join(d, "clean.wav")
+    ff("-i", allw, "-af", "silenceremove=stop_periods=-1:stop_duration=0.4:stop_threshold=-40dB,loudnorm=I=-18:TP=-2", "-ar", 44100, clean)
+    dur = probe_dur(clean)
+    if dur < VOICE_MIN * 0.8: raise RuntimeError(f"För lite röst efter att tystnad tagits bort ({dur:.0f} s). Spela in minst 1 minut tal/sång.")
+    ref = os.path.join(d, "ref.wav"); ff("-i", clean, "-t", REF_SECONDS, ref)
+    v.update(ref=ref, seconds=round(dur))
+    if job.get("finetune") and not STUB:
+        progress(job, "Finjusterar Seed-VC på rösten (ca 10–20 min)", 1, 3)
+        ds = os.path.join(d, "dataset"); os.makedirs(ds, exist_ok=True)
+        ff("-i", clean, "-f", "segment", "-segment_time", 10, "-c", "copy", os.path.join(ds, "seg%03d.wav"))
+        import yaml
+        cfg = yaml.safe_load(open(os.path.join(SVC_DIR, SVC_CFG))); cfg["log_dir"] = os.path.join(d, "runs")
+        cfgp = os.path.join(d, "ft_config.yml"); yaml.safe_dump(cfg, open(cfgp, "w"))
+        free_vram()
+        r = subprocess.run([SVC_PY, "train.py", "--config", cfgp, "--dataset-dir", ds, "--run-name", "ft", "--batch-size", "2",
+                            "--max-steps", str(job.get("steps", 300)), "--max-epochs", "1000", "--save-every", "100000", "--num-workers", "0"],
+                           cwd=SVC_DIR, capture_output=True, text=True)
+        ck = os.path.join(d, "runs", "ft", "ft_model.pth")
+        if r.returncode or not os.path.exists(ck): raise RuntimeError("Seed-VC-träning: " + (r.stderr or r.stdout)[-400:])
+        v.update(ckpt=ck, config=os.path.join(d, "runs", "ft", os.path.basename(cfgp)))
+    v["status"] = "ready"; progress(job, "Klar", 3, 3)
+    job["data"] = {"voiceId": v["id"], "seconds": v["seconds"], "finetuned": bool(v.get("ckpt"))}
+    print(f"[voices] {time.strftime('%Y-%m-%d %H:%M:%S')} röst klar: {v['name']} ({v['seconds']} s, samtycke intygat)")
+
+def resolve_url(url):
+    """Direkt ljud/video-fil eller en Suno-delningslank -> nedladdningsbar URL. Inga streamingtjanster."""
+    u = (url or "").strip()
+    if not re.match(r"^https?://", u, re.I): raise HTTPException(400, "Länken måste börja med http(s)://")
+    host = re.sub(r"^https?://([^/]+).*", r"\1", u).lower()
+    if any(b in host for b in BLOCKED_HOSTS): raise HTTPException(400, "Nekad: strömningstjänster (Spotify m.fl.) stöds inte. Använd en egen fil eller en Suno-låt du äger.")
+    m = SUNO_RE.match(u)
+    if m:
+        sid = m.group(1)
+        if not UUID_RE.fullmatch(sid):  # kort delningslank: folj omdirigeringen till /song/<uuid>
+            import urllib.request
+            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as r: final = r.geturl(); body = r.read(400000).decode("utf-8", "ignore")
+            mm = UUID_RE.search(final) or UUID_RE.search(body)
+            if not mm: raise HTTPException(400, "Kunde inte hitta låten bakom Suno-länken. Är den publik?")
+            sid = mm.group(0)
+        return f"https://cdn1.suno.ai/{sid}.mp3"
+    return u
+
+def download_media(url, d, limit=300 * 1024 * 1024):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 KINO"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        ct = (r.headers.get("Content-Type") or "").lower()
+        if not (ct.startswith(("audio/", "video/", "application/octet-stream")) or re.search(r"\.(mp3|wav|m4a|aac|flac|ogg|mp4|mov|webm|mkv)(\?|$)", url, re.I)):
+            raise RuntimeError(f"Länken är ingen ljud/video-fil ({ct or 'okänd typ'}).")
+        ext = os.path.splitext(url.split("?")[0])[1][:6] or (".mp4" if ct.startswith("video/") else ".mp3")
+        p = os.path.join(d, "input" + ext); n = 0
+        with open(p, "wb") as f:
+            while True:
+                b = r.read(1 << 20)
+                if not b: break
+                n += len(b)
+                if n > limit: raise RuntimeError("Filen är större än 300 MB.")
+                f.write(b)
+    return p
+
+def has_video(p):
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=codec_name", "-of", "csv=p=0", p], capture_output=True, text=True)
+    return bool(r.stdout.strip()) and not r.stdout.strip().startswith(("mjpeg", "png"))  # omslagsbild i mp3 raknas inte
+
+def svc_convert(src, voice, out_dir, pitch=0, steps=30):
+    if STUB:
+        dst = os.path.join(out_dir, "converted.wav"); shutil.copy(src, dst); return dst
+    free_vram()
+    cmd = [SVC_PY, "inference.py", "--source", src, "--target", voice["ref"], "--output", out_dir, "--diffusion-steps", str(steps),
+           "--f0-condition", "True", "--auto-f0-adjust", "False", "--semi-tone-shift", str(int(pitch)), "--fp16", "True", "--inference-cfg-rate", "0.7"]
+    if voice.get("ckpt"): cmd += ["--checkpoint", voice["ckpt"], "--config", voice["config"]]
+    r = subprocess.run(cmd, cwd=SVC_DIR, capture_output=True, text=True)
+    outs = sorted((os.path.join(out_dir, f) for f in os.listdir(out_dir) if f.endswith(".wav")), key=os.path.getmtime)
+    if r.returncode or not outs: raise RuntimeError("Seed-VC: " + (r.stderr or r.stdout)[-400:])
+    return outs[-1]
+
+def task_voiceswap(job):
+    d = job["dir"]; v = voices.get(job["voice"])
+    if not v or v.get("status") != "ready" or not v.get("consent"): raise RuntimeError("Rösten finns inte (eller är inte klar) i den samtyckta röstlistan.")
+    src = job.get("media")
+    if job.get("url"):
+        progress(job, "Hämtar länken", 0, 5); src = download_media(job["url"], d)
+    is_video = has_video(src)
+    if probe_dur(src) > 600: raise RuntimeError("Max 10 minuter per körning.")
+    progress(job, "Extraherar ljud", 1, 5)
+    song = to_wav(src, os.path.join(d, "song.wav"), 44100, 2)
+    if job.get("separate", True):
+        progress(job, "Delar sång / instrumental (Demucs)", 2, 5)
+        voc, inst = run_demucs(song, d)
+    else: voc, inst = song, None
+    progress(job, f"Byter röst till {v['name']} (Seed-VC)", 3, 5)
+    vdir = os.path.join(d, "vc"); os.makedirs(vdir, exist_ok=True)
+    conv = svc_convert(to_wav(voc, os.path.join(d, "vocals44.wav")), v, vdir, job.get("pitch", 0), job.get("steps", 30))
+    progress(job, "Mixar ihop", 4, 5)
+    wav = os.path.join(d, "ny_rost.wav")
+    if inst:
+        ff("-i", conv, "-i", inst, "-filter_complex", f"[0:a]volume={job.get('vocal_gain', 1.0)}[v];[1:a][v]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[m]", "-map", "[m]", "-ar", 44100, "-ac", 2, wav)
+    else: ff("-i", conv, "-ar", 44100, "-ac", 2, wav)
+    mp3 = os.path.join(d, "ny_rost.mp3"); ff("-i", wav, "-b:a", "256k", mp3)
+    job["files"]["ny_rost.mp3"] = mp3; job["files"]["ny_rost.wav"] = wav
+    vo = os.path.join(d, "sang_ny_rost.wav"); shutil.copy(conv, vo); job["files"]["sang_ny_rost.wav"] = vo
+    if is_video and job.get("mux", True):
+        mp4 = os.path.join(d, "video_ny_rost.mp4")
+        ff("-i", src, "-i", wav, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", mp4)
+        job["files"]["video_ny_rost.mp4"] = mp4
+    progress(job, "Klar", 5, 5)
+    job["data"] = {"voice": v["name"], "video": is_video}
+    print(f"[voices] {time.strftime('%Y-%m-%d %H:%M:%S')} röstbyte till {v['name']} (samtyckt röst)")
+
 app = FastAPI(title="KINO Colab-motor")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 def auth(a: Optional[str]):
@@ -514,8 +651,9 @@ def health(authorization: Optional[str] = Header(None)):
     feats = ["video", "img2video", "image", "edit", "upscale", "stems", "lyrics", "autocut", "musicvideo"]
     if STUB or os.path.exists(LS_PY): feats.append("lipsync")
     if STUB or os.path.exists(INSWAPPER): feats.append("faceswap")
+    if STUB or os.path.exists(SVC_PY): feats.append("voiceswap")
     return {"ok": True, "auth": ok, "platform": PLATFORM, "gpu": gpu, "queue": q.qsize(), "loaded": _cur["name"], "maxSeconds": MAX_SECONDS,
-            "sfwOnly": False, "nsfwEndpoints": ["/image", "/edit"], "features": feats, "imageModels": [k for k in IMAGE_MODELS if model_available(k)], "editModels": list(EDIT_MODELS), "licenseNote": LICENSE_NOTE}
+            "sfwOnly": False, "nsfwEndpoints": ["/image", "/edit"], "features": feats, "imageModels": [k for k in IMAGE_MODELS if model_available(k)], "editModels": list(EDIT_MODELS), "licenseNote": LICENSE_NOTE, "voiceNote": SVC_NOTE}
 
 @app.post("/generate")
 async def generate(prompt: str = Form(...), seconds: int = Form(4), aspect: str = Form("9:16"), steps: int = Form(30),
@@ -825,6 +963,54 @@ async def musicvideo(images: List[UploadFile] = File(...), audio: UploadFile = F
     res = go(jid, images=[await save_upload(f, d, f"img{i:02}") for i, f in enumerate(images)], audio=await save_upload(audio, d, "song"))
     return {**res, "etaSeconds": eta, "shots": shots}
 
+@app.post("/voices")
+async def voices_add(name: str = Form(...), consent: str = Form(""), audio: List[UploadFile] = File(...), finetune: bool = Form(False),
+                     steps: int = Form(300), authorization: Optional[str] = Header(None)):
+    """Lagg till en samtyckt rost: 1-10 min traningsljud. Zero-shot-referens direkt, valfri Seed-VC-finjustering."""
+    auth(authorization)
+    if consent != "true": raise HTTPException(400, "Kryssa i 'Personen har gett samtycke till att rösten används'.")
+    nm = name.strip()[:60]
+    if not nm: raise HTTPException(400, "Skriv ett namn.")
+    check_text(nm)
+    if not audio or len(audio) > 20: raise HTTPException(400, "Ladda upp 1–20 ljudfiler.")
+    if not STUB and not os.path.exists(SVC_PY): raise HTTPException(400, "Röstbyte är inte installerat: kör cellen 'Röstbyte (Seed-VC)' i notebooken.")
+    vid = uuid.uuid4().hex[:8]; vd = os.path.join(WORK, "voice_" + vid); os.makedirs(vd)
+    files = [await save_upload(a, vd, f"train{i:02}") for i, a in enumerate(audio)]
+    total = sum(probe_dur(p) for p in files)
+    if total < VOICE_MIN: shutil.rmtree(vd, True); raise HTTPException(400, f"För kort: {total:.0f} s. Minst 1 minut träningsljud.")
+    if total > VOICE_MAX + 30: shutil.rmtree(vd, True); raise HTTPException(400, f"För långt: {total/60:.1f} min. Max 10 minuter.")
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    voices[vid] = {"id": vid, "name": nm, "consent": True, "added": now, "dir": vd, "status": "training"}
+    jid, _ = submit("voicetrain", task_voicetrain, voice=vid, finetune=bool(finetune), steps=max(100, min(int(steps), 1000)))
+    print(f"[voices] {now} röst tillagd: {nm} ({total:.0f} s, samtycke intygat)")
+    return {**go(jid, audio=files), "id": vid, "name": nm, "added": now, "seconds": round(total), "licenseNote": SVC_NOTE}
+
+@app.get("/voices")
+def voices_list(authorization: Optional[str] = Header(None)):
+    auth(authorization)
+    return [{"id": v["id"], "name": v["name"], "added": v["added"], "status": v["status"], "seconds": v.get("seconds"), "finetuned": bool(v.get("ckpt"))} for v in voices.values()]
+
+@app.delete("/voices/{vid}")
+def voices_del(vid: str, authorization: Optional[str] = Header(None)):
+    auth(authorization); v = voices.pop(vid, None)
+    if v: shutil.rmtree(v["dir"], True)
+    return {"ok": True}
+
+@app.post("/voiceswap")
+async def voiceswap(voice_id: str = Form(...), media: Optional[UploadFile] = File(None), url: str = Form(""), separate: bool = Form(True),
+                    pitch: int = Form(0), steps: int = Form(30), mux: bool = Form(True), rights: str = Form(""), authorization: Optional[str] = Header(None)):
+    """Byt sangrosten i en lat/video till en rost ur den samtyckta rostlistan. Mal-roster kan ALDRIG komma utifran."""
+    auth(authorization)
+    v = voices.get(voice_id)
+    if not v or not v.get("consent"): raise HTTPException(400, "Välj en röst ur din samtyckta röstlista.")
+    if v["status"] != "ready": raise HTTPException(400, "Rösten tränas fortfarande – vänta tills den är klar.")
+    if rights != "true": raise HTTPException(400, "Intyga att du äger eller har rätt att använda låten/videon.")
+    if not media and not url.strip(): raise HTTPException(400, "Välj en fil, en inspelning eller en länk.")
+    src_url = resolve_url(url) if (url.strip() and not media) else None
+    jid, d = submit("voiceswap", task_voiceswap, voice=voice_id, url=src_url, separate=bool(separate), pitch=max(-12, min(int(pitch), 12)),
+                    steps=max(10, min(int(steps), 60)), mux=bool(mux))
+    return go(jid, media=await save_upload(media, d, "input") if media else None)
+
 @app.get("/status/{jid}")
 def status(jid: str, authorization: Optional[str] = Header(None)):
     auth(authorization); j = jobs.get(jid)
@@ -841,5 +1027,5 @@ def result(jid: str, file: Optional[str] = Query(None), authorization: Optional[
     if not j or j["status"] != "done": raise HTTPException(404, "Inte klart")
     name = file or next(iter(j["files"]), None)
     if name not in j["files"]: raise HTTPException(404, "Okänd fil")
-    mt = {".mp4": "video/mp4", ".png": "image/png", ".mp3": "audio/mpeg", ".srt": "text/plain"}.get(os.path.splitext(name)[1], "application/octet-stream")
+    mt = {".mp4": "video/mp4", ".png": "image/png", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".srt": "text/plain"}.get(os.path.splitext(name)[1], "application/octet-stream")
     return FileResponse(j["files"][name], media_type=mt, filename=f"kino-{jid}-{name}")

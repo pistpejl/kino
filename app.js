@@ -444,7 +444,7 @@
   function colabTools() {
     const outBox = (files) => h('div', { class: 'colab-out' }, ...files.map((f) => {
       const ext = f.name.split('.').pop();
-      const media = ext === 'mp4' ? h('video', { src: f.url, controls: true, playsinline: true, style: 'max-width:100%' }) : ext === 'png' ? h('img', { src: f.url, style: 'max-width:100%' }) : ext === 'mp3' ? h('audio', { src: f.url, controls: true }) : null;
+      const media = ext === 'mp4' ? h('video', { src: f.url, controls: true, playsinline: true, style: 'max-width:100%' }) : ext === 'png' ? h('img', { src: f.url, style: 'max-width:100%' }) : (ext === 'mp3' || ext === 'wav') ? h('audio', { src: f.url, controls: true }) : null;
       return h('div', {}, media, h('a', { href: f.url, download: `kino-${f.name}`, class: 'meta' }, `Ladda ned ${f.name}`));
     }));
     const tool = (title, sub, inputs, btnText, run) => {
@@ -563,6 +563,70 @@
       const fd = new FormData(); fd.append('scan_id', scan); fd.append('mapping', JSON.stringify(m)); fd.append('start', fS.value); fd.append('length', fL.value); return colabJob('/swap', fd, say);
     });
 
+    // Byt röst (Seed-VC): bara röster ur den samtyckta röstlistan
+    const recorder = (label) => {
+      let rec = null; let chunks = []; let t0 = 0; let tick = null; const out = { blob: null };
+      const info = h('span', { class: 'meta' }, ''); const play = h('audio', { controls: true, hidden: true, style: 'max-width:100%' });
+      const btn = h('button', { type: 'button', class: 'btn', onclick: async () => {
+        if (rec && rec.state === 'recording') { rec.stop(); return; }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          rec = new MediaRecorder(stream); chunks = [];
+          rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+          rec.onstop = () => { stream.getTracks().forEach((x) => x.stop()); clearInterval(tick); out.blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' }); play.src = URL.createObjectURL(out.blob); play.hidden = false; btn.textContent = `● ${label}`; info.textContent = `Inspelat ${Math.round((Date.now() - t0) / 1000)} s`; };
+          rec.start(1000); t0 = Date.now(); btn.textContent = '■ Stoppa';
+          tick = setInterval(() => { const s = Math.round((Date.now() - t0) / 1000); info.textContent = `Spelar in… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; if (s >= 600) rec.stop(); }, 500);
+        } catch (e) { info.textContent = 'Kunde inte starta mikrofonen: ' + e.message; }
+      } }, `● ${label}`);
+      out.el = h('div', { class: 'wide' }, btn, ' ', info, play); out.clear = () => { out.blob = null; play.hidden = true; info.textContent = ''; }; return out;
+    };
+    const recExt = (b) => (b.type.includes('ogg') ? 'ogg' : b.type.includes('mp4') ? 'm4a' : 'webm');
+    let voiceList = [];
+    const vList = h('div', { class: 'chips' }); const vSel = select([['', '– välj röst –']], '');
+    const renderVoices = () => {
+      vList.innerHTML = ''; const cur = vSel.value; vSel.innerHTML = ''; vSel.append(h('option', { value: '' }, '– välj röst ur röstlistan –'));
+      voiceList.forEach((v) => {
+        const stt = v.status === 'ready' ? `samtycke ${v.added}${v.finetuned ? ' · finjusterad' : ''}` : v.status === 'error' ? 'träning misslyckades' : 'tränas…';
+        vList.append(h('span', { class: 'chip' }, h('span', { class: 'cn' }, v.name), h('span', { class: 'ch' }, stt), h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: async () => { if (!confirm(`Ta bort rösten ${v.name} från motorn?`)) return; await fetch(`${colabCfg().url}/voices/${v.id}`, { method: 'DELETE', headers: colabHdr() }).catch(() => {}); voicesSync(); } }, '×')));
+        if (v.status === 'ready') vSel.append(h('option', { value: v.id }, v.name));
+      });
+      vSel.value = [...vSel.options].some((o) => o.value === cur) ? cur : '';
+    };
+    async function voicesSync() { voiceList = await fetch(`${colabCfg().url}/voices`, { headers: colabHdr() }).then((x) => (x.ok ? x.json() : [])).catch(() => []); renderVoices(); }
+    const vN = h('input', { type: 'text', placeholder: 'Namn, t.ex. Ida Stina' }); const vF = file('Träningsljud (1–10 min totalt, mp3/wav/m4a)', 'audio/*', true);
+    const vRec = recorder('Spela in träningsljud'); const vC = h('input', { type: 'checkbox' }); const vFt = h('input', { type: 'checkbox' });
+    const vBar = h('progress', { max: 100, value: 0, style: 'width:100%', hidden: true });
+    const tVoice = tool('🎤 Röstlista', 'Bara röster här kan användas vid röstbyte. Gäller denna Colab/Kaggle-session', [vList, field('Namn', vN, true), vF.el, vRec.el,
+      h('label', {}, vFt, ' Finjustera modellen på rösten (bättre likhet, ca 10–20 min extra)'),
+      h('label', { class: 'wide' }, vC, ' Personen har gett samtycke till att rösten spelas in och används för röstbyte'), vBar], 'Lägg till röst', async (say) => {
+      if (!vC.checked) throw new Error('Kryssa i samtycket först.');
+      const name = need(vN.value.trim(), 'Skriv ett namn.');
+      const fd = new FormData(); fd.append('name', name); fd.append('consent', 'true'); fd.append('finetune', vFt.checked ? 'true' : 'false');
+      [...vF.i.files].forEach((f) => fd.append('audio', f)); if (vRec.blob) fd.append('audio', vRec.blob, `inspelning.${recExt(vRec.blob)}`);
+      need(vF.i.files.length || vRec.blob, 'Välj ljudfiler eller spela in minst 1 minut.');
+      vBar.hidden = false; vBar.value = 0;
+      await colabJob('/voices', fd, say, (s, j) => { if (!s) { voicesSync(); return say(`${j.name}: ${Math.round(j.seconds / 6) / 10} min ljud mottaget, tränar…`); } const p = s.progress || {}; if (p.total) vBar.value = Math.round((p.done / p.total) * 100); say(`${p.step || 'I kö'} · ${s.elapsed || 0} s`); });
+      vBar.value = 100; vN.value = ''; vF.i.value = ''; vRec.clear(); vC.checked = false; await voicesSync(); say(`${name} är klar att använda.`); return null;
+    });
+    const sSrc = select([['file', 'Ljud- eller videofil'], ['rec', 'Spela in i webbläsaren'], ['url', 'Länk (direkt fil eller egen Suno-låt)']], 'file');
+    const sF = file('Fil (mp3, wav, m4a, mp4, mov…)', 'audio/*,video/*'); const sRec = recorder('Spela in'); const sU = h('input', { type: 'url', placeholder: 'https://suno.com/song/… eller https://…/lat.mp3' });
+    const sUf = field('Länk', sU, true);
+    const showSrc = () => { sF.el.hidden = sSrc.value !== 'file'; sRec.el.hidden = sSrc.value !== 'rec'; sUf.hidden = sSrc.value !== 'url'; }; sSrc.onchange = showSrc; showSrc();
+    const sP = h('input', { type: 'number', value: 0, min: -12, max: 12, step: 1, style: 'width:6em' }); const sSep = h('input', { type: 'checkbox', checked: true }); const sMux = h('input', { type: 'checkbox', checked: true }); const sR = h('input', { type: 'checkbox' });
+    const sBar = h('progress', { max: 100, value: 0, style: 'width:100%', hidden: true });
+    const tVsw = tool('🎙️ Byt röst', 'Seed-VC: sången byts till en röst ur din röstlista och mixas med instrumentalen. Inga kändis- eller Spotify-röster', [field('Källa', sSrc), sF.el, sRec.el, sUf, field('Röst', vSel),
+      field('Tonart (halvtoner)', sP), h('label', {}, sSep, ' Separera sången först (Demucs) – avmarkera om ljudet bara är sång/tal'), h('label', {}, sMux, ' Lägg tillbaka nya ljudet på videon (om källan är video)'),
+      h('label', { class: 'wide' }, sR, ' Jag äger låten/videon eller har rätt att använda den'), sBar], 'Byt röst', async (say) => {
+      const vid = need(vSel.value, 'Välj en röst ur röstlistan (lägg till en ovan).'); if (!sR.checked) throw new Error('Intyga att du har rätt att använda låten/videon.');
+      const fd = new FormData(); fd.append('voice_id', vid); fd.append('rights', 'true'); fd.append('pitch', sP.value || '0'); fd.append('separate', sSep.checked ? 'true' : 'false'); fd.append('mux', sMux.checked ? 'true' : 'false');
+      if (sSrc.value === 'file') fd.append('media', need(sF.i.files[0], 'Välj en fil.'));
+      else if (sSrc.value === 'rec') fd.append('media', need(sRec.blob, 'Spela in något först.'), `inspelning.${sRec.blob ? recExt(sRec.blob) : 'webm'}`);
+      else { const u = need(sU.value.trim(), 'Klistra in en länk.'); if (/spotify\.|music\.apple\.|youtube\.|youtu\.be|tidal\.|deezer\./i.test(u)) throw new Error('Strömningstjänster stöds inte. Använd en egen fil eller en Suno-låt du äger.'); fd.append('url', u); }
+      sBar.hidden = false; sBar.value = 0;
+      const r = await colabJob('/voiceswap', fd, say, (s) => { if (!s) return say('Startat…'); const p = s.progress || {}; if (p.total) sBar.value = Math.round((p.done / p.total) * 100); say(`${s.status === 'queued' ? 'I kö' : (p.step || 'Jobbar')} · ${s.elapsed || 0} s`); });
+      sBar.value = 100; return r;
+    });
+    const tVoices = h('div', {}, tVoice, tVsw);
     // Bilder + låt -> musikvideo (en knapp)
     const mI = file('Bilder (en eller flera)', 'image/*', true); const mS = file('Låt', 'audio/*');
     const mSec = select([['start', 'Från början'], ['custom', 'Egen start'], ['chorus', 'Refrängen (gissas)']], 'start'); const mSt = num(0); const mLen = num(30); const mR = aspectSel();
@@ -592,8 +656,8 @@
       bar.value = 100; return r;
     });
     tMv.style.cssText = 'border:2px solid var(--accent, #c9a227);border-radius:12px;padding:12px';
-    const box = h('div', { class: 'colab-tools' }, tMv, h('div', { class: 'meta' }, 'Bild till video: välj Colab som motor på Video-sidan och lägg en första bildruta – den används (SVD).'), tImg, tEdit, tUp, tStem, tLyr, tCut, tLip, tRos, tSwap);
-    return { box, onState: (on, feats) => { box.querySelectorAll('.colab-need').forEach((b) => { b.disabled = !on; }); tLip.hidden = on && feats && !feats.includes('lipsync'); tSwap.hidden = tRos.hidden = on && feats && !feats.includes('faceswap'); tMv.hidden = on && feats && !feats.includes('musicvideo'); if (on) rosterSync().catch(() => {}); } };
+    const box = h('div', { class: 'colab-tools' }, tMv, h('div', { class: 'meta' }, 'Bild till video: välj Colab som motor på Video-sidan och lägg en första bildruta – den används (SVD).'), tImg, tEdit, tUp, tStem, tLyr, tCut, tLip, tRos, tSwap, tVoices);
+    return { box, onState: (on, feats) => { box.querySelectorAll('.colab-need').forEach((b) => { b.disabled = !on; }); tLip.hidden = on && feats && !feats.includes('lipsync'); tSwap.hidden = tRos.hidden = on && feats && !feats.includes('faceswap'); tMv.hidden = on && feats && !feats.includes('musicvideo'); tVoices.hidden = on && feats && !feats.includes('voiceswap'); if (on) { rosterSync().catch(() => {}); voicesSync(); } } };
   }
   function colabPanel(onChange) {
     const c = colabCfg();
