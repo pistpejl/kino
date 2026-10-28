@@ -15,7 +15,7 @@ SVD_ID = "stabilityai/stable-video-diffusion-img2vid"
 SDXL_ID = "stabilityai/sdxl-turbo"
 NSFW_ID = "Falconsai/nsfw_image_detection"
 PLATFORM = os.environ.get("KINO_PLATFORM", "colab")  # "colab" eller "kaggle": samma kod for bada
-BASE = "/kaggle/working" if PLATFORM == "kaggle" else "/content"
+BASE = "/tmp/kino" if PLATFORM == "kaggle" else "/content"
 LS_DIR, LS_PY = f"{BASE}/LatentSync", f"{BASE}/ls_env/bin/python"
 INSWAPPER = os.environ.get("KINO_INSWAPPER", f"{BASE}/models/inswapper_128.onnx")
 WORK = tempfile.mkdtemp(prefix="kino_")
