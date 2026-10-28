@@ -737,9 +737,33 @@
     ] },
   ];
   function presetsBox(onPick) {
-    const body = h('div', { class: 'clips-body' }, PRESETS.map((grp) => h('section', { class: 'cgroup' }, h('h3', {}, grp.g, h('small', {}, `${grp.items.length} st`)),
-      h('div', { class: 'chips' }, grp.items.map(([t, d, p, tpl]) => h('button', { class: 'chip', type: 'button', title: d, onclick: () => onPick({ title: t, prompt: p + VS, negative: NEG, template: tpl }) }, h('span', { class: 'cn' }, t), h('span', { class: 'ch' }, d)))))));
-    return h('details', { class: 'clips presets' }, h('summary', {}, h('span', { class: 'ttl' }, 'Färdiga prompter'), h('span', { class: 'count' }, 'tryck för att fylla i')), body);
+    const sel = []; const all = PRESETS.flatMap((g) => g.items);
+    const own = h('textarea', { rows: 2, placeholder: 'Egna idéer (svenska eller engelska) – vägs tyngst' });
+    const out = h('textarea', { rows: 4, placeholder: 'Kombinerad prompt visas här och kan redigeras' });
+    const info = h('div', { class: 'meta' });
+    const mineBox = h('div', { class: 'chips' });
+    const CAT = { cam: /\b(camera|shot|dolly|drone|handheld|tracking|crane|slider|orbit|push-in|zoom|pan)\b/i, light: /\b(light|lighting|lights|backlit|spotlight|sun|golden hour|tungsten|strobe)\b/i };
+    const combine = () => {
+      const parts = []; const seen = new Set(); const used = {};
+      const add = (ph, isOwn) => { const k = ph.toLowerCase().trim(); if (!k || seen.has(k)) return; if (!isOwn) for (const c in CAT) if (CAT[c].test(k)) { if (used[c] >= 2) return; used[c] = (used[c] || 0) + 1; } seen.add(k); parts.push(ph.trim()); };
+      if (own.value.trim()) { parts.push(own.value.trim()); seen.add(own.value.trim().toLowerCase()); }
+      sel.forEach((i) => all[i][2].split(',').forEach((ph) => add(ph)));
+      return parts.length ? parts.join(', ') + VS : '';
+    };
+    const refresh = () => { out.value = combine(); info.textContent = sel.length ? `Valda: ${sel.map((i) => all[i][0]).join(' + ')} (max 3)` : 'Välj 1–3 prompter och/eller skriv egna idéer.'; };
+    own.oninput = refresh;
+    const chip = (it) => { const i = all.indexOf(it); const b = h('button', { class: 'chip', type: 'button', title: it[1], 'aria-pressed': 'false', onclick: () => { const at = sel.indexOf(i); if (at >= 0) sel.splice(at, 1); else { if (sel.length >= 3) sel.shift(); sel.push(i); } body.querySelectorAll('.chip[data-i]').forEach((c) => { const on = sel.includes(+c.dataset.i); c.setAttribute('aria-pressed', String(on)); c.style.borderColor = on ? '#ff3b30' : ''; }); refresh(); } }, h('span', { class: 'cn' }, it[0]), h('span', { class: 'ch' }, it[1])); b.dataset.i = i; return b; };
+    const MK = 'kino.mymixes'; const load = () => { try { return JSON.parse(localStorage.getItem(MK)) || []; } catch { return []; } };
+    const paintMine = () => { mineBox.innerHTML = ''; const m = load(); if (!m.length) return mineBox.append(h('span', { class: 'meta' }, 'Inga egna mallar ännu.')); m.forEach((x, k) => mineBox.append(h('span', { class: 'chip' }, h('button', { class: 'text', type: 'button', onclick: () => { out.value = x.prompt; info.textContent = `Egen mall: ${x.title}`; } }, x.title), h('button', { class: 'text dim danger', type: 'button', 'aria-label': 'Ta bort', onclick: () => { const n = load(); n.splice(k, 1); localStorage.setItem(MK, JSON.stringify(n)); paintMine(); } }, 'Ta bort')))); };
+    const tplOf = () => (sel.length ? all[sel[0]][3] : 'standard');
+    const use = h('button', { class: 'text primary', type: 'button', onclick: () => { if (!out.value.trim()) return (info.textContent = 'Välj en prompt eller skriv egna idéer först.'); onPick({ title: sel.length ? sel.map((i) => all[i][0]).join(' + ') : 'Egen idé', prompt: out.value.trim(), negative: NEG, template: tplOf() }); } }, 'Använd prompt');
+    const save = h('button', { class: 'text', type: 'button', onclick: () => { if (!out.value.trim()) return; const title = (prompt('Namn på mallen:', sel.map((i) => all[i][0]).join(' + ') || 'Min mix') || '').trim(); if (!title) return; const n = load(); n.unshift({ title, prompt: out.value.trim() }); localStorage.setItem(MK, JSON.stringify(n.slice(0, 50))); paintMine(); } }, 'Spara som egen mall');
+    const body = h('div', { class: 'clips-body' },
+      PRESETS.map((grp) => h('section', { class: 'cgroup' }, h('h3', {}, grp.g, h('small', {}, `${grp.items.length} st`)), h('div', { class: 'chips' }, grp.items.map(chip)))),
+      h('label', { class: 'wide' }, 'Egna idéer', own), info, h('label', { class: 'wide' }, 'Kombinerad prompt (redigerbar)', out),
+      h('div', { class: 'under' }, use, save), h('section', { class: 'cgroup' }, h('h3', {}, 'Mina mallar'), mineBox));
+    refresh(); paintMine();
+    return h('details', { class: 'clips presets' }, h('summary', {}, h('span', { class: 'ttl' }, 'Färdiga prompter'), h('span', { class: 'count' }, 'välj 1–3 + egna idéer')), body);
   }
 
   async function videoView(v) {
