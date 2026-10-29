@@ -802,6 +802,25 @@
       const r = await colabJob('/voiceswap', fd, say, (s) => { if (!s) return say('Startat…'); const p = s.progress || {}; if (p.total) sBar.value = Math.round((p.done / p.total) * 100); say(`${s.status === 'queued' ? 'I kö' : (p.step || 'Jobbar')} · ${s.elapsed || 0} s`); });
       sBar.value = 100; return r;
     });
+    // Karaktärsbyte (Openjutsu: ComfyUI + MiniMax H3 + SAM 3.1) – bara artister ur artistlistan
+    const oV = file('Video (huvudpersonen byts)', 'video/*'); const oA = select([['', '– välj artist –']], ''); const oS = num(0);
+    const oL = h('input', { type: 'number', value: 5, min: 2, max: 6, step: 0.5, style: 'width:6em' }); const oR = select([['480p', '480p (rekommenderas på T4)'], ['720p', '720p (långsammare)']], '480p');
+    const oLip = h('input', { type: 'checkbox', checked: true }); const oC = h('input', { type: 'checkbox' }); const oBar = h('progress', { max: 100, value: 0, style: 'width:100%', hidden: true });
+    const oFill = () => { const cur = oA.value; oA.innerHTML = ''; [['', '– välj artist –'], ...rosterLocal().filter((a) => rosterServer[a.id]).map((a) => [rosterServer[a.id], a.name])].forEach(([v, t]) => oA.append(h('option', { value: v }, t))); oA.value = cur; };
+    oA.onfocus = oFill;
+    const tOj = tool('🎭 Karaktärsbyte (Openjutsu)', 'Huvudpersonen i klippet byts mot en artist ur artistlistan – kamera, rörelse och ljud behålls. Max 6 s. Experimentellt på T4: räkna med 30–90 min', [oV.el, field('Artist (ur artistlistan)', oA),
+      field('Start (s)', oS), field('Längd (s, 2–6)', oL), field('Upplösning', oR), h('label', {}, oLip, ' Munnen följer ljudet (lipsync)'),
+      h('label', { class: 'wide' }, oC, ' Jag intygar att artisten har gett samtycke och att jag har rätt att använda videon'), oBar], 'Byt karaktär', async (say) => {
+      await rosterSync(); oFill();
+      const aid = need(oA.value, 'Välj en artist ur artistlistan (lägg till en ovan).'); if (!oC.checked) throw new Error('Kryssa i samtycket först.');
+      const len = Number(oL.value); if (!(len >= 2 && len <= 6)) throw new Error('Längden måste vara 2–6 s.');
+      const fd = new FormData(); fd.append('video', need(oV.i.files[0], 'Välj en video.')); fd.append('artist_id', aid); fd.append('start', oS.value || '0'); fd.append('length', String(len));
+      fd.append('resolution', oR.value); fd.append('lipsync', oLip.checked ? 'true' : 'false');
+      oBar.hidden = false; oBar.value = 0;
+      const r = await colabJob('/openjutsu/swap', fd, say, (st) => { if (!st) return say('Startat…'); const p = st.progress || {}; if (p.total) oBar.value = Math.round((p.done / p.total) * 100); say(`${st.status === 'queued' ? 'I kö' : (p.step || 'Jobbar')} · ${Math.round((st.elapsed || 0) / 60)} min`); });
+      oBar.value = 100; return r;
+    });
+    tOj.id = 'tool-openjutsu';
     const tVoices = h('div', { id: 'tool-voice' }, tVoice, tVsw);
     tLip.id = 'tool-lipsync'; tSwap.id = 'tool-faceswap'; tRos.id = 'tool-roster'; tStem.id = 'tool-stems'; tLyr.id = 'tool-lyrics'; tCut.id = 'tool-autocut'; tUp.id = 'tool-upscale';
     // Bilder + låt -> musikvideo (en knapp)
@@ -833,8 +852,8 @@
       bar.value = 100; return r;
     });
     tMv.classList.add('hl'); tMv.id = 'tool-mv';
-    const box = h('div', { class: 'colab-tools' }, tMv, h('div', { class: 'meta' }, 'Bild till video: välj Colab som motor på Video-sidan och lägg en första bildruta – den används (SVD).'), tImg, tEdit, tUp, tStem, tLyr, tCut, tLip, tRos, tSwap, tVoices);
-    return { box, onState: (on, feats) => { box.querySelectorAll('.colab-need').forEach((b) => { b.disabled = !on; }); tLip.hidden = on && feats && !feats.includes('lipsync'); tSwap.hidden = tRos.hidden = on && feats && !feats.includes('faceswap'); tMv.hidden = on && feats && !feats.includes('musicvideo'); tVoices.hidden = on && feats && !feats.includes('voiceswap'); if (on) { rosterSync().catch(() => {}); voicesSync(); } } };
+    const box = h('div', { class: 'colab-tools' }, tMv, h('div', { class: 'meta' }, 'Bild till video: välj Colab som motor på Video-sidan och lägg en första bildruta – den används (SVD).'), tImg, tEdit, tUp, tStem, tLyr, tCut, tLip, tRos, tSwap, tOj, tVoices);
+    return { box, onState: (on, feats) => { box.querySelectorAll('.colab-need').forEach((b) => { b.disabled = !on; }); tLip.hidden = on && feats && !feats.includes('lipsync'); tSwap.hidden = on && feats && !feats.includes('faceswap'); tRos.hidden = on && feats && !feats.includes('faceswap') && !feats.includes('openjutsu'); tOj.hidden = !(on && feats && feats.includes('openjutsu')); tMv.hidden = on && feats && !feats.includes('musicvideo'); tVoices.hidden = on && feats && !feats.includes('voiceswap'); if (on) { rosterSync().then(oFill).catch(() => {}); voicesSync(); } } };
   }
   function colabPanel(onChange) {
     const c = colabCfg();

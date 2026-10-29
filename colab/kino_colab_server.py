@@ -703,6 +703,183 @@ def task_voiceswap(job):
     job["data"] = {"voice": v["name"], "video": is_video}
     print(f"[voices] {time.strftime('%Y-%m-%d %H:%M:%S')} röstbyte till {v['name']} (samtyckt röst)")
 
+# ---------------- Karaktarsbyte med Openjutsu (ComfyUI + MiniMax H3 + SAM 3.1) ----------------
+# Openjutsu (D3voz/openjutsu, MIT): Simple-lagets API-workflow (workflows/simple.api.json) kors i en lokal ComfyUI
+# som Kaggle-cellen startar. Karaktarsbilden kommer ENBART fran den samtyckta artistlistan (ingen fri fotouppladdning).
+COMFY_URL = os.environ.get("KINO_COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
+OJ_WORKFLOW = os.environ.get("KINO_OJ_WORKFLOW", f"{BASE}/openjutsu/simple.api.json")
+OJ_WORKFLOW_URL = "https://raw.githubusercontent.com/pistpejl/kino/main/colab/openjutsu/simple.api.json"
+OJ_MAX_SECONDS, OJ_MIN_SECONDS = 6.0, 2.0
+OJ_RES = {"480p": "480p", "720p": "736p"}  # Openjutsus forval: 720p -> 736p (H3:s narmaste rutnat)
+OJ_NOTE = "Karaktärsbyte använder Openjutsu (MIT) + MiniMax H3 + SAM 3.1 i ComfyUI. Bara artister ur din samtyckta lista. Experimentellt på T4."
+# Modellfilnamn som Kaggle-cellen laddar ned (kan andras med miljovariabler).
+OJ_MODELS = {
+    "unet": os.environ.get("KINO_OJ_UNET", "minimax_h3_ref2va_pruned_int8_convrot.safetensors"),
+    "lora": os.environ.get("KINO_OJ_LORA", "dmad_minimax_h3_4step_lora_critic_comfyui.safetensors"),
+    "te": os.environ.get("KINO_OJ_TE", "qwen3vl_32b_minimax_h3_int4_convrot.safetensors"),
+    "describer": os.environ.get("KINO_OJ_DESCRIBER", "qwen3vl_4b_fp8_scaled.safetensors"),
+}
+OJ_NODES = {"picture": "2", "video": "5", "plan": "11", "describer": "13", "unet": "15", "lora": "16", "attention": "17", "te": "19", "final": "67"}
+_oj_cache = {"t": 0.0, "ok": False, "why": ""}
+
+def _comfy(path, data=None, timeout=10, raw=False):
+    import urllib.request
+    body = json.dumps(data).encode() if isinstance(data, (dict, list)) else data
+    rq = urllib.request.Request(COMFY_URL + path, data=body, headers={"Content-Type": "application/json"} if isinstance(data, (dict, list)) else {})
+    with urllib.request.urlopen(rq, timeout=timeout) as r:
+        b = r.read()
+    return b if raw else json.loads(b or b"null")
+
+def oj_workflow():
+    """Laddar Openjutsus Simple-workflow (API-format). Hamtar den fran KINO-repot om filen saknas."""
+    for p in (OJ_WORKFLOW, os.path.join(os.path.dirname(os.path.abspath(__file__)), "openjutsu", "simple.api.json")):
+        if os.path.exists(p):
+            with open(p) as f: return json.load(f)
+    import urllib.request
+    os.makedirs(os.path.dirname(OJ_WORKFLOW), exist_ok=True)
+    urllib.request.urlretrieve(OJ_WORKFLOW_URL, OJ_WORKFLOW)
+    with open(OJ_WORKFLOW) as f: return json.load(f)
+
+def oj_available(force=False):
+    """Bara aktivt om ComfyUI svarar och Openjutsus noder (h3-oneclick-swap) ar laddade. Cachas 15 s."""
+    if STUB and os.environ.get("KINO_STUB_OJ") == "1": return True
+    if not force and time.time() - _oj_cache["t"] < 15: return _oj_cache["ok"]
+    ok, why = False, ""
+    try:
+        info = _comfy("/object_info/H3OneClickSwapPlan", timeout=3)
+        ok = bool(info and "H3OneClickSwapPlan" in info)
+        if not ok: why = "Openjutsu-noderna saknas i ComfyUI"
+    except Exception as e: why = f"ComfyUI svarar inte ({type(e).__name__})"
+    _oj_cache.update(t=time.time(), ok=ok, why=why)
+    return ok
+
+def _is_link(v): return isinstance(v, list) and len(v) == 2 and isinstance(v[0], str) and isinstance(v[1], int)
+
+_OJ_MUTE = re.compile(r"^Mute the (clip|reference) audio H3 hears$")
+_OJ_NOLIP = re.compile(r"^(No lip-sync in the prompt|SAM: faces|SAM 3\.1 track faces|Faces \(shown on the mannequins?\))$")
+def oj_drop_no_lipsync(g):
+    """Port av Openjutsus dropNoLipSync (lib/simple.ts): H3 hor ljudspåret igen, sa munnen foljer sangen."""
+    through = {}
+    for nid, n in g.items():
+        t = (n.get("_meta") or {}).get("title", "")
+        if _OJ_MUTE.match(t): through[nid] = n["inputs"].get("audio")
+        elif _OJ_NOLIP.match(t): through[nid] = None
+    for nid in through: del g[nid]
+    for nid, n in g.items():
+        for k, v in list(n["inputs"].items()):
+            if not _is_link(v) or v[0] not in through: continue
+            if through[v[0]] is not None: n["inputs"][k] = through[v[0]]
+            elif k in ("no_lip_sync", "faces", "face_size"): del n["inputs"][k]
+            else: raise ValueError(f"Nod {nid}.{k} länkar till borttagen nod {v[0]}")
+
+def oj_fill(src, video_name, image_name, seconds, resolution="480p", seed=0, lipsync=True, bypass_attention=True, models=None):
+    """Fyller Openjutsus Simple-workflow (ren funktion, enhetstestad). Klippet ar redan utklippt, sa VHS laser fran borjan."""
+    import copy
+    g = copy.deepcopy(src); N = OJ_NODES; m = {**OJ_MODELS, **(models or {})}
+    for k in ("picture", "video", "plan", "unet", "lora", "te", "describer", "final"):
+        if N[k] not in g: raise ValueError(f"Workflow saknar nod {N[k]} ({k})")
+    g[N["picture"]]["inputs"]["image"] = image_name
+    v = g[N["video"]]["inputs"]; v["video"] = video_name; v["skip_first_frames"] = 0
+    v["frame_load_cap"] = int(round(seconds * v.get("force_rate", 24)))
+    secs = max(OJ_MIN_SECONDS, min(float(seconds), OJ_MAX_SECONDS))
+    p = g[N["plan"]]["inputs"]; p["resolution"] = OJ_RES.get(resolution, "480p"); p["seed"] = int(seed) & 0xFFFFFFFF
+    p["clip_seconds"] = max(2.5, secs); p["roles"] = ""  # ett klipp, beskrivaren namnger huvudpersonen
+    g[N["unet"]]["inputs"]["unet_name"] = m["unet"]; g[N["lora"]]["inputs"]["lora_name"] = m["lora"]
+    g[N["te"]]["inputs"]["clip_name"] = m["te"]; g[N["describer"]]["inputs"]["clip_name"] = m["describer"]
+    g[N["final"]]["inputs"]["filename"] = "kino_openjutsu"
+    if lipsync: oj_drop_no_lipsync(g)
+    if bypass_attention and N["attention"] in g:  # T4 (sm75): standardattention i stallet for Comfy Kitchen-karnan
+        up = g[N["attention"]]["inputs"]["model"]; del g[N["attention"]]
+        for n in g.values():
+            for k, val in n["inputs"].items():
+                if _is_link(val) and val[0] == N["attention"]: n["inputs"][k] = up
+    # Openjutsus lib/comfy.ts: VHS kraschar om nagon laser ljudet fran en video utan ljud -> tystnad i stallet
+    vid = N["video"]; sound = vid + "_soundtrack"; read = False
+    for n in g.values():
+        for k, val in n["inputs"].items():
+            if _is_link(val) and val[0] == vid and val[1] == 2: n["inputs"][k] = [sound, 0]; read = True
+    if read: g[sound] = {"class_type": "H3SoundtrackOrSilence", "inputs": {"audio": [vid, 2], "video_info": [vid, 3]}, "_meta": {"title": "Soundtrack (silence if none)"}}
+    for nid, n in g.items():
+        for k, val in n["inputs"].items():
+            if _is_link(val) and val[0] not in g: raise ValueError(f"Nod {nid}.{k} länkar till saknad nod {val[0]}")
+    return g
+
+def _comfy_upload(path, name):
+    bnd = uuid.uuid4().hex
+    with open(path, "rb") as f: data = f.read()
+    body = (f"--{bnd}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").encode() + data + \
+           (f"\r\n--{bnd}\r\nContent-Disposition: form-data; name=\"type\"\r\n\r\ninput\r\n--{bnd}\r\nContent-Disposition: form-data; name=\"overwrite\"\r\n\r\ntrue\r\n--{bnd}--\r\n").encode()
+    import urllib.request
+    rq = urllib.request.Request(COMFY_URL + "/upload/image", data=body, headers={"Content-Type": f"multipart/form-data; boundary={bnd}"})
+    with urllib.request.urlopen(rq, timeout=120) as r: info = json.load(r)
+    return (info.get("subfolder") + "/" if info.get("subfolder") else "") + info["name"]
+
+def _find_mp4(obj):
+    if isinstance(obj, dict):
+        fn = obj.get("filename") or obj.get("fullpath") or ""
+        if isinstance(fn, str) and fn.lower().endswith(".mp4"): yield obj
+        for v in obj.values(): yield from _find_mp4(v)
+    elif isinstance(obj, list):
+        for v in obj: yield from _find_mp4(v)
+
+def _oj_interrupt(pid):
+    for path, data in (("/queue", {"delete": [pid]}), ("/interrupt", {"prompt_id": pid})):
+        try: _comfy(path, data, timeout=5, raw=True)
+        except Exception: pass
+
+def task_openjutsu(job):
+    d = job["dir"]; secs = job["length"]; clip = os.path.join(d, "clip.mp4")
+    progress(job, "Klipper ut avsnittet", 0, 5)
+    ff("-ss", f"{job['start']:.3f}", "-i", job["video"], "-t", f"{secs:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+       "-c:a", "aac", "-b:a", "192k", clip)
+    progress(job, "Ålders- och innehållskontroll", 1, 5)
+    check_video_faces(clip)  # alla ansikten i klippet minst 21
+    check_video_sfw(clip)    # SFW-motor
+    a = roster[job["artist"]]
+    if STUB:
+        res = os.path.join(d, "karaktarsbyte.mp4"); shutil.copy(clip, res); job["files"]["karaktarsbyte.mp4"] = res
+        job["data"] = {"artist": a["name"], "stub": True}; return
+    free_vram()  # KINO:s egna modeller ut ur VRAM, ComfyUI far hela GPU:n
+    progress(job, "Laddar upp till ComfyUI", 2, 5)
+    tag = job["id"]
+    vname = _comfy_upload(clip, f"kino_{tag}.mp4"); iname = _comfy_upload(a["photo"], f"kino_{tag}_artist.png")
+    g = oj_fill(oj_workflow(), vname, iname, secs, job["resolution"], job["seed"], job["lipsync"])
+    r = _comfy("/prompt", {"prompt": g, "client_id": "kino-" + tag}, timeout=60)
+    if r.get("node_errors"): raise RuntimeError("ComfyUI nekade workflowet: " + json.dumps(r["node_errors"])[:300])
+    pid = r["prompt_id"]; job["comfy_prompt"] = pid; t0 = time.time()
+    try:
+        while True:
+            if job.get("cancel"): _oj_interrupt(pid); raise Cancelled("Avbrutet")
+            h = {}
+            try: h = _comfy(f"/history/{pid}", timeout=10).get(pid) or {}
+            except Exception: pass
+            st = (h.get("status") or {})
+            if st.get("completed") or st.get("status_str") in ("success", "error"):
+                if st.get("status_str") == "error":
+                    msg = next((m[1].get("exception_message", "") for m in st.get("messages", []) if m[0] == "execution_error"), "")
+                    raise RuntimeError("ComfyUI-fel: " + (msg or "okänt")[:300])
+                break
+            mins = int((time.time() - t0) // 60)
+            progress(job, f"MiniMax H3 genererar i ComfyUI ({mins} min, T4: räkna med 30–90 min)", 3, 5)
+            time.sleep(3)
+    except Cancelled: _oj_interrupt(pid); raise
+    progress(job, "Hämtar resultat", 4, 5)
+    outs = h.get("outputs") or {}
+    vids = list(_find_mp4(outs.get(OJ_NODES["final"], {}))) or list(_find_mp4(outs))
+    if not vids: raise RuntimeError("ComfyUI gav ingen mp4.")
+    o = vids[-1]; res = os.path.join(d, "karaktarsbyte.mp4")
+    if o.get("fullpath") and os.path.exists(o["fullpath"]): shutil.copy(o["fullpath"], res)
+    else:
+        import urllib.parse
+        qs = urllib.parse.urlencode({"filename": os.path.basename(o["filename"]), "subfolder": o.get("subfolder", ""), "type": o.get("type", "output")})
+        with open(res, "wb") as f: f.write(_comfy("/view?" + qs, timeout=300, raw=True))
+    check_video_sfw(res)
+    try: _comfy("/free", {"unload_models": True, "free_memory": True}, timeout=10, raw=True)
+    except Exception: pass
+    register_generated(job, res); job["files"]["karaktarsbyte.mp4"] = res
+    job["data"] = {"artist": a["name"], "resolution": job["resolution"], "seconds": secs, "minutes": round((time.time() - t0) / 60, 1)}
+    print(f"[openjutsu] {time.strftime('%Y-%m-%d %H:%M:%S')} karaktärsbyte till {a['name']} (samtyckt artist)")
+
 app = FastAPI(title="KINO Colab-motor")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 def auth(a: Optional[str]):
@@ -722,8 +899,11 @@ def health(authorization: Optional[str] = Header(None)):
     if STUB or os.path.exists(LS_PY): feats.append("lipsync")
     if STUB or os.path.exists(INSWAPPER): feats.append("faceswap")
     if STUB or os.path.exists(SVC_PY): feats.append("voiceswap")
+    oj = oj_available()
+    if oj: feats.append("openjutsu")
     return {"ok": True, "auth": ok, "platform": PLATFORM, "gpu": gpu, "queue": q.qsize(), "loaded": _cur["name"], "maxSeconds": MAX_SECONDS,
-            "sfwOnly": False, "nsfwEndpoints": ["/image", "/edit"], "features": feats, "imageModels": [k for k in IMAGE_MODELS if model_available(k)], "editModels": list(EDIT_MODELS), "licenseNote": LICENSE_NOTE, "voiceNote": SVC_NOTE}
+            "sfwOnly": False, "nsfwEndpoints": ["/image", "/edit"], "features": feats, "imageModels": [k for k in IMAGE_MODELS if model_available(k)], "editModels": list(EDIT_MODELS), "licenseNote": LICENSE_NOTE, "voiceNote": SVC_NOTE,
+            "openjutsu": {"available": oj, "maxSeconds": OJ_MAX_SECONDS, "minSeconds": OJ_MIN_SECONDS, "resolutions": list(OJ_RES), "note": OJ_NOTE}}
 
 @app.post("/generate")
 async def generate(prompt: str = Form(...), seconds: int = Form(4), aspect: str = Form("9:16"), steps: int = Form(30),
@@ -817,7 +997,7 @@ async def roster_add(name: str = Form(...), consent: str = Form(""), photos: Lis
     auth(authorization)
     if consent != "true": raise HTTPException(400, "Kryssa i 'Personen har gett samtycke'.")
     import numpy as np, cv2
-    best = None
+    best, best_img = None, None
     with _lock:
         for ph in photos[:8]:
             img = cv2.imdecode(np.frombuffer(await ph.read(), np.uint8), cv2.IMREAD_COLOR)
@@ -825,10 +1005,12 @@ async def roster_add(name: str = Form(...), consent: str = Form(""), photos: Lis
             fs = detect(img)
             if not fs: continue
             if not face_age_ok(fs[0]): raise HTTPException(400, "Nekad: personen på fotot bedöms vara under 21 år.")
-            if best is None: best = fs[0]
+            if best is None: best, best_img = fs[0], img
     if best is None: raise HTTPException(400, "Hittade inget ansikte på fotona.")
     aid = uuid.uuid4().hex[:8]; now = time.strftime("%Y-%m-%d %H:%M:%S")
-    roster[aid] = {"id": aid, "name": name.strip()[:60], "face": best, "consent": True, "added": now}
+    rd = os.path.join(WORK, "roster"); os.makedirs(rd, exist_ok=True); photo = os.path.join(rd, aid + ".png")
+    cv2.imwrite(photo, best_img)  # artistens eget samtyckta foto: enda tillatna karaktarsbild for Openjutsu
+    roster[aid] = {"id": aid, "name": name.strip()[:60], "face": best, "photo": photo, "consent": True, "added": now}
     print(f"[roster] {now} artist tillagd: {roster[aid]['name']} (samtycke intygat)")
     return {"id": aid, "name": roster[aid]["name"], "added": now, "licenseNote": LICENSE_NOTE}
 
@@ -1084,6 +1266,27 @@ async def voiceswap(voice_id: str = Form(...), media: Optional[UploadFile] = Fil
     jid, d = submit("voiceswap", task_voiceswap, voice=voice_id, url=src_url, separate=bool(separate), pitch=max(-12, min(int(pitch), 12)),
                     steps=max(10, min(int(steps), 60)), mux=bool(mux))
     return go(jid, media=await save_upload(media, d, "input") if media else None)
+
+@app.get("/openjutsu")
+def openjutsu_info(authorization: Optional[str] = Header(None)):
+    auth(authorization); ok = oj_available(force=True)
+    return {"available": ok, "reason": None if ok else _oj_cache["why"], "maxSeconds": OJ_MAX_SECONDS, "minSeconds": OJ_MIN_SECONDS,
+            "resolutions": list(OJ_RES), "models": OJ_MODELS, "note": OJ_NOTE}
+
+@app.post("/openjutsu/swap")
+async def openjutsu_swap(video: UploadFile = File(...), artist_id: str = Form(...), start: float = Form(0), length: float = Form(5),
+                         resolution: str = Form("480p"), seed: int = Form(-1), lipsync: bool = Form(True), authorization: Optional[str] = Header(None)):
+    """Byter huvudpersonen i klippet mot en artist ur den samtyckta artistlistan. Inga andra foton tas emot."""
+    auth(authorization)
+    if not oj_available(): raise HTTPException(503, "Openjutsu är inte igång: kör Kaggle-cellen 'Karaktärsbyte med Openjutsu'. " + (_oj_cache["why"] or ""))
+    a = roster.get(artist_id)
+    if not a or not a.get("consent") or not a.get("photo") or not os.path.exists(a["photo"]):
+        raise HTTPException(400, "Välj en artist ur din samtyckta artistlista (lägg till artisten igen om den saknar foto).")
+    if resolution not in OJ_RES: raise HTTPException(400, "Upplösning: 480p eller 720p.")
+    length = float(length); start = max(0.0, float(start))
+    if not (OJ_MIN_SECONDS <= length <= OJ_MAX_SECONDS): raise HTTPException(400, f"Längd {OJ_MIN_SECONDS:g}–{OJ_MAX_SECONDS:g} s på en T4.")
+    jid, d = submit("openjutsu", task_openjutsu, artist=artist_id, start=start, length=length, resolution=resolution, seed=seed_of(seed), lipsync=bool(lipsync))
+    return go(jid, video=await save_upload(video, d, "video"))
 
 @app.post("/cancel/{jid}")
 def cancel_ep(jid: str, authorization: Optional[str] = Header(None)):
