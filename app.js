@@ -334,6 +334,7 @@
 
   // ---- views ----
   const ICONS = {
+    viral: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
     image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-8 9"/>',
     video: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10.5 9.5 4 2.5-4 2.5z"/>',
     music: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
@@ -417,6 +418,7 @@
       ['video', 'Video', 'Text eller bild blir ett klipp', '#/video'],
       ['image', 'Bild', 'Skriv en text, få en bild', '#/image'],
       ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
+      ['viral', 'Viral-mixer', 'TikTok-trender (video + musik) blir en prompt', '#/viral'],
       ['stock', 'Stockklipp till låt', 'Riktiga klipp i takt med musiken', '#/music', 'stock', true],
     ]);
   }
@@ -962,6 +964,80 @@
     return h('details', { class: 'clips presets' }, h('summary', {}, h('span', { class: 'ttl' }, 'Stilar'), h('span', { class: 'count' }, 'välj 1–3'), h('span', { class: 'chev', 'aria-hidden': 'true' })), body);
   }
 
+  // ---- Viral-mixer: publika trendmönster (video + musik) → en redigerbar viral prompt ----
+  function viralBox(here) {
+    const S = { kind: 'video', data: {}, sel: new Set(), mix: null };
+    const tabs = h('div', { class: 'chips' });
+    const srcInfo = h('div', { class: 'meta' }, 'Tryck Hämta virala trender. Bara mönster analyseras – inga andras videor eller ljud laddas ner eller återanvänds.');
+    const cardsBox = h('div', { class: 'chips viralcards' });
+    const idea = h('textarea', { rows: 3, placeholder: 'Din idé (vägs tyngst) – t.ex. tema, känsla, plats, vad som ska hända' });
+    const song = h('input', { placeholder: 'Låt / egen artist (din egen musik)' });
+    const genre = h('input', { placeholder: 'Genre, t.ex. synthpop' });
+    const mood = h('input', { placeholder: 'Stämning, t.ex. melankolisk men dansant' });
+    const lyrics = h('input', { placeholder: 'Textrad ur din låt (valfritt)' });
+    const fmt = select([['9:16', '9:16'], ['1:1', '1:1'], ['16:9', '16:9']], '9:16');
+    const len = select([['8', '8 s'], ['10', '10 s'], ['15', '15 s'], ['20', '20 s'], ['30', '30 s'], ['45', '45 s'], ['60', '60 s']], '15');
+    const musicFields = h('div', { class: 'grid2' }, field('Låt / artist', song), field('Genre', genre), field('Stämning', mood), field('Textrad', lyrics));
+    const out = h('textarea', { rows: 6, placeholder: 'Mixad viral prompt visas här och kan redigeras' });
+    const shots = h('textarea', { rows: 8, placeholder: 'Bildlista (0–1 s hook, beats, loop-slut), text på skärmen, caption och hashtags' });
+    const status = h('div', { class: 'meta', role: 'status' });
+    const say = (t, bad) => { status.textContent = t; status.classList.toggle('err', Boolean(bad)); };
+    const fmtDate = (iso) => { try { return new Date(iso).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' }); } catch { return iso; } };
+    const paintTabs = () => { tabs.innerHTML = ''; [['video', 'Video'], ['music', 'Musik']].forEach(([k, t]) => tabs.append(h('button', { class: 'chip' + (S.kind === k ? ' on' : ''), type: 'button', 'aria-pressed': String(S.kind === k), onclick: () => { S.kind = k; S.sel.clear(); paintTabs(); paint(); } }, h('span', { class: 'cn' }, t)))); musicFields.hidden = S.kind !== 'music'; };
+    const paint = () => {
+      cardsBox.innerHTML = ''; const d = S.data[S.kind];
+      if (!d) { srcInfo.textContent = 'Inga trender hämtade för ' + (S.kind === 'music' ? 'Musik' : 'Video') + ' än.'; return; }
+      srcInfo.textContent = `Källa: ${d.source}${d.live ? '' : ' – live-hämtning misslyckades'} · hämtat ${fmtDate(d.fetchedAt)}${d.cached ? ' (cache)' : ''}${d.model ? ' · analys: ' + d.model : ''}. Välj 2–4 kort.`;
+      d.cards.forEach((c) => {
+        const on = S.sel.has(c.id);
+        const cb = h('input', { type: 'checkbox' }); cb.checked = on;
+        cb.onchange = () => { if (cb.checked) { if (S.sel.size >= 4) { cb.checked = false; return say('Max 4 kort.', true); } S.sel.add(c.id); } else S.sel.delete(c.id); say(`${S.sel.size} valda`); };
+        const extra = S.kind === 'music' ? [c.songSection && h('div', {}, h('b', {}, 'Del av låten: '), c.songSection), (c.length || c.bpm) && h('div', {}, h('b', {}, 'Längd/BPM: '), [c.length, c.bpm].filter(Boolean).join(' · '))] : [];
+        cardsBox.append(h('label', { class: 'vcard' }, h('div', { class: 'vhead' }, cb, h('b', {}, c.name), c.format ? h('small', {}, ' · ' + c.format) : ''),
+          h('div', { class: 'meta' }, c.why), h('div', {}, h('b', {}, 'Hook: '), c.hook), ...extra.filter(Boolean),
+          c.structure && c.structure.length ? h('div', { class: 'meta' }, c.structure.join(' → ')) : '',
+          h('div', { class: 'meta' }, [c.visual, c.textOverlay && 'Text: ' + c.textOverlay, c.soundVibe && 'Ljud: ' + c.soundVibe].filter(Boolean).join(' · ')),
+          c.hashtags && c.hashtags.length ? h('div', { class: 'meta' }, c.hashtags.join(' ')) : ''));
+      });
+    };
+    const fetchBtn = h('button', { class: 'text primary', type: 'button', onclick: async () => {
+      const k = S.kind; say('Hämtar och analyserar trender… (kan ta upp till en minut)'); fetchBtn.disabled = true;
+      try { const r = await fetch(`${API}/viral/trends?kind=${k}`).then((x) => x.json()); if (!r.ok) throw new Error(r.error || 'fel'); S.data[k] = r; S.sel.clear(); say(`${r.cards.length} trendkort.`); paint(); }
+      catch (e) { say('Kunde inte hämta trender: ' + e.message, true); } finally { fetchBtn.disabled = false; }
+    } }, 'Hämta virala trender');
+    const mixBtn = h('button', { class: 'text primary', type: 'button', onclick: async () => {
+      const d = S.data[S.kind]; const cards = d ? d.cards.filter((c) => S.sel.has(c.id)) : [];
+      if (cards.length < 2) return say('Välj 2–4 trendkort först.', true);
+      say('Mixar…'); mixBtn.disabled = true;
+      try {
+        const r = await fetch(`${API}/viral/mashup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: S.kind, cards, idea: idea.value, song: song.value, genre: genre.value, mood: mood.value, lyrics: lyrics.value, format: fmt.value, seconds: Number(len.value), lane: st.lane }) }).then((x) => x.json());
+        if (!r.ok) throw new Error(r.error || 'fel');
+        S.mix = r; out.value = r.prompt;
+        shots.value = [...r.shots.map((x) => `${x.t} [${x.beat}] ${x.visual}${x.text ? ' — text: ' + x.text : ''}`), '', r.songSection ? 'Del av låten: ' + r.songSection : '', r.loop ? 'Loop: ' + r.loop : '', 'Text på skärmen: ' + (r.onScreenText || []).join(' | '), 'Caption: ' + r.caption, 'Hashtags: ' + (r.hashtags || []).join(' ')].filter((x) => x !== '').join('\n');
+        say(`Klar: ”${r.title}” (${r.model || 'LLM'}). Redigera fritt.`);
+      } catch (e) { say('Mixen misslyckades: ' + e.message, true); } finally { mixBtn.disabled = false; }
+    } }, 'Mixa till prompt');
+    const payload = () => ({ title: (S.mix && S.mix.title) || 'Viral mix', prompt: out.value.trim(), shots: shots.value.trim(), format: fmt.value });
+    const useIn = (target) => { if (!out.value.trim()) return say('Mixa eller skriv en prompt först.', true); const p = payload(); if (here && here.name === target) return here.apply(p); st.viral = { ...p, target }; location.hash = target === 'music' ? '#/music' : '#/video'; };
+    const MK = 'kino.mymixes';
+    const btns = h('div', { class: 'under' },
+      h('button', { class: 'text', type: 'button', onclick: () => useIn('video') }, 'Använd i Video'),
+      h('button', { class: 'text', type: 'button', onclick: () => useIn('music') }, 'Använd i Musikvideo'),
+      h('button', { class: 'text', type: 'button', onclick: () => { const t = out.value + (shots.value ? '\n\n' + shots.value : ''); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => say('Kopierat.'), () => say('Kunde inte kopiera – markera texten manuellt.', true)); } }, 'Kopiera'),
+      h('button', { class: 'text', type: 'button', onclick: () => { if (!out.value.trim()) return; const title = (prompt('Namn på mallen:', payload().title) || '').trim(); if (!title) return; let n = []; try { n = JSON.parse(localStorage.getItem(MK)) || []; } catch {} n.unshift({ title, prompt: out.value.trim() }); localStorage.setItem(MK, JSON.stringify(n.slice(0, 50))); say('Sparad i Mina mallar.'); } }, 'Spara i Mina mallar'));
+    paintTabs();
+    const body = h('div', { class: 'clips-body' }, tabs, h('div', { class: 'under' }, fetchBtn), srcInfo, cardsBox,
+      h('label', { class: 'wide' }, 'Din idé', idea), musicFields, h('div', { class: 'grid2' }, field('Format', fmt), field('Längd', len)),
+      h('div', { class: 'under' }, mixBtn), status, h('label', { class: 'wide' }, 'Viral prompt (redigerbar)', out), h('label', { class: 'wide' }, 'Bildlista, text, caption & hashtags', shots), btns,
+      h('div', { class: 'meta' }, 'Bara mönster: KINO laddar aldrig ner eller återanvänder andras videor eller ljud och härmar inga verkliga artisters röst eller utseende. Använd din egen musik.'));
+    return h('details', { class: 'clips presets viral' }, h('summary', {}, h('span', { class: 'ttl' }, 'Viral-mixer'), h('span', { class: 'count' }, 'TikTok-trender → prompt'), h('span', { class: 'chev', 'aria-hidden': 'true' })), body);
+  }
+  function viralView(v) {
+    const b = viralBox(null); b.open = true;
+    v.append(pagehead('Viral-mixer', 'Analysera virala TikTok-mönster (video och musik) och mixa dem med din idé till en prompt.'), b);
+  }
+  function takeViral(target, apply) { const x = st.viral; if (x && x.target === target) { st.viral = null; setTimeout(() => apply(x), 0); } }
+
   async function videoView(v) {
     const carry = st.carry; st.carry = null;
     const first = fileField('Första bildruta', 'image/*', carry);
@@ -1008,6 +1084,8 @@
     const gpuNote = h('a', { class: 'meta gpulink', href: '#/installningar' }, 'Egen GPU (Colab / Kaggle) ställs in under Inställningar ›');
     const pre = presetsBox(({ prompt, negative, title }) => { const ta = c.box.querySelector('textarea'); if (ta) { ta.value = prompt; ta.dispatchEvent(new Event('input')); ta.focus(); } ratio.value = '9:16'; c.box.querySelector('.status') && (c.box.querySelector('.status').textContent = `${title} ifylld · format 9:16 · negativ prompt (om motorn stöder det): ${negative}`); });
     pre.open = true; c.box.querySelector('.composer').after(pre);
+    const applyV = (x) => { const ta = c.box.querySelector('textarea'); if (ta) { ta.value = x.prompt + (x.shots ? '\n\n' + x.shots : ''); ta.dispatchEvent(new Event('input')); ta.focus(); } if ([...ratio.options].some((o) => o.value === x.format)) ratio.value = x.format; const stt = c.box.querySelector('.status'); if (stt) stt.textContent = `${x.title} från Viral-mixer ifylld · format ${ratio.value}`; };
+    const vHere = { name: 'video', apply: applyV }; const vb = viralBox(vHere); pre.after(vb); takeViral('video', applyV);
     v.classList.add('two');
     v.append(pagehead('Video', 'Beskriv ett klipp eller börja från en bild.'), c.box, gpuNote, clipSources(), grid);
   }
@@ -1103,6 +1181,8 @@
     st.preset = null;
     const pre = presetsBox(({ prompt, title }) => { c.ta.value = prompt; c.ta.dispatchEvent(new Event('input')); c.say(`${title} ifylld. Ändra texten om du vill.`); });
     c.box.querySelector('.composer').after(pre);
+    const applyM = (x) => { c.ta.value = x.prompt + (x.shots ? '\n\n' + x.shots : ''); c.ta.dispatchEvent(new Event('input')); c.say(`${x.title} från Viral-mixer ifylld. Ändra texten om du vill.`); };
+    const mb = viralBox({ name: 'music', apply: applyM }); pre.after(mb); takeViral('music', applyM);
     const step2 = h('section', { class: 'step' }, stepHead(2, 'Vad handlar den om?', 'Skriv själv eller välj stilar'), c.box);
     const syncSteps = () => { const done = [Boolean(song), Boolean(c.ta.value.trim()), imgs.length > 0]; [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('done', done[i])); const cur = done.indexOf(false); [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('cur', i === (cur < 0 ? 2 : cur))); [...bars.children].forEach((b, i) => b.classList.toggle('on', done[i])); };
     stepSync.fn = syncSteps; c.ta.addEventListener('input', syncSteps); syncSteps();
@@ -1753,9 +1833,9 @@
   }
 
   const VIEWS = { klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
-    skapa: skapaView, verktyg: verktygView, verk: verkView, installningar: settingsView, motor: settingsView };
+    skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, installningar: settingsView, motor: settingsView };
   const ALIAS = { create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
-  const SECTION = { '': '', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', verk: 'verk' };
+  const SECTION = { '': '', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', verk: 'verk' };
   function route() {
     let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
     let [k, q] = raw.split('?'); k = k || '';

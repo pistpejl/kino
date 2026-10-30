@@ -516,3 +516,10 @@ html { scroll-padding-bottom:calc(var(--navh) + 96px + env(safe-area-inset-botto
 .toolbtns { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
 .jobcard.cancelled .jobtop b { color:var(--dim); }
 .jobcard.cancelled .jobbar { opacity:.35; }
+/* Viral-mixer */
+.viral .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
+.viral .viralcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px}
+.viral .vcard{display:flex;flex-direction:column;gap:4px;padding:10px;border:1px solid #2a2a3a;border-radius:12px;background:#12121e;cursor:pointer;font-size:.9em}
+.viral .vcard:has(input:checked){border-color:#ff3b30;background:#1c1220}
+.viral .vhead{display:flex;align-items:center;gap:6px}
+.viral .err{color:#ff6b60}
