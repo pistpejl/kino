@@ -2275,7 +2275,7 @@
         const fd = new FormData(); fd.append('spec', JSON.stringify({ title: sc.title, sentences: sc.sentences, lang: a.lang, ratio: a.ratio, lane: st.lane }));
         let id = null; setCancel && setCancel(() => { if (id) fetch(`${API}/snabbvideo/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
         const r = await svJob('render', { body: fd }, signal, (m) => say && say(m), (x) => { id = x; });
-        st.results.video.unshift({ name: r.name, url: r.url, engineName: `Snabbvideo (${r.engineName || 'TTS'} + stock)`, credits: r.credits });
+        st.results.video.unshift({ name: r.name, url: r.url, engineName: r.engineName || 'Snabbvideo', credits: r.credits });
         return { text: `${text}\nVideon är klar (${Math.round(r.duration)} s) och sparad i Mina verk: ${abs(r.url)}`, link: '#/verk' };
       }
       case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
@@ -2564,11 +2564,11 @@
       say('Skickar…', false, 0);
       try {
         const r = await svJob('render', { body: fd }, ac.signal, (m, p) => say(m, false, p), (id) => { jobId = id; });
-        const item = { name: r.name, url: r.url, engineName: `Snabbvideo (${r.engineName || 'TTS'} + stock)`, credits: r.credits, title: r.title };
+        const item = { name: r.name, url: r.url, engineName: r.engineName || 'Snabbvideo', credits: r.credits, title: r.title };
         st.results.video.unshift(item);
         out.prepend(h('div', { class: 'sv-result' }, h('video', { src: abs(r.url), controls: true, playsinline: true, class: `sv-vid r${String(r.ratio || ratio.value).replace(':', 'x')}` }),
           h('div', { class: 'quick' }, h('a', { class: 'text primary', href: abs(r.url), download: `${(r.title || 'snabbvideo').replace(/[^\wåäöÅÄÖ -]/g, '')}.mp4` }, 'Ladda ner mp4'), h('a', { class: 'text dim', href: '#/verk' }, 'Mina verk')),
-          h('p', { class: 'meta' }, `${r.title || ''} · ${Math.round(r.duration || 0)} s · ${r.ratio || ''} · röst: ${r.engineName || ''}${r.credits && r.credits.length ? ` · stock: ${r.credits.join(', ')}` : ''}`)));
+          h('p', { class: 'meta' }, `${r.title || ''} · ${Math.round(r.duration || 0)} s · ${r.ratio || ''} · ${r.engineName || ''}${r.credits && r.credits.length ? ` · stock: ${r.credits.join(', ')}` : ''}`)));
         say(`Klart! ${Math.round(r.duration || 0)} s. Sparad i Mina verk och Biblioteket.`, false, 1);
       } catch (e) { const c = e.cancelled || e.name === 'AbortError'; say(c ? 'Avbrutet.' : e.message, !c); }
       finally { untrack(); ac = null; jobId = null; stopBtn(bRender, 'Rendera'); bScript.disabled = false; }
