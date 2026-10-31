@@ -596,3 +596,11 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .md-saved h3 { margin:16px 0 8px; }
 .md-saved .chip { flex-direction:row; align-items:center; min-height:44px; }
 @media (max-width:600px) { .md-line { flex-wrap:wrap; } .md-line .md-who { flex-basis:100%; } }
+.mdv label { display:flex; flex-direction:column; gap:6px; font-size:14px; color:var(--dim); flex:1 1 140px; min-width:0; }
+.mdv .row { flex-wrap:wrap; align-items:stretch; }
+.mdv .step { display:flex; flex-direction:column; gap:12px; }
+.mdv input:not([type=checkbox]), .mdv textarea, .mdv select { width:100%; box-sizing:border-box; background:var(--s2); color:var(--fg); border:1px solid var(--line2); border-radius:10px; padding:10px 12px; font:inherit; }
+.mdv .md-scene input, .mdv .md-scene textarea { background:var(--s1); }
+.mdv .chips { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.mdv .md-saved .chip { background:var(--s2); color:var(--fg); border:1px solid var(--line2); padding:4px 8px; }
+.mdv .md-saved .chip.on { border-color:var(--accent); background:var(--accent-bg); }

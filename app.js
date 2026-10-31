@@ -2388,6 +2388,7 @@
     ...s.episodes.flatMap((e) => ['', `AVSNITT ${e.n}: ${e.title}`, `HOOK (0–3 s): ${e.hook}`, ...e.scenes.flatMap((sc, i) => [`  Scen ${i + 1} (${sc.duration} s) – ${sc.shot}${sc.camera ? ` [${sc.camera}]` : ''}`, ...sc.dialogue.map((l) => `    ${l.character || '–'}: ${l.line}`)]), `CLIFFHANGER: ${e.cliffhanger}`])].join('\n');
   const mdDownload = (name, text, type) => { const a = h('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name }); document.body.append(a); a.click(); a.remove(); };
   function mikrodramaView(v) {
+    v.classList.add('mdv');
     const roster = mdRoster();
     const premise = h('textarea', { rows: 3, placeholder: 'Premiss, t.ex. "En fattig servitris visar sig vara arvtagerska till miljardärsfamiljen som förödmjukade henne"' });
     const genre = select(MD_GENRES.map((g) => [g, g]), 'Drama');
