@@ -61,21 +61,22 @@
     }).catch((e) => { puterLoading = null; throw e; });
     return puterLoading;
   }
-  const TERMS_RE = /(^|[^a-zåäö0-9])(child|children|kids?|minors?|underage|under[\s-]*age|teens?|teenage[rs]?|preteen|tween|adolescent|juvenile|loli(ta|con)?|shota(con)?|young[\s-]*looking|youthful[\s-]*looking|barely[\s-]*legal|jailbait|school[\s-]*(girl|boy|uniform)|pupil|kindergarten|toddler|baby|infant|little[\s-]*(girl|boy)|young[\s-]*(girl|boy)|girls?|boys?|(step)?daughter|(step)?son|barn(et|en|slig)?|ungen?|ungar|minderåriga?|omyndig|tonåring(ar)?|tonårs|tonåren|flick(a|an|or)|pojk(e|en|ar)|skol(flicka|pojke|tjej|uniform|an)|elev(er)?|högstadiet?|mellanstadiet|lågstadiet|gymnasiet|förskola|dagis|bebis|småbarn|dotter|ungdom(ar)?)(?=$|[^a-zåäö0-9])/i;
-  const AGE_RE = /\b(\d{1,2})\s*(?:-|\s)?\s*(?:yo|y\/o|yrs?|years?(?:[\s-]*old)?|år(?:ig|ing|s)?|åring)\b|\b(?:age|aged|ålder|åldern)\s*(\d{1,2})\b/gi;
-  // SFW: barn i harmlösa scener är ok (t.ex. barn upp på scen) men aldrig ihop med sexuella/nakna/antydande ord. NSFW: alla barnord nekas.
-  const SEXUAL_RE = /(^|[^a-zåäö0-9])(nsfw|nudes?|naked|nudity|porn\w*|sex\w*|sensual\w*|seduc\w*|erotic\w*|explicit|lewd|fetish\w*|provocative|suggestive|intima\w*|intimate|lingerie|underwear|panties|bras?|thong|bikini\w*|swimsuit|topless|shirtless|cleavage|undress\w*|strip\w*|kiss\w*|making[\s-]*out|beds?|bedroom|bath\w*|shower\w*|genital\w*|nipples?|breasts?|butt|crotch|groin|naken|nakna|nakenhet|sexig\w*|sensuell\w*|erotisk\w*|porr\w*|underkläder|trosor|behå|bh|baddräkt|kyss\w*|hångla\w*|säng(en)?|sovrum(met)?|bad(et)?|dusch\w*|klä[\s-]*av|avklädd\w*|strippa\w*|intim\w*|utmanande|bröst(en)?|rumpa|skrev)(?=$|[^a-zåäö0-9])/i;
-  const HARD_RE = /(^|[^a-zåäö0-9])(schoolgirls?|skolflick(a|or)|loli(ta|con)?|shota(con)?|jailbait|barely[\s-]*legal|pedo\w*|cp|young[\s-]*looking|youthful[\s-]*looking|childlike|barnslig\w*|underage|under[\s-]*age|minderåriga?|omyndig|ungt utseende|ser ung ut)(?=$|[^a-zåäö0-9])/i;
-  const BARN_EN_RE = /\b(?:(?:the|a|an|red|old|wooden|big|abandoned|rustic|farm|in\s+a|in\s+the)\s+barns?|barns?\s+(?:doors?|owls?|roofs?|walls?|swallows?|dance|wedding|cats?|interior))\b/gi;
+  // Speglar server/kino/safety.js: bara sexualiserade minderåriga stoppas. HARD alltid; barn-/ungdomsord bara ihop med
+  // sexuella ord eller i NSFW-läget. Icke-sexuell text med "barn", "ung", "teen", "tonåring" går igenom.
+  const B = '(^|[^a-zåäöéü0-9])(', E = ')(?=$|[^a-zåäöéü0-9])';
+  const CHILD_RE = new RegExp(B + 'child(ren|like)?|child-like|kids?|kiddie|minors?|under[\\s-]*age|pre[\\s-]*teen|tween|toddler|infant|little[\\s-]*(girl|boy)|young[\\s-]*(girl|boy)|school[\\s-]*(girl|boy)|young[\\s-]*looking|youthful[\\s-]*looking|looks[\\s-]*young|baby[\\s-]*face|elementary[\\s-]*school|middle[\\s-]*school|kindergarten|barn(et|en|slig|sliga|ansikte)?|småbarn|minderåriga?|omyndig|skolflick(a|or)|skolpojk(e|ar)|lågstadiet|mellanstadiet|förskola|dagis|ungt[\\s-]*utseende|ser[\\s-]*ung[\\s-]*ut|liten[\\s-]*(flicka|pojke|tjej|kille)|lilla[\\s-]*tjejen' + E, 'i');
+  const YOUTH_RE = new RegExp(B + 'teens?|teenage(rs?)?|teenie|adolescent|young|youthful|flat[\\s-]*chested|high[\\s-]*school|highschool|school[\\s-]*uniform|(step)?daughter|stepson|tonåring(ar)?|tonårs(aktig)?|tonåren|ung|unga|ungdom(ar|lig)?|flick(a|an|or)|pojk(e|en|ar)|skoluniform|högstadiet|gymnasiet|gymnasietjej|elev|dotter|styvdotter' + E, 'i');
+  const HARD_RE = new RegExp(B + 'loli(ta|con)?|shota(con)?|jailbait|barely[\\s-]*legal|pedo(phile)?|paedophile|pedofil|nymphet|cp' + E, 'i');
+  const SEXUAL_RE = new RegExp(B + 'nsfw|nudes?|naked|nudity|porno?|pornographic|sex|sexy|sexual|sexuali[sz]ed|erotica?|explicit|lewd|fetish|seductive|topless|bottomless|lingerie|panties|undress(ed|ing)?|stripping|stripper|genitals?|nipples?|orgasm|masturbat(ing|ion)?|blowjob|hentai|onlyfans|horny|aroused|xxx|boudoir|naken|nakna|nakenhet|sexig|sexiga|sexuell|sexuella|erotisk|erotiska|porr|avklädd|klär[\\s-]*av[\\s-]*sig|strippar|kåt|onanerar|underkläder|trosor' + E, 'i');
+  const ADULTQ_RE = /(^|[^a-zåäö0-9])(young|ung|unga)[\s-]+(adults?|wom[ae]n|m[ae]n|lady|mother|mom|vuxen|vuxna|kvinnor?|man|män|mamma)(?=$|[^a-zåäö0-9])/gi;
+  const AGE_RE = /\b(\d{1,2})\s*(?:-|\s)?\s*(?:yo|y\/o|yrs?|years?(?:[\s-]*old)|år(?:ig|ing|s)?|åring)\b|\b(?:age|aged|ålder|åldern)\s*:?\s*(\d{1,2})\b/gi;
+  function underAge(s) { let m; AGE_RE.lastIndex = 0; while ((m = AGE_RE.exec(s))) if (Number(m[1] || m[2]) < 18) return true; return false; }
+  function minorSignal(s, youth = true) { return CHILD_RE.test(s) || underAge(s) || (youth && YOUTH_RE.test(s.replace(ADULTQ_RE, ' '))); }
   function minorText(t, lane) {
-    let s = String(t || '').toLowerCase();
-    const nsfw = (lane || st.lane) === 'nsfw';
+    const s = String(t || '').toLowerCase();
     if (HARD_RE.test(s)) return true;
-    if (!nsfw && !SEXUAL_RE.test(s)) s = s.replace(BARN_EN_RE, ' ');
-    let minor = TERMS_RE.test(s);
-    let m; AGE_RE.lastIndex = 0;
-    while (!minor && (m = AGE_RE.exec(s))) if (Number(m[1] || m[2]) < 18) minor = true;
-    return minor && (nsfw || SEXUAL_RE.test(s));
+    if (!((lane || st.lane) === 'nsfw' || SEXUAL_RE.test(s))) return false;
+    return minorSignal(s);
   }
   const REFUSE = 'Nekad: KINO gör aldrig något som rör minderåriga.';
   function puterError(e) {
@@ -1837,23 +1838,23 @@
   }
 
   // ---- Skapa influencer-artist: påhittad vuxen AI-persona -> 4 porträtt -> artistlistan ----
-  const P_YOUNG_RE = /(^|[^a-zåäö0-9])(young(er)?|youthful|youth|petite|tiny|little|baby[\s-]*face|flat[\s-]*chested|innocent|pigtails|braces|student|college[\s-]*girl|nymphet|chibi|ung|unga|ungdomliga?|liten|lilla|späd|barnansikte|flickaktig|pojkaktig|oskyldig|tonårsaktig)(?=$|[^a-zåäö0-9])/i;
-  const P_REAL_RE = /(look(s|ing)?[\s-]*(a[\s-]*)?like|look[\s-]*alike|resembl\w*|doppelg(a|ä)nger|celebrity|celeb|famous|som liknar|liknar|ser ut som|kändis\w*|känd person|berömd\w*|kopia av|tvilling till)/i;
-  const P_PROPER_RE = /(^|[^\p{L}])\p{Lu}\p{Ll}+[\s-]+\p{Lu}\p{Ll}+/u;
+  const P_TEEN_RE = /(^|[^a-zåäö0-9])(teens?|teenage(rs?)?|teenie|tonåring(ar)?|tonårs\w*|tonåren|flick(a|an|or)|pojk(e|en|ar))(?=$|[^a-zåäö0-9])/i;
+  const P_REAL_RE = /(look(s|ing)?[\s-]*(a[\s-]*)?like|look[\s-]*alike|lookalike|resembl\w*|doppelg(a|ä)nger|som liknar|liknar|ser ut som|kopia av|tvilling till)\s+(a\s+|an\s+|en\s+|ett\s+)?(\p{Lu}|(famous|celebrit|kändis|känd|berömd|real|verklig)\w*)|(celebrity|celeb|kändis)[\s-]*(look[\s-]*alike|lookalike|dubbelgångare)|dubbelgångare|look[\s-]*alike/u;
   function personaCheck(p) {
     if (!p.name) return 'Skriv ett namn på artisten.';
-    if (!(Number(p.age) >= 21)) return 'Åldern måste vara minst 21 år. KINO skapar bara vuxna personer.';
+    if (!(Number(p.age) >= 18)) return 'Åldern måste vara minst 18 år. KINO skapar bara vuxna personer.';
     const all = Object.values(p).join(' \n ');
-    if (minorText(all, 'nsfw') || P_YOUNG_RE.test(all)) return 'Nekad: bara vuxna (21+). Ord som syftar på barn, tonåringar eller ungt utseende är inte tillåtna.';
-    if (P_REAL_RE.test(all) || Object.entries(p).some(([k, x]) => k !== 'name' && P_PROPER_RE.test(String(x)))) return 'Nekad: inga verkliga eller kända personer och inga "liknar …"-beskrivningar. Artisten måste vara helt påhittad.';
+    const low = all.toLowerCase();
+    if (HARD_RE.test(low) || P_TEEN_RE.test(low) || minorSignal(low, false)) return 'Nekad: bara vuxna (18+). Ord som syftar på barn, tonåringar eller barnsligt utseende är inte tillåtna.';
+    if (P_REAL_RE.test(all)) return 'Nekad: inga "liknar …"-beskrivningar av verkliga personer. Artisten måste vara helt påhittad (kända namn stoppas av servern).';
     return null;
   }
   const PORTRAIT_PREF = ['flux-klein', 'qwen-image', 'z-image', 'sana-sprint'];
   async function personaView(v) {
     const inp = (ph, type) => h('input', { type: type || 'text', placeholder: ph });
-    const f = { name: inp('t.ex. Nova Lind'), gender: select([['kvinna', 'Kvinna'], ['man', 'Man'], ['ickebinär', 'Ickebinär / androgyn']], 'kvinna'), age: h('input', { type: 'number', min: '21', max: '99', value: '25', step: '1' }),
+    const f = { name: inp('t.ex. Nova Lind'), gender: select([['kvinna', 'Kvinna'], ['man', 'Man'], ['ickebinär', 'Ickebinär / androgyn']], 'kvinna'), age: h('input', { type: 'number', min: '18', max: '99', value: '25', step: '1' }),
       hair: inp('t.ex. långt lockigt rött'), eyes: inp('t.ex. gröna'), body: inp('t.ex. atletisk'), ethnicity: inp('valfritt, t.ex. nordisk'), style: inp('t.ex. streetwear, minimalistisk'), genre: inp('t.ex. synthpop'), vibe: inp('t.ex. självsäker och varm') };
-    f.age.oninput = () => { if (Number(f.age.value) < 21) f.age.setCustomValidity('Minst 21 år'); else f.age.setCustomValidity(''); };
+    f.age.oninput = () => { if (Number(f.age.value) < 18) f.age.setCustomValidity('Minst 18 år'); else f.age.setCustomValidity(''); };
     const rewrite = h('input', { type: 'checkbox', checked: true });
     const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
     const say = (t, err) => { status.textContent = t; status.classList.toggle('err', Boolean(err)); };
@@ -1872,15 +1873,15 @@
         const r = await fetch(`${API}/persona/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ persona: p, rewrite: rewrite.checked, lane: st.lane }) });
         const pj = await r.json().catch(() => ({})); if (!r.ok || !pj.ok) throw new Error(pj.error || `Servern svarade ${r.status}`);
         lastPrompt = pj.prompt;
-        // Porträttet görs alltid i SFW-läget (påklädd neutral headshot), även när KINO står i NSFW.
-        const list = (await getEngines('sfw')).filter((e) => e.kind === 'image' && !e.puter && !e.async && e.id !== 'gpu-image' && e.status !== 'down');
+        // Porträttet görs i aktuellt läge (alltid vuxen; SFW icke-explicit).
+        const list = (await getEngines(st.lane)).filter((e) => e.kind === 'image' && !e.puter && !e.async && e.id !== 'gpu-image' && e.status !== 'down');
         const ids = [...PORTRAIT_PREF.filter((id) => list.some((e) => e.id === id)), ...list.map((e) => e.id).filter((id) => !PORTRAIT_PREF.includes(id))];
         if (!ids.length) throw new Error('Ingen bildmotor svarar just nu. Försök igen om en stund.');
         let made = 0; let engineName = ''; let lastErr = '';
         for (const eng of ids) {
           if (made >= 4) break;
           say(`Genererar ${4 - made} porträtt med ${(list.find((e) => e.id === eng) || {}).name || eng}…`);
-          const ir = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: 'sfw', engine: eng, prompt: lastPrompt, ratio: '1:1', count: 4 - made, lora: 'none' }) });
+          const ir = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: st.lane, engine: eng, prompt: lastPrompt, ratio: '1:1', count: 4 - made, lora: 'none' }) });
           if (!ir.ok) { lastErr = await errMsg(ir); continue; }
           const ij = await ir.json();
           for (const im of ij.images || []) {
@@ -1914,9 +1915,9 @@
       } catch (e) { say(e.message, true); saveBtn.disabled = false; }
     };
     v.append(pagehead('Skapa influencer-artist', 'Hitta på en egen AI-artist: beskriv personen, generera fyra ansikten, välj ett och spara i artistlistan. Gratis, med KINO:s egna bildmotorer.'),
-      h('div', { class: 'grid2' }, field('Namn', f.name), field('Kön / stil', f.gender), field('Ålder (minst 21)', f.age), field('Hår', f.hair), field('Ögon', f.eyes), field('Kroppstyp', f.body), field('Etnicitet (valfritt)', f.ethnicity),
+      h('div', { class: 'grid2' }, field('Namn', f.name), field('Kön / stil', f.gender), field('Ålder (minst 18)', f.age), field('Hår', f.hair), field('Ögon', f.eyes), field('Kroppstyp', f.body), field('Etnicitet (valfritt)', f.ethnicity),
         field('Stil', f.style), field('Genre', f.genre), field('Personlighet / vibe', f.vibe, true), h('label', { class: 'wide' }, rewrite, ' Låt AI skriva om prompten (svenska → engelska)')),
-      h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW' : 'SFW'} (sparas med artisten). Porträtten blir alltid en påklädd, neutral headshot – även i NSFW-läge. Bara vuxna (21+), inga verkliga eller kända personer och inga uppladdade foton.`),
+      h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW' : 'SFW'} (sparas med artisten). Porträtten görs i aktuellt läge (SFW: icke-explicit; NSFW: valfri stil, alltid vuxen). Bara vuxna (18+), inga verkliga eller kända personer och inga uppladdade foton.`),
       h('div', { class: 'quick' }, genBtn, saveBtn), status, grid, cardBox);
   }
   function personaToImage(a) { st.imagePrefill = `${a.persona.description}, adult`; location.hash = '#/image'; }
@@ -1946,7 +1947,7 @@
   }
   async function agentImages({ prompt, count, ratio, persona }, signal, setCancel, say) {
     if (minorText(prompt)) throw new Error(REFUSE);
-    const lane = persona ? 'sfw' : st.lane; // porträtt alltid SFW, som på artistsidan
+    const lane = st.lane; // porträtt i aktuellt läge (alltid vuxen)
     const list = (await getEngines(lane)).filter((e) => e.kind === 'image' && !e.puter && e.id !== 'gpu-image' && e.status !== 'down');
     const pref = persona ? PORTRAIT_PREF : [];
     const ids = [...pref.filter((id) => list.some((e) => e.id === id)), ...list.filter((e) => !e.async).map((e) => e.id).filter((id) => !pref.includes(id)), ...list.filter((e) => e.async).map((e) => e.id)];
@@ -2007,7 +2008,7 @@
       case 'viral_mashup': {
         let cards = prev && prev.cards;
         if (!cards) { const r = await fetch(`${API}/viral/trends?kind=${a.kind}`, { signal }).then((x) => x.json()); cards = r.cards || []; }
-        cards = cards.filter((c) => !minorText(JSON.stringify(c), 'nsfw')); // bara trygga mönster (undviker nekade mixar)
+        cards = cards.filter((c) => !minorText(JSON.stringify(c))); // bara trygga mönster (undviker nekade mixar)
         if (cards.length < 2) throw new Error('För få trendmönster att mixa just nu.');
         say('Mixar trendmönster…');
         let m; try { m = await json('/viral/mashup', { kind: a.kind, lane: st.lane, cards: cards.slice(0, a.picks || 2), idea: a.idea, seconds: a.seconds, format: '9:16' }); }
