@@ -1968,7 +1968,7 @@
   const promptOf = (o) => (o && (o.prompt || o.idea)) || '';
   async function agentRunStep(step, outs, ctl) {
     const a = step.args || {}; const prev = a.from != null ? outs[a.from] : null; const { signal, say, setCancel } = ctl;
-    const json = async (path, body) => { const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) throw new Error(j.error || j.message || `Servern svarade ${r.status}`); return j; };
+    const json = async (path, body) => { const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) { const msg = j.error || j.message || `Servern svarade ${r.status}`; throw new Error(/^Refused/.test(msg) ? (/minor/.test(msg) ? REFUSE : 'Nekad av säkerhetsfiltret.') : msg); } return j; };
     switch (step.tool) {
       case 'persona': {
         const p = { name: a.name, gender: a.gender, age: a.age, hair: a.hair, eyes: a.eyes, body: a.body, ethnicity: a.ethnicity, style: a.style, genre: a.genre, vibe: a.vibe };
@@ -2007,8 +2007,11 @@
       case 'viral_mashup': {
         let cards = prev && prev.cards;
         if (!cards) { const r = await fetch(`${API}/viral/trends?kind=${a.kind}`, { signal }).then((x) => x.json()); cards = r.cards || []; }
+        cards = cards.filter((c) => !minorText(JSON.stringify(c), 'nsfw')); // bara trygga mönster (undviker nekade mixar)
+        if (cards.length < 2) throw new Error('För få trendmönster att mixa just nu.');
         say('Mixar trendmönster…');
-        const m = await json('/viral/mashup', { kind: a.kind, lane: st.lane, cards: cards.slice(0, a.picks || 2), idea: a.idea, seconds: a.seconds, format: '9:16' });
+        let m; try { m = await json('/viral/mashup', { kind: a.kind, lane: st.lane, cards: cards.slice(0, a.picks || 2), idea: a.idea, seconds: a.seconds, format: '9:16' }); }
+        catch (e) { if (e.name === 'AbortError' || cards.length < 4) throw e; say('Försöker med andra trender…'); m = await json('/viral/mashup', { kind: a.kind, lane: st.lane, cards: cards.slice(2, 2 + (a.picks || 2)), idea: a.idea, seconds: a.seconds, format: '9:16' }); }
         const shots = (m.shots || []).map((s) => `${s.t} ${s.visual}${s.text ? ` [${s.text}]` : ''}`).join('\n');
         return { prompt: m.prompt, shots, title: m.title, text: `${m.title}\n${m.prompt}` };
       }
