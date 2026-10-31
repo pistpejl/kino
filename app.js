@@ -551,6 +551,7 @@
     klipp: '<circle cx="6" cy="6.5" r="2.5"/><circle cx="6" cy="17.5" r="2.5"/><path d="M8.2 7.8 20 16M8.2 16.2 14 12.3"/><rect x="15" y="4" width="6" height="6" rx="1.5"/>',
   };
   Object.assign(ICONS, {
+    snabbvideo: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
     mikrodrama: '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="m10.5 9.5 4 2.5-4 2.5z"/>',
     lipsync: '<path d="M4 12c2-3 5-4 8-4s6 1 8 4c-2 3-5 4-8 4s-6-1-8-4z"/><path d="M4 12h16"/>',
     face: '<circle cx="12" cy="12" r="8"/><circle cx="9" cy="10.5" r=".8"/><circle cx="15" cy="10.5" r=".8"/><path d="M9 15c1.7 1.3 4.3 1.3 6 0"/>',
@@ -566,6 +567,7 @@
       ['video', 'Video', 'Text eller bild blir ett videoklipp', '#/video'],
       ['music', 'Musikvideo', 'Låt och bilder blir en klippt video', '#/music'],
       ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
+      ['snabbvideo', 'Snabbvideo', 'Ämne till färdig kort video med röst, stockklipp och textning', '#/snabbvideo'],
       ['mikrodrama', 'Mikrodrama', 'Kort vertikal serie med hook, repliker och cliffhanger', '#/mikrodrama'],
       ['analyze', 'Analysera video', 'Ladda upp ett klipp, få scener', '#/script', 'analyze'],
       ['stock', 'Stockklipp', 'Riktiga klipp till din låt', '#/music', 'stock', true],
@@ -612,7 +614,7 @@
     models.append(ul);
   }
 
-  const LAST_NAMES = { mikrodrama: 'Mikrodrama', image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk' };
+  const LAST_NAMES = { snabbvideo: 'Snabbvideo', mikrodrama: 'Mikrodrama', image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk' };
   const hub = (v, title, sub, items) => {
     const nsfw = st.lane === 'nsfw';
     v.append(pagehead(title, sub), h('div', { class: 'hub' }, items.map(([ic, t, d, href, preset, sfwOnly]) => {
@@ -2135,7 +2137,7 @@
   // ---- AI-agent (#/agent): önskemål på svenska -> plan (server) -> stegen körs här med KINO:s vanliga routes/sidor ----
   const AGENT_KEY = 'kino.agent.chat';
   const AGENT_TOOLS = { persona: 'Influencer-artist', image: 'Bilder', script: 'Manus', viral_trends: 'Trender', viral_mashup: 'Viral-mix', save_template: 'Spara i Mina mallar',
-    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', micro_drama: 'Mikrodrama' };
+    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo' };
   const HANDOFF = { video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, lip_sync: 1, klipp: 1 };
   const STATUS_SV = { wait: 'Väntar', confirm: 'Bekräfta', run: 'Kör…', done: 'Klar', err: 'Fel', cancel: 'Avbruten', skip: 'Hoppades över' };
   const agentLoad = () => { try { return JSON.parse(localStorage.getItem(AGENT_KEY) || '[]'); } catch { return []; } };
@@ -2263,6 +2265,19 @@
         if (a.produce === 'lipsync' && sc0 && sc0.dialogue[0]) { const l = sc0.dialogue[0]; const ar = rosterLocal().find((r) => r.name.toLowerCase() === String(l.character).toLowerCase()); st.agentPick = { ...(st.agentPick || {}), lipsync: { artist: ar ? ar.name : '', text: l.line } }; return { text: `${text}\nLäppsynk öppnas med första repliken${ar ? ` och ${ar.name}` : ''} – intyga samtycket och tryck Skapa läppsynk.`, go: '#/lappsynk' }; }
         return { images, text, link: '#/mikrodrama', mdId: ser.id };
       }
+      case 'quick_video': {
+        if (minorText(a.topic, st.lane)) throw new Error(REFUSE);
+        if (st.lane === 'nsfw') throw new Error('Snabbvideo finns bara i SFW-läget.');
+        const sc = await svScript({ topic: a.topic || promptOf(prev), lang: a.lang, seconds: a.seconds }, signal, (m) => say && say(m));
+        st.svPrefill = sc;
+        const text = `${sc.title}\n${sc.sentences.map((x) => x.text).join(' ')}`;
+        if (!a.render) return { text: `${text}\nManuset öppnas i Snabbvideo – ändra och tryck Rendera.`, link: '#/snabbvideo' };
+        const fd = new FormData(); fd.append('spec', JSON.stringify({ title: sc.title, sentences: sc.sentences, lang: a.lang, ratio: a.ratio, lane: st.lane }));
+        let id = null; setCancel && setCancel(() => { if (id) fetch(`${API}/snabbvideo/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
+        const r = await svJob('render', { body: fd }, signal, (m) => say && say(m), (x) => { id = x; });
+        st.results.video.unshift({ name: r.name, url: r.url, engineName: `Snabbvideo (${r.engineName || 'TTS'} + stock)`, credits: r.credits });
+        return { text: `${text}\nVideon är klar (${Math.round(r.duration)} s) och sparad i Mina verk: ${abs(r.url)}`, link: '#/verk' };
+      }
       case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
       default: throw new Error('Okänt verktyg.');
     }
@@ -2291,7 +2306,7 @@
             if (s.out && s.out.images) res.append(h('div', { class: 'agent-thumbs' }, s.out.images.map((u) => h('a', { href: u, target: '_blank', rel: 'noopener' }, h('img', { src: u, alt: 'Resultat', loading: 'lazy' })))));
             if (s.out && s.out.text) res.append(h('pre', {}, s.out.text));
             if (s.out && s.out.go) res.append(h('a', { class: 'text', href: s.out.go }, 'Öppna igen ›'));
-            if (s.out && s.out.link) res.append(h('a', { class: 'text dim', href: s.out.link, onclick: () => { if (s.out.mdId) st.mdOpen = s.out.mdId; } }, s.out.link === '#/mikrodrama' ? 'Öppna Mikrodrama ›' : 'Öppna Manus ›'));
+            if (s.out && s.out.link) res.append(h('a', { class: 'text dim', href: s.out.link, onclick: () => { if (s.out.mdId) st.mdOpen = s.out.mdId; } }, ({ '#/mikrodrama': 'Öppna Mikrodrama ›', '#/snabbvideo': 'Öppna Snabbvideo ›', '#/verk': 'Öppna Mina verk ›' })[s.out.link] || 'Öppna Manus ›'));
             if (s.error) res.append(h('p', { class: 'status err' }, s.error));
             if (s.status === 'run' && s.msg) res.append(h('p', { class: 'meta' }, s.msg));
             const row = h('div', { class: 'quick' });
@@ -2483,10 +2498,96 @@
     if (st.mdOpen) { cur = mdLoad().find((x) => x.id === st.mdOpen) || null; st.mdOpen = null; }
     paint(); paintSaved();
   }
-  const VIEWS = { mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
+  // ---- Snabbvideo: ämne -> manus -> röst + stockklipp + textning -> färdig kort video (inspirerad av MoneyPrinterTurbo, MIT) ----
+  const SV_LANGS = [['sv', 'Svenska'], ['en', 'Engelska'], ['no', 'Norska'], ['da', 'Danska'], ['fi', 'Finska'], ['de', 'Tyska'], ['es', 'Spanska'], ['fr', 'Franska']];
+  async function svJob(path, init, signal, say, onId) {
+    const r = await fetch(`${API}/snabbvideo/${path}`, { method: 'POST', ...init, signal });
+    const j = await r.json().catch(() => ({})); if (!r.ok || !j.ok) throw Object.assign(new Error(j.error || `Servern svarade ${r.status}`), { refused: j.refused });
+    if (onId) onId(j.jobId);
+    for (;;) {
+      await abortable(new Promise((ok) => setTimeout(ok, 2000)), signal);
+      const s = await fetch(`${API}/snabbvideo/jobs/${j.jobId}`, { signal }).then((x) => x.json()).catch(() => null);
+      if (!s) continue; if (say) say(`${s.message || 'Jobbar'}${s.progress ? ` · ${Math.round(s.progress * 100)} %` : ''}`, s.progress);
+      if (s.status === 'done') return s.result;
+      if (s.status === 'error' || s.status === 'cancelled') throw Object.assign(new Error(s.error || 'Misslyckades.'), { cancelled: s.status === 'cancelled' });
+    }
+  }
+  const svScript = (body, signal, say) => svJob('script', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane }) }, signal, say);
+  function snabbvideoView(v) {
+    v.classList.add('mdv', 'svv');
+    const topic = h('textarea', { rows: 2, placeholder: 'Ämne, t.ex. "Varför Stockholm byggdes på fjorton öar"' });
+    const lang = select(SV_LANGS, 'sv'); const secs = select([15, 20, 30, 45, 60, 90].map((n) => [String(n), `${n} s`]), '30');
+    const tone = select([['fakta', 'Fakta'], ['berättande', 'Berättande'], ['peppande', 'Peppande'], ['humor', 'Humor']], 'fakta');
+    const ratio = select([['9:16', '9:16 stående'], ['16:9', '16:9 liggande'], ['1:1', '1:1 kvadrat']], '9:16');
+    const gender = select([['female', 'Kvinna'], ['male', 'Man']], 'female'); const speed = select([['0.9', 'Lugn'], ['1', 'Normal'], ['1.15', 'Snabb']], '1');
+    const pos = select([['bottom', 'Nederst'], ['middle', 'Mitten'], ['top', 'Överst']], 'bottom'); const size = select([['small', 'Liten'], ['medium', 'Mellan'], ['large', 'Stor']], 'medium');
+    const color = select([['white', 'Vit'], ['yellow', 'Gul'], ['cyan', 'Cyan'], ['pink', 'Rosa']], 'white'); const outline = select([['outline', 'Kontur'], ['box', 'Ruta'], ['none', 'Ingen']], 'outline');
+    const subsOn = h('input', { type: 'checkbox', checked: true }); const showTitle = h('input', { type: 'checkbox', checked: true });
+    const trans = select([['fade', 'Toning'], ['none', 'Hårt klipp']], 'fade');
+    const music = h('input', { type: 'file', accept: 'audio/*,.mp3,.wav,.m4a' }); const vol = h('input', { type: 'range', min: '0.05', max: '0.6', step: '0.05', value: '0.2' });
+    const status = h('p', { class: 'status', 'aria-live': 'polite' }); const bar = h('progress', { max: 1, value: 0, hidden: true });
+    const say = (t, err, p) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); if (p != null) { bar.hidden = false; bar.value = p; } };
+    const bScript = h('button', { class: 'text primary', type: 'button' }, 'Skriv manus');
+    const bRender = h('button', { class: 'text primary', type: 'button', disabled: true }, 'Rendera');
+    const edit = h('div', { class: 'sv-edit' }); const out = h('div', { class: 'sv-out' });
+    let cur = st.svPrefill || null; st.svPrefill = null; let ac = null; let jobId = null;
+    function paintEdit() {
+      edit.innerHTML = ''; bRender.disabled = !cur; if (!cur) return;
+      const ti = h('input', { value: cur.title || '' }); ti.value = cur.title || ''; ti.oninput = () => { cur.title = ti.value; };
+      const rows = h('div', { class: 'sv-rows' });
+      const paintRows = () => { rows.innerHTML = ''; cur.sentences.forEach((x, i) => { const t = h('textarea', { rows: 2 }); t.value = x.text; t.oninput = () => { x.text = t.value; };
+        const k = h('input', { placeholder: 'sökord (engelska), kommaseparerade' }); k.value = (x.terms || []).join(', '); k.oninput = () => { x.terms = k.value.split(',').map((y) => y.trim()).filter(Boolean); };
+        rows.append(h('div', { class: 'sv-row' }, h('b', {}, String(i + 1)), h('div', {}, t, k), h('button', { class: 'text dim', type: 'button', 'aria-label': 'Ta bort mening', onclick: () => { cur.sentences.splice(i, 1); paintRows(); } }, '×'))); });
+        rows.append(h('button', { class: 'text dim', type: 'button', onclick: () => { cur.sentences.push({ text: '', terms: [] }); paintRows(); } }, '+ Mening')); };
+      paintRows();
+      edit.append(h('h3', {}, 'Manus – ändra fritt'), field('Titel', ti, true), rows, h('p', { class: 'meta' }, `${cur.model ? `Skrivet av ${cur.model} · ` : ''}En mening = ett textblock och 1–2 stockklipp (Pixabay/Coverr).`));
+    }
+    const stopBtn = (b, label) => { b.textContent = label; };
+    bScript.onclick = async () => {
+      if (ac) { ac.abort(); return; }
+      const t = topic.value.trim(); if (!t) return say('Skriv ett ämne.', true); if (minorText(t, st.lane)) return say(REFUSE, true);
+      ac = new AbortController(); stopBtn(bScript, 'Avbryt'); const untrack = track('Snabbvideo: manus', () => ac && ac.abort());
+      try { const r = await svScript({ topic: t, lang: lang.value, seconds: +secs.value, tone: tone.value }, ac.signal, (m, p) => say(m, false, p)); cur = { ...r }; say(`Manus klart: ${cur.sentences.length} meningar. Ändra och tryck Rendera.`); paintEdit(); }
+      catch (e) { say(e.name === 'AbortError' ? 'Avbrutet.' : e.message, e.name !== 'AbortError'); }
+      finally { untrack(); ac = null; stopBtn(bScript, 'Skriv manus'); }
+    };
+    bRender.onclick = async () => {
+      if (ac) { ac.abort(); if (jobId) fetch(`${API}/snabbvideo/jobs/${jobId}`, { method: 'DELETE' }).catch(() => null); return; }
+      if (!cur) return; cur.sentences = cur.sentences.filter((x) => x.text.trim()); if (!cur.sentences.length) return say('Manuset är tomt.', true);
+      if (minorText([cur.title, ...cur.sentences.map((x) => x.text)].join(' '), st.lane)) return say(REFUSE, true);
+      if (st.lane === 'nsfw') return say('Snabbvideo använder stockklipp och finns bara i SFW-läget.', true);
+      const spec = { title: cur.title, sentences: cur.sentences, lang: lang.value, gender: gender.value, speed: +speed.value, ratio: ratio.value, transition: trans.value, showTitle: showTitle.checked,
+        subs: { on: subsOn.checked, pos: pos.value, size: size.value, color: color.value, outline: outline.value }, musicVolume: +vol.value, lane: st.lane };
+      const fd = new FormData(); fd.append('spec', JSON.stringify(spec)); if (music.files[0]) fd.append('music', music.files[0]);
+      ac = new AbortController(); jobId = null; stopBtn(bRender, 'Avbryt'); bScript.disabled = true;
+      const untrack = track('Snabbvideo: renderar', () => { if (ac) ac.abort(); if (jobId) fetch(`${API}/snabbvideo/jobs/${jobId}`, { method: 'DELETE' }).catch(() => null); });
+      say('Skickar…', false, 0);
+      try {
+        const r = await svJob('render', { body: fd }, ac.signal, (m, p) => say(m, false, p), (id) => { jobId = id; });
+        const item = { name: r.name, url: r.url, engineName: `Snabbvideo (${r.engineName || 'TTS'} + stock)`, credits: r.credits, title: r.title };
+        st.results.video.unshift(item);
+        out.prepend(h('div', { class: 'sv-result' }, h('video', { src: abs(r.url), controls: true, playsinline: true, class: `sv-vid r${String(r.ratio || ratio.value).replace(':', 'x')}` }),
+          h('div', { class: 'quick' }, h('a', { class: 'text primary', href: abs(r.url), download: `${(r.title || 'snabbvideo').replace(/[^\wåäöÅÄÖ -]/g, '')}.mp4` }, 'Ladda ner mp4'), h('a', { class: 'text dim', href: '#/verk' }, 'Mina verk')),
+          h('p', { class: 'meta' }, `${r.title || ''} · ${Math.round(r.duration || 0)} s · ${r.ratio || ''} · röst: ${r.engineName || ''}${r.credits && r.credits.length ? ` · stock: ${r.credits.join(', ')}` : ''}`)));
+        say(`Klart! ${Math.round(r.duration || 0)} s. Sparad i Mina verk och Biblioteket.`, false, 1);
+      } catch (e) { const c = e.cancelled || e.name === 'AbortError'; say(c ? 'Avbrutet.' : e.message, !c); }
+      finally { untrack(); ac = null; jobId = null; stopBtn(bRender, 'Rendera'); bScript.disabled = false; }
+    };
+    v.append(pagehead('Snabbvideo', 'Ett ämne blir en färdig kort video: AI-manus, gratis röst, stockklipp per mening, inbränd textning och valfri musik. Skriv manus, ändra, rendera.'),
+      h('section', { class: 'step' }, h('h3', {}, '1. Ämne'), field('Ämne', topic, true), h('div', { class: 'row' }, field('Språk', lang), field('Längd', secs), field('Ton', tone)), h('div', { class: 'quick' }, bScript)),
+      h('section', { class: 'step' }, edit,
+        h('h3', {}, '2. Utseende och ljud'), h('div', { class: 'row' }, field('Format', ratio), field('Röst', gender), field('Tempo', speed), field('Övergång', trans)),
+        h('div', { class: 'row' }, field('Textning', h('label', { class: 'chk' }, subsOn, ' På')), field('Position', pos), field('Storlek', size), field('Färg', color), field('Kant', outline)),
+        h('div', { class: 'row' }, field('Bakgrundsmusik (valfri, duckas under rösten)', h('div', {}, music, libButton(music)), true), field('Musikvolym', vol), field('Titel i början', h('label', { class: 'chk' }, showTitle, ' Visa'))),
+        h('p', { class: 'lanenote' }, 'Bara SFW (stockklipp). Ca 720p, renderas på servern – 20–60 s video tar oftast 1–4 minuter.'),
+        h('div', { class: 'quick' }, bRender), bar, status), out);
+    if (st.lane === 'nsfw') say('Snabbvideo finns bara i SFW-läget – byt läge uppe till höger.', true);
+    paintEdit();
+  }
+  const VIEWS = { snabbvideo: snabbvideoView, mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
     skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
-  const ALIAS = { microdrama: 'mikrodrama', 'micro-drama': 'mikrodrama', lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
-  const SECTION = { '': '', mikrodrama: 'mikrodrama', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', verk: 'verk', bibliotek: 'verk' };
+  const ALIAS = { quickvideo: 'snabbvideo', 'quick-video': 'snabbvideo', microdrama: 'mikrodrama', 'micro-drama': 'mikrodrama', lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
+  const SECTION = { '': '', snabbvideo: 'snabbvideo', mikrodrama: 'mikrodrama', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', verk: 'verk', bibliotek: 'verk' };
   function route() {
     let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
     let [k, q] = raw.split('?'); k = k || '';

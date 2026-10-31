@@ -604,3 +604,14 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .mdv .chips { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .mdv .md-saved .chip { background:var(--s2); color:var(--fg); border:1px solid var(--line2); padding:4px 8px; }
 .mdv .md-saved .chip.on { border-color:var(--accent); background:var(--accent-bg); }
+
+/* Snabbvideo */
+.svv .sv-rows{display:grid;gap:.6rem;margin:.5rem 0}
+.svv .sv-row{display:grid;grid-template-columns:1.6rem 1fr auto;gap:.5rem;align-items:start}
+.svv .sv-row textarea,.svv .sv-row input{width:100%;box-sizing:border-box}
+.svv .sv-row input{margin-top:.3rem;font-size:.85em;opacity:.85}
+.svv progress{width:100%;height:6px;accent-color:var(--accent,#8b5cf6)}
+.svv .chk{display:flex;align-items:center;gap:.35rem}
+.svv .sv-result{margin:1rem 0;padding:1rem;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.03)}
+.svv .sv-vid{display:block;max-width:100%;max-height:70vh;border-radius:10px;background:#000;margin:0 auto .6rem}
+.svv .sv-vid.r9x16{width:min(360px,100%)}
