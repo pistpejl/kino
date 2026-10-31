@@ -452,7 +452,8 @@
     const tts = h('textarea', { rows: 3, maxlength: 600, placeholder: 'Eller skriv text som läses upp (text till tal), t.ex. "Hej! Nya singeln släpps på fredag."' });
     const lang = select([['sv', 'Svenska'], ['en', 'Engelska']], 'sv');
     if (pick && pick.text) tts.value = pick.text;
-    const amode = select([['file', 'Ljudfil eller del av låt'], ['tts', 'Text till tal']], pick && pick.text ? 'tts' : 'file');
+    if (pick && pick.song) { const dt = new DataTransfer(); dt.items.add(pick.song instanceof File ? pick.song : new File([pick.song], pick.songName || 'lat.mp3', { type: pick.song.type || 'audio/mpeg' })); aIn.files = dt.files; from.value = pick.start || 0; to.value = pick.end || 8; }
+    const amode = select([['file', 'Ljudfil eller del av låt'], ['tts', 'Text till tal']], pick && pick.text && !pick.song ? 'tts' : 'file');
     const fileBox = h('div', { class: 'grid2' }, field('Ljud / låt', aIn, true), field('Från (s)', from), field('Till (s)', to), h('small', { class: 'meta wide' }, 'Max 12 sekunder per klipp. Välj den del av låten som ska sjungas.'));
     const ttsBox = h('div', {}, field('Text', tts, true), field('Språk', lang));
     const paintA = () => { fileBox.hidden = amode.value !== 'file'; ttsBox.hidden = amode.value !== 'tts'; }; amode.onchange = paintA; paintA();
@@ -1400,6 +1401,7 @@
     c.box.querySelector('.composer').after(pre);
     const applyM = (x) => { c.ta.value = x.prompt + (x.shots ? '\n\n' + x.shots : ''); c.ta.dispatchEvent(new Event('input')); c.say(`${x.title} från Viral-mixer ifylld. Ändra texten om du vill.`); };
     const mb = viralBox({ name: 'music', apply: applyM }); pre.after(mb); takeViral('music', applyM);
+    if (st.mdSong) { const f = st.mdSong; st.mdSong = null; setTimeout(() => { const dt = new DataTransfer(); dt.items.add(f); songIn.files = dt.files; songIn.dispatchEvent(new Event('change', { bubbles: true })); }, 0); }
     const cinM = cinemaPanel('video'); if (cinM) { cinM.skip = () => motion.value === 'stock'; c.setCinema(cinM); }
     const step2 = h('section', { class: 'step' }, stepHead(2, 'Vad handlar den om?', 'Skriv själv eller välj stilar'), c.box);
     const syncSteps = () => { const done = [Boolean(song), Boolean(c.ta.value.trim()), imgs.length > 0]; [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('done', done[i])); const cur = done.indexOf(false); [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('cur', i === (cur < 0 ? 2 : cur))); [...bars.children].forEach((b, i) => b.classList.toggle('on', done[i])); };
@@ -2252,7 +2254,7 @@
       case 'micro_drama': {
         if (minorText(a.premise, st.lane)) throw new Error(REFUSE);
         const castL = (a.cast || []).map((n) => { const x = rosterLocal().find((r) => r.name === n); return { name: n, roster: true, description: (x && x.persona && x.persona.description) || '' }; });
-        const ser = await mdPlan({ premise: a.premise || promptOf(prev), genre: a.genre, episodes: a.episodes, seconds: a.seconds, cast: castL }, signal, say);
+        const ser = await mdPlan({ premise: a.premise || promptOf(prev), genre: a.genre, episodes: a.episodes, seconds: a.seconds, cast: castL, template: a.template || undefined, music: a.music, viral: a.viral }, signal, say);
         const e1 = ser.episodes[0]; st.mdOpen = ser.id;
         let text = `${ser.title}\n${ser.logline}\nAvsnitt 1 hook: ${e1.hook}\n${ser.episodes.length} avsnitt sparade under Mikrodrama › Mina serier.`;
         let images;
@@ -2375,7 +2377,13 @@
   }
   // ---- Mikrodrama: korta vertikala serier (ReelShort/DramaBox-stil) ----
   const MD_KEY = 'kino.microdramas';
-  const MD_GENRES = ['Romantik', 'Hämnd', 'Miljardär', 'Thriller', 'Fantasy', 'Komedi', 'Skräck', 'Drama'];
+  const MD_GENRES = ['Romantik', 'Hämnd', 'Miljardär', 'Thriller', 'Fantasy', 'Komedi', 'Skräck', 'Drama', 'Sport'];
+  const MD_MYTPL = 'kino.md.mytemplates';
+  const mdMyTpl = () => { try { return JSON.parse(localStorage.getItem(MD_MYTPL) || '[]'); } catch { return []; } };
+  let mdTplCache = null;
+  const mdTemplates = () => mdTplCache || (mdTplCache = fetch(`${API}/microdrama/templates`).then((r) => r.json()).catch(() => { mdTplCache = null; return { categories: [], templates: [] }; }));
+  const MD_SONGS = new Map(); // series id -> File (soundtrack, this session; the file is also in Biblioteket)
+  const MD_SECTION_AT = { intro: 0, vers: 12, refräng: 40, brygga: 75, outro: 110 };
   const mdLoad = () => { try { return JSON.parse(localStorage.getItem(MD_KEY) || '[]'); } catch { return []; } };
   const mdSave = (l) => { const x = l.slice(0, 30); try { localStorage.setItem(MD_KEY, JSON.stringify(x)); } catch { localStorage.setItem(MD_KEY, JSON.stringify(x.slice(0, 10))); } return x; };
   const mdUpsert = (s) => { const l = mdLoad().filter((x) => x.id !== s.id); l.unshift(s); mdSave(l); };
@@ -2400,7 +2408,7 @@
     return p;
   }
   const mdText = (s) => [`${s.title}`, s.logline, `Genre: ${s.genre} · ${s.episodes.length} avsnitt · ${s.ratio || '9:16'}`, '', 'ROLLER', ...(s.characters || []).map((c) => `- ${c.name} (${c.age}) ${c.role || ''}: ${c.description || ''}`),
-    ...s.episodes.flatMap((e) => ['', `AVSNITT ${e.n}: ${e.title}`, `HOOK (0–3 s): ${e.hook}`, ...e.scenes.flatMap((sc, i) => [`  Scen ${i + 1} (${sc.duration} s) – ${sc.shot}${sc.camera ? ` [${sc.camera}]` : ''}`, ...sc.dialogue.map((l) => `    ${l.character || '–'}: ${l.line}`)]), `CLIFFHANGER: ${e.cliffhanger}`])].join('\n');
+    ...s.episodes.flatMap((e) => ['', `AVSNITT ${e.n}: ${e.title}`, `HOOK (0–3 s): ${e.hook}`, ...(e.caption ? [`CAPTION: ${e.caption}`] : []), ...(e.hashtags && e.hashtags.length ? [`HASHTAGS: ${e.hashtags.join(' ')}`] : []), ...e.scenes.flatMap((sc, i) => [`  Scen ${i + 1} (${sc.duration} s${sc.type && sc.type !== 'dialog' ? `, ${sc.type}${sc.song ? ` – ${sc.song}` : ''}` : ''}) – ${sc.shot}${sc.camera ? ` [${sc.camera}]` : ''}`, ...sc.dialogue.map((l) => `    ${l.character || '–'}: ${l.line}`)]), `CLIFFHANGER: ${e.cliffhanger}`])].join('\n');
   const mdDownload = (name, text, type) => { const a = h('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name }); document.body.append(a); a.click(); a.remove(); };
   function mikrodramaView(v) {
     v.classList.add('mdv');
@@ -2410,6 +2418,70 @@
     const eps = select([3, 4, 5, 6, 7, 8, 9, 10].map((n) => [String(n), `${n} avsnitt`]), '5');
     const secs = select([30, 45, 60, 75, 90].map((n) => [String(n), `${n} s`]), '60');
     const cine = select([['', 'Ingen'], ...((window.KinoCinema && window.KinoCinema.PRESETS) || []).map((p) => [p[0], p[0]])], '');
+    // ---- Mallar, förslag, musikläge ----
+    let tpl = null; // vald mall {id,title,...} eller egen mall
+    const tplNote = h('div', { class: 'md-tplnote' });
+    const musicOn = h('input', { type: 'checkbox' }); const viralOn = h('input', { type: 'checkbox' });
+    const songIn = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,audio/*' });
+    const songBox = h('div', { class: 'md-song' }, field('Låt / soundtrack (valfri – används i performance-scener)', songIn, true));
+    const paintMusic = () => { songBox.hidden = !musicOn.checked; };
+    musicOn.onchange = paintMusic;
+    const paintTplNote = () => { tplNote.innerHTML = ''; if (tpl) tplNote.append(h('span', { class: 'chip on' }, `Mall: ${tpl.title}`, h('button', { class: 'text dim', type: 'button', 'aria-label': 'Ta bort mall', onclick: () => { tpl = null; paintTplNote(); } }, '×'))); };
+    function useTpl(t) {
+      tpl = t; premise.value = t.premise; genre.value = MD_GENRES.includes(t.genre) ? t.genre : 'Drama';
+      if (t.episodes) eps.value = String(t.episodes); secs.value = String(t.seconds || (t.viral ? 45 : 60)); if (t.cinema != null) cine.value = t.cinema || '';
+      musicOn.checked = Boolean(t.music); viralOn.checked = Boolean(t.viral); paintMusic(); paintTplNote();
+      say(`Mallen "${t.title}" ifylld${t.hook ? ` – hook: ${t.hook}` : ''}. Ändra fritt och tryck Skriv serien.`); premise.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    const gal = h('section', { class: 'md-gallery' }); const galGrid = h('div', { class: 'md-tgrid' }); const tabs = h('div', { class: 'chips md-cats' }); const subTabs = h('div', { class: 'chips md-subs' });
+    const q = h('input', { type: 'search', placeholder: 'Sök bland alla mallar (t.ex. bröllop, tvilling, låt, hämnd)…', 'aria-label': 'Sök mallar' });
+    let gcat = 'viral'; let gsub = ''; let LIBT = { categories: [], templates: [] };
+    const card = (t, mine) => h('button', { class: 'md-tcard' + (t.viral ? ' viral' : '') + (t.music ? ' music' : ''), type: 'button', onclick: () => useTpl(t) },
+      h('b', {}, t.title), h('span', { class: 'md-tp' }, t.premise), t.hook ? h('small', { class: 'meta' }, `Hook: ${t.hook}`) : null,
+      h('span', { class: 'md-tags' }, h('span', { class: 'etag' }, t.genre), t.viral ? h('span', { class: 'etag' }, 'viral') : null, t.music ? h('span', { class: 'etag' }, '🎤 musik') : null,
+        mine ? h('span', { class: 'text dim', role: 'button', tabindex: 0, 'aria-label': `Ta bort ${t.title}`, onclick: (e) => { e.stopPropagation(); if (!confirm(`Ta bort mallen "${t.title}"?`)) return; localStorage.setItem(MD_MYTPL, JSON.stringify(mdMyTpl().filter((x) => x.id !== t.id))); paintGal(); } }, '×') : null));
+    function paintGal() {
+      tabs.innerHTML = ''; subTabs.innerHTML = ''; galGrid.innerHTML = '';
+      const cats = [...LIBT.categories, { id: 'mina', title: `Mina mallar (${mdMyTpl().length})`, subs: [] }];
+      cats.forEach((c) => tabs.append(h('button', { class: 'chip' + (c.id === gcat && !q.value ? ' on' : ''), type: 'button', 'aria-pressed': String(c.id === gcat), onclick: () => { gcat = c.id; gsub = ''; q.value = ''; paintGal(); } }, `${c.title}${c.id !== 'mina' ? ` · ${LIBT.templates.filter((t) => t.cat === c.id).length}` : ''}`)));
+      const term = q.value.trim().toLowerCase();
+      let list;
+      if (term) list = [...mdMyTpl(), ...LIBT.templates].filter((t) => `${t.title} ${t.premise} ${t.hook || ''} ${t.genre} ${t.sub || ''}`.toLowerCase().includes(term));
+      else if (gcat === 'mina') list = mdMyTpl();
+      else {
+        const c = LIBT.categories.find((x) => x.id === gcat);
+        if (c && c.subs.length) { subTabs.append(h('button', { class: 'chip' + (!gsub ? ' on' : ''), type: 'button', onclick: () => { gsub = ''; paintGal(); } }, 'Alla')); c.subs.forEach((x) => subTabs.append(h('button', { class: 'chip' + (gsub === x.id ? ' on' : ''), type: 'button', onclick: () => { gsub = x.id; paintGal(); } }, x.title))); }
+        list = LIBT.templates.filter((t) => t.cat === gcat && (!gsub || t.sub === gsub));
+      }
+      if (!list.length) galGrid.append(h('p', { class: 'meta' }, gcat === 'mina' && !term ? 'Inga egna mallar ännu – fyll i formuläret och tryck "Spara som mall".' : 'Inga mallar matchar.'));
+      list.forEach((t) => galGrid.append(card(t, gcat === 'mina' || String(t.id).startsWith('my-'))));
+    }
+    q.oninput = () => paintGal();
+    gal.append(h('div', { class: 'md-galhead' }, h('h3', {}, 'Mallar'), q), tabs, subTabs, galGrid);
+    mdTemplates().then((d) => { LIBT = d; paintGal(); });
+    // Förslag
+    const sugBox = h('div', { class: 'md-sugs' });
+    const sugBtn = h('button', { class: 'text', type: 'button' }, 'Föreslå idéer ✨');
+    sugBtn.onclick = async () => {
+      const lead = [...cast].map((n) => rosterLocal().find((x) => x.name === n)).find(Boolean);
+      const body = { mode: viralOn.checked ? 'viral' : gcat !== 'mina' ? gcat : '', sub: gsub, genre: genre.value, music: musicOn.checked, viral: viralOn.checked, idea: premise.value.trim().slice(0, 300), lane: st.lane,
+        artist: lead ? { name: lead.name, description: (lead.persona && lead.persona.description) || '', genre: (lead.persona && lead.persona.genre) || '', style: (lead.persona && lead.persona.style) || '', vibe: (lead.persona && lead.persona.vibe) || '' } : null };
+      if (minorText(body.idea, st.lane)) return say(REFUSE, true);
+      sugBtn.disabled = true; sugBox.innerHTML = ''; say(`Hittar på idéer${lead ? ` för ${lead.name}` : ''}…`);
+      try {
+        const r = await fetch(`${API}/microdrama/suggest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+        j.suggestions.forEach((x) => sugBox.append(h('button', { class: 'md-tcard sug', type: 'button', onclick: () => { useTpl({ id: '', title: x.title, premise: x.premise, genre: x.genre, hook: x.hook, music: musicOn.checked || Boolean(lead), viral: viralOn.checked }); tpl = null; paintTplNote(); } },
+          h('b', {}, x.title), h('span', { class: 'md-tp' }, x.premise), x.hook ? h('small', { class: 'meta' }, `Hook: ${x.hook}`) : null, x.hashtags && x.hashtags.length ? h('small', { class: 'meta' }, x.hashtags.join(' ')) : null)));
+        say(`${j.suggestions.length} förslag${lead ? ` anpassade till ${lead.name}` : ''} – klicka för att fylla i.`);
+      } catch (e) { say(e.message, true); } finally { sugBtn.disabled = false; }
+    };
+    const saveTpl = h('button', { class: 'text dim', type: 'button', onclick: () => {
+      const p = premise.value.trim(); if (!p) return say('Skriv en premiss först.', true);
+      const title = prompt('Namn på mallen:', (tpl && tpl.title) || p.slice(0, 40)); if (!title) return;
+      const l = mdMyTpl(); l.unshift({ id: `my-${Date.now().toString(36)}`, title: title.slice(0, 80), premise: p, genre: genre.value, episodes: +eps.value, seconds: +secs.value, cinema: cine.value, music: musicOn.checked, viral: viralOn.checked, template: tpl && tpl.id && !String(tpl.id).startsWith('my-') ? tpl.id : (tpl && tpl.template) || '' });
+      localStorage.setItem(MD_MYTPL, JSON.stringify(l.slice(0, 60))); gcat = 'mina'; q.value = ''; paintGal(); say(`Sparad under Mina mallar: ${title}`);
+    } }, 'Spara som mall');
     const cast = new Set();
     const castBox = h('div', { class: 'chips' }, ...(roster.length ? roster.map((a) => { const b = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', onclick: () => { if (cast.has(a.name)) cast.delete(a.name); else cast.add(a.name); b.setAttribute('aria-pressed', String(cast.has(a.name))); b.classList.toggle('on', cast.has(a.name)); } }, h('img', { src: a.photos[0], alt: '', class: 'chipimg' }), h('span', { class: 'cn' }, a.name)); return b; })
       : [h('span', { class: 'meta' }, 'Artistlistan är tom – AI:n hittar på rollfigurer. '), h('a', { href: '#/persona' }, 'Skapa en AI-artist')]));
@@ -2453,7 +2525,20 @@
         st.viral = { title: `${cur.title} – avsnitt ${e.n}, scen ${i + 1}`, prompt: p, shots: sc.dialogue.map((l) => `${l.character}: ${l.line}`).join('\n'), format: cur.ratio || '9:16', target: 'video' }; location.hash = '#/video';
       } }, 'Till Video');
       paintD();
-      return h('div', { class: 'md-scene' }, h('div', { class: 'md-sh' }, h('b', {}, `Scen ${i + 1}`), h('span', { class: 'etag' }, `${sc.duration} s`), sc.characters.length ? h('small', { class: 'meta' }, sc.characters.join(', ')) : null),
+      const lead = () => { const n = (sc.characters && sc.characters[0]) || ((cur.characters || [])[0] || {}).name || ''; return rosterLocal().find((x) => x.name.toLowerCase() === String(n).toLowerCase()) || rosterLocal().find((x) => (cur.characters || []).some((c) => c.name === x.name)); };
+      const song = () => MD_SONGS.get(cur.id);
+      const perf = sc.type === 'performance' ? h('div', { class: 'quick md-perf' },
+        h('button', { class: 'text primary', type: 'button', onclick: () => {
+          const a = lead(); const f = song(); const at = MD_SECTION_AT[String(sc.song || '').toLowerCase()] ?? 40; const len = Math.min(12, Math.max(4, sc.duration || 8));
+          if (!f) msg.textContent = `Ingen låt kopplad till serien i den här sessionen – välj låten (${(cur.song && cur.song.name) || 'från Biblioteket'}) på Läppsynk-sidan.`;
+          st.agentPick = { ...(st.agentPick || {}), lipsync: { artist: a ? a.name : '', song: f || null, songName: f && f.name, start: at, end: at + len } }; location.hash = '#/lappsynk';
+        } }, 'Läppsynk till låten'),
+        h('button', { class: 'text', type: 'button', onclick: () => {
+          const f = song(); if (f) st.mdSong = f;
+          st.viral = { title: `${cur.title} – avsnitt ${e.n}, scen ${i + 1}`, prompt: mdShotPrompt(cur, sc, 'video'), shots: `${sc.song ? `Låtdel: ${sc.song}. ` : ''}${sc.dialogue.map((l) => `${l.character}: ${l.line}`).join('\n')}`, format: cur.ratio || '9:16', target: 'music' }; location.hash = '#/music';
+        } }, 'Till Musikvideo')) : null;
+      const typeSel = select([['dialog', 'Dialog'], ['performance', 'Performance 🎤'], ['montage', 'Montage']], sc.type || 'dialog'); typeSel.onchange = () => { sc.type = typeSel.value; persist(); paint(); };
+      return h('div', { class: 'md-scene' + (sc.type === 'performance' ? ' perf' : '') }, h('div', { class: 'md-sh' }, h('b', {}, `Scen ${i + 1}`), h('span', { class: 'etag' }, `${sc.duration} s`), typeSel, sc.song ? h('span', { class: 'etag' }, `🎵 ${sc.song}`) : null, sc.characters.length ? h('small', { class: 'meta' }, sc.characters.join(', ')) : null), perf,
         field('Bild (engelska, till bild-/videomotorn)', ed(sc, 'shot', 3), true), field('Kamera', ed(sc, 'camera')), dl, thumb,
         h('div', { class: 'quick' }, bImg, bVid, h('button', { class: 'text dim', type: 'button', onclick: () => { st.imagePrefill = mdShotPrompt(cur, sc, 'image'); location.hash = '#/image'; } }, 'Öppna i Bild')), msg);
     }
@@ -2466,14 +2551,14 @@
         try { let n = 0; for (const btn of ep.querySelectorAll('.md-scene .md-img')) { if (n >= 4) break; if (btn.textContent !== 'Nyckelbild') continue; n++; await btn.run(); } } finally { batch.disabled = false; }
       };
       out.append(h('section', { class: 'md-head' }, field('Seriens titel', ed(s, 'title'), true), field('Logline', ed(s, 'logline', 2), true),
-        h('p', { class: 'meta' }, `${s.genre} · ${s.episodes.length} avsnitt à ca ${s.seconds || '?'} s · ${s.ratio || '9:16'} · ${s.lane === 'nsfw' ? 'NSFW' : 'SFW'}${s.cinema ? ` · Cinema: ${s.cinema}` : ''}${s.model ? ` · ${s.model}` : ''}`),
+        h('p', { class: 'meta' }, `${s.genre} · ${s.episodes.length} avsnitt à ca ${s.seconds || '?'} s · ${s.ratio || '9:16'} · ${s.lane === 'nsfw' ? 'NSFW' : 'SFW'}${s.cinema ? ` · Cinema: ${s.cinema}` : ''}${s.music ? ' · 🎤 musikläge' : ''}${s.viral ? ' · 🔥 viralt' : ''}${s.song ? ` · låt: ${s.song.name}${MD_SONGS.has(s.id) ? '' : ' (välj igen för handoff)'}` : ''}${s.model ? ` · ${s.model}` : ''}`),
         h('div', { class: 'md-chars' }, ...(s.characters || []).map((c) => h('div', { class: 'md-char' }, h('b', {}, `${c.name} (${c.age})`), c.roster || rosterLocal().some((a) => a.name === c.name) ? h('span', { class: 'etag' }, 'artistlistan') : null, h('small', {}, c.role || ''), ed(c, 'description', 2)))),
         h('div', { class: 'quick' }, batch,
           h('button', { class: 'text dim', type: 'button', onclick: () => mdDownload(`${s.title || 'mikrodrama'}.txt`, mdText(s), 'text/plain') }, 'Exportera manus (.txt)'),
           h('button', { class: 'text dim', type: 'button', onclick: () => mdDownload(`${s.title || 'mikrodrama'}.json`, JSON.stringify(s, null, 2), 'application/json') }, 'Exportera JSON'),
           h('button', { class: 'text dim', type: 'button', onclick: () => { let n = []; try { n = JSON.parse(localStorage.getItem('kino.mymixes')) || []; } catch { /* tom */ } n.unshift({ title: `Mikrodrama: ${s.title}`, prompt: mdText(s).slice(0, 4000) }); localStorage.setItem('kino.mymixes', JSON.stringify(n.slice(0, 50))); say('Sparad i Mina mallar.'); } }, 'Spara i Mina mallar'))));
       s.episodes.forEach((e) => out.append(h('details', { class: 'md-ep', open: e.n === 1 }, h('summary', {}, h('b', {}, `Avsnitt ${e.n}: `), e.title),
-        field('Avsnittets titel', ed(e, 'title'), true), field('Hook (första 3 sekunderna)', ed(e, 'hook', 2), true),
+        field('Avsnittets titel', ed(e, 'title'), true), field('Hook (första 3 sekunderna)', ed(e, 'hook', 2), true), ...(e.caption || e.hashtags && e.hashtags.length || s.viral ? [h('div', { class: 'row' }, field('Hook-text på skärmen', ed(e, 'caption'), true), field('Hashtags', (() => { const t = h('input', {}); t.value = (e.hashtags || []).join(' '); t.onchange = () => { e.hashtags = t.value.split(/\s+/).filter(Boolean); persist(); }; return t; })(), true))] : []),
         ...e.scenes.map((sc, i) => sceneCard(e, sc, i)), field('Cliffhanger', ed(e, 'cliffhanger', 2), true))));
     }
     go.onclick = async () => {
@@ -2484,19 +2569,24 @@
       say('Skriver serien… (kan ta 1–3 minuter)');
       try {
         const castL = [...cast].map((n) => { const a = rosterLocal().find((x) => x.name === n); return { name: n, roster: true, description: (a && a.persona && a.persona.description) || '' }; });
-        cur = await mdPlan({ premise: p, genre: genre.value, episodes: +eps.value, seconds: +secs.value, cast: castL, cinema: cine.value }, ac.signal, (t) => say(t));
+        const song = musicOn.checked && songIn.files[0] ? songIn.files[0] : null;
+        const tid = tpl ? (String(tpl.id || '').startsWith('my-') ? tpl.template : tpl.id) : '';
+        cur = await mdPlan({ premise: p, genre: genre.value, episodes: +eps.value, seconds: +secs.value, cast: castL, cinema: cine.value, template: tid || undefined, music: musicOn.checked, viral: viralOn.checked, song: song ? { name: song.name } : undefined }, ac.signal, (t) => say(t));
+        if (song) { MD_SONGS.set(cur.id, song); cur.song = { name: song.name }; mdUpsert(cur); }
         say(`Klar: ${cur.title}. Sparad i Mina serier.`); paint(); paintSaved();
       } catch (err) { say(err.name === 'AbortError' ? 'Avbrutet.' : err.message, true); }
       finally { untrack(); ac = null; go.textContent = 'Skriv serien'; }
     };
     v.append(pagehead('Mikrodrama', 'Korta vertikala serier i ReelShort-stil: en premiss blir avsnitt med hook, scener, repliker och cliffhanger. Ändra fritt och skicka scener vidare till Bild, Video och Läppsynk.'),
-      h('section', { class: 'step' }, field('Premiss / idé', premise, true), h('div', { class: 'row' }, field('Genre', genre), field('Avsnitt', eps), field('Längd per avsnitt', secs), field('Cinema-preset', cine)),
-        h('b', {}, 'Rollista (valfritt, ur artistlistan)'), castBox,
+      gal,
+      h('section', { class: 'step' }, tplNote, field('Premiss / idé', premise, true), h('div', { class: 'quick' }, sugBtn, saveTpl), sugBox, h('div', { class: 'row' }, field('Genre', genre), field('Avsnitt', eps), field('Längd per avsnitt', secs), field('Cinema-preset', cine)),
+        h('div', { class: 'row md-modes' }, h('label', { class: 'chk' }, musicOn, ' 🎤 Musikartist i huvudrollen (performance-scener + låt)'), h('label', { class: 'chk' }, viralOn, ' 🔥 Viralt format (hook 1–2 s, 30–60 s, caption + hashtags)')), songBox,
+        h('b', {}, 'Rollista (valfritt, ur artistlistan – första valda blir huvudroll)'), castBox,
         h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW (vuxna 21+)' : 'SFW'}. Alla rollfigurer i romantik är vuxna; ansikten och röster bara ur dina samtyckta listor.`),
         h('div', { class: 'quick' }, go), status),
       savedBox, out);
     if (st.mdOpen) { cur = mdLoad().find((x) => x.id === st.mdOpen) || null; st.mdOpen = null; }
-    paint(); paintSaved();
+    paintMusic(); paint(); paintSaved();
   }
   // ---- Snabbvideo: ämne -> manus -> röst + stockklipp + textning -> färdig kort video (inspirerad av MoneyPrinterTurbo, MIT) ----
   const SV_LANGS = [['sv', 'Svenska'], ['en', 'Engelska'], ['no', 'Norska'], ['da', 'Danska'], ['fi', 'Finska'], ['de', 'Tyska'], ['es', 'Spanska'], ['fr', 'Franska']];

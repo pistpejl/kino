@@ -615,3 +615,25 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .svv .sv-result{margin:1rem 0;padding:1rem;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.03)}
 .svv .sv-vid{display:block;max-width:100%;max-height:70vh;border-radius:10px;background:#000;margin:0 auto .6rem}
 .svv .sv-vid.r9x16{width:min(360px,100%)}
+/* Mikrodrama: mallar & förslag */
+.mdv .md-gallery{margin:0 0 1rem;padding:1rem;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.025)}
+.mdv .md-galhead{display:flex;gap:1rem;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:.6rem}
+.mdv .md-galhead h3{margin:0}
+.mdv .md-galhead input{flex:1;min-width:220px;max-width:460px}
+.mdv .md-cats,.mdv .md-subs{display:flex;flex-wrap:wrap;gap:.4rem;margin:.3rem 0}
+.mdv .md-subs .chip{font-size:.85em;opacity:.9}
+.mdv .md-tgrid,.mdv .md-sugs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.6rem;margin-top:.6rem;max-height:560px;overflow:auto;padding-right:.2rem}
+.mdv .md-sugs{max-height:none}
+.mdv .md-tcard{display:flex;flex-direction:column;gap:.35rem;text-align:left;padding:.75rem .85rem;border-radius:12px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.04);color:inherit;cursor:pointer;font:inherit;transition:border-color .15s,transform .15s}
+.mdv .md-tcard:hover,.mdv .md-tcard:focus-visible{border-color:var(--accent,#8b5cf6);transform:translateY(-1px)}
+.mdv .md-tcard.viral{border-color:rgba(255,120,60,.35);background:linear-gradient(160deg,rgba(255,110,50,.10),rgba(255,255,255,.03))}
+.mdv .md-tcard.music{background:linear-gradient(160deg,rgba(139,92,246,.13),rgba(255,255,255,.03))}
+.mdv .md-tcard.sug{border-style:dashed}
+.mdv .md-tp{font-size:.88em;opacity:.85;line-height:1.35}
+.mdv .md-tags{display:flex;gap:.3rem;flex-wrap:wrap;align-items:center;margin-top:auto}
+.mdv .md-modes{gap:1.2rem;margin:.4rem 0}
+.mdv .chk{display:flex;align-items:center;gap:.4rem}
+.mdv .md-tplnote:empty{display:none}
+.mdv .md-scene.perf{border-left:3px solid var(--accent,#8b5cf6)}
+.mdv .md-sh select{width:auto;padding:.15rem .4rem;font-size:.85em}
+.mdv .md-perf{margin:.3rem 0}
