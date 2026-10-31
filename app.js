@@ -551,6 +551,7 @@
     klipp: '<circle cx="6" cy="6.5" r="2.5"/><circle cx="6" cy="17.5" r="2.5"/><path d="M8.2 7.8 20 16M8.2 16.2 14 12.3"/><rect x="15" y="4" width="6" height="6" rx="1.5"/>',
   };
   Object.assign(ICONS, {
+    mikrodrama: '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="m10.5 9.5 4 2.5-4 2.5z"/>',
     lipsync: '<path d="M4 12c2-3 5-4 8-4s6 1 8 4c-2 3-5 4-8 4s-6-1-8-4z"/><path d="M4 12h16"/>',
     face: '<circle cx="12" cy="12" r="8"/><circle cx="9" cy="10.5" r=".8"/><circle cx="15" cy="10.5" r=".8"/><path d="M9 15c1.7 1.3 4.3 1.3 6 0"/>',
     agent: '<path d="M4 5h16v11H9l-5 4z"/><path d="M9 10h.01M12 10h.01M15 10h.01"/>',
@@ -565,6 +566,7 @@
       ['video', 'Video', 'Text eller bild blir ett videoklipp', '#/video'],
       ['music', 'Musikvideo', 'Låt och bilder blir en klippt video', '#/music'],
       ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
+      ['mikrodrama', 'Mikrodrama', 'Kort vertikal serie med hook, repliker och cliffhanger', '#/mikrodrama'],
       ['analyze', 'Analysera video', 'Ladda upp ett klipp, få scener', '#/script', 'analyze'],
       ['stock', 'Stockklipp', 'Riktiga klipp till din låt', '#/music', 'stock', true],
       ['edit', 'Redigera', 'Ändra en bild med text', '#/edit'],
@@ -610,7 +612,7 @@
     models.append(ul);
   }
 
-  const LAST_NAMES = { image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk' };
+  const LAST_NAMES = { mikrodrama: 'Mikrodrama', image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk' };
   const hub = (v, title, sub, items) => {
     const nsfw = st.lane === 'nsfw';
     v.append(pagehead(title, sub), h('div', { class: 'hub' }, items.map(([ic, t, d, href, preset, sfwOnly]) => {
@@ -2133,7 +2135,7 @@
   // ---- AI-agent (#/agent): önskemål på svenska -> plan (server) -> stegen körs här med KINO:s vanliga routes/sidor ----
   const AGENT_KEY = 'kino.agent.chat';
   const AGENT_TOOLS = { persona: 'Influencer-artist', image: 'Bilder', script: 'Manus', viral_trends: 'Trender', viral_mashup: 'Viral-mix', save_template: 'Spara i Mina mallar',
-    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp' };
+    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', micro_drama: 'Mikrodrama' };
   const HANDOFF = { video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, lip_sync: 1, klipp: 1 };
   const STATUS_SV = { wait: 'Väntar', confirm: 'Bekräfta', run: 'Kör…', done: 'Klar', err: 'Fel', cancel: 'Avbruten', skip: 'Hoppades över' };
   const agentLoad = () => { try { return JSON.parse(localStorage.getItem(AGENT_KEY) || '[]'); } catch { return []; } };
@@ -2245,6 +2247,22 @@
       case 'face_swap': st.agentPick = { ...(st.agentPick || {}), artist: a.artist }; return { text: `Ansiktsbyte öppnas. Välj ${a.artist} för ansiktet i bilden/klippet.`, go: '#/motor?t=faceswap' };
       case 'openjutsu': st.agentPick = { ...(st.agentPick || {}), artist: a.artist }; return { text: `Karaktärsbyte öppnas med ${a.artist} vald. Ladda upp klippet (max 6 s).`, go: '#/motor?t=openjutsu' };
       case 'lip_sync': st.agentPick = { ...(st.agentPick || {}), lipsync: { artist: a.artist, text: a.text } }; return { text: `Läppsynk öppnas med ${a.artist} vald${a.text ? ' och repliken ifylld (text till tal)' : ''}. ${a.text ? '' : 'Välj ljud eller en del av låten, '}intyga samtycket och tryck Skapa läppsynk.`, go: '#/lappsynk' };
+      case 'micro_drama': {
+        if (minorText(a.premise, st.lane)) throw new Error(REFUSE);
+        const castL = (a.cast || []).map((n) => { const x = rosterLocal().find((r) => r.name === n); return { name: n, roster: true, description: (x && x.persona && x.persona.description) || '' }; });
+        const ser = await mdPlan({ premise: a.premise || promptOf(prev), genre: a.genre, episodes: a.episodes, seconds: a.seconds, cast: castL }, signal, say);
+        const e1 = ser.episodes[0]; st.mdOpen = ser.id;
+        let text = `${ser.title}\n${ser.logline}\nAvsnitt 1 hook: ${e1.hook}\n${ser.episodes.length} avsnitt sparade under Mikrodrama › Mina serier.`;
+        let images;
+        if (a.produce === 'images') {
+          const imgs = []; for (const sc of e1.scenes.slice(0, 4)) { try { const r = await agentImages({ prompt: mdShotPrompt(ser, sc, 'image'), count: 1, ratio: '9:16' }, signal, setCancel, say); sc.img = abs(r[0].url); imgs.push(sc.img); } catch (err) { if (signal.aborted) throw err; } }
+          mdUpsert(ser); images = imgs; text += `\n${imgs.length} nyckelbild(er) till avsnitt 1.`;
+        }
+        const sc0 = e1.scenes[0];
+        if (a.produce === 'video' && sc0) { st.viral = { title: `${ser.title} – avsnitt 1, scen 1`, prompt: mdShotPrompt(ser, sc0, 'video'), shots: sc0.dialogue.map((l) => `${l.character}: ${l.line}`).join('\n'), format: '9:16', target: 'video' }; return { text: `${text}\nVideo-sidan öppnas ifylld med scen 1 – välj motor och tryck Skapa video.`, go: '#/video' }; }
+        if (a.produce === 'lipsync' && sc0 && sc0.dialogue[0]) { const l = sc0.dialogue[0]; const ar = rosterLocal().find((r) => r.name.toLowerCase() === String(l.character).toLowerCase()); st.agentPick = { ...(st.agentPick || {}), lipsync: { artist: ar ? ar.name : '', text: l.line } }; return { text: `${text}\nLäppsynk öppnas med första repliken${ar ? ` och ${ar.name}` : ''} – intyga samtycket och tryck Skapa läppsynk.`, go: '#/lappsynk' }; }
+        return { images, text, link: '#/mikrodrama', mdId: ser.id };
+      }
       case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
       default: throw new Error('Okänt verktyg.');
     }
@@ -2273,7 +2291,7 @@
             if (s.out && s.out.images) res.append(h('div', { class: 'agent-thumbs' }, s.out.images.map((u) => h('a', { href: u, target: '_blank', rel: 'noopener' }, h('img', { src: u, alt: 'Resultat', loading: 'lazy' })))));
             if (s.out && s.out.text) res.append(h('pre', {}, s.out.text));
             if (s.out && s.out.go) res.append(h('a', { class: 'text', href: s.out.go }, 'Öppna igen ›'));
-            if (s.out && s.out.link) res.append(h('a', { class: 'text dim', href: s.out.link }, 'Öppna Manus ›'));
+            if (s.out && s.out.link) res.append(h('a', { class: 'text dim', href: s.out.link, onclick: () => { if (s.out.mdId) st.mdOpen = s.out.mdId; } }, s.out.link === '#/mikrodrama' ? 'Öppna Mikrodrama ›' : 'Öppna Manus ›'));
             if (s.error) res.append(h('p', { class: 'status err' }, s.error));
             if (s.status === 'run' && s.msg) res.append(h('p', { class: 'meta' }, s.msg));
             const row = h('div', { class: 'quick' });
@@ -2340,10 +2358,134 @@
     const onAg = () => { if (!list.isConnected) return document.removeEventListener('kino-agent', onAg); msgs = AG.msgs; paint(); };
     document.addEventListener('kino-agent', onAg);
   }
-  const VIEWS = { agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
+  // ---- Mikrodrama: korta vertikala serier (ReelShort/DramaBox-stil) ----
+  const MD_KEY = 'kino.microdramas';
+  const MD_GENRES = ['Romantik', 'Hämnd', 'Miljardär', 'Thriller', 'Fantasy', 'Komedi', 'Skräck', 'Drama'];
+  const mdLoad = () => { try { return JSON.parse(localStorage.getItem(MD_KEY) || '[]'); } catch { return []; } };
+  const mdSave = (l) => { const x = l.slice(0, 30); try { localStorage.setItem(MD_KEY, JSON.stringify(x)); } catch { localStorage.setItem(MD_KEY, JSON.stringify(x.slice(0, 10))); } return x; };
+  const mdUpsert = (s) => { const l = mdLoad().filter((x) => x.id !== s.id); l.unshift(s); mdSave(l); };
+  async function mdPlan(body, signal, say) {
+    const r = await fetch(`${API}/microdrama/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane, async: true }), signal });
+    const j = await r.json().catch(() => ({})); if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+    for (;;) {
+      await abortable(new Promise((ok) => setTimeout(ok, 2500)), signal);
+      const s = await fetch(`${API}/microdrama/jobs/${j.jobId}`, { signal }).then((x) => x.json()).catch(() => null);
+      if (!s) continue; if (say && s.message) say(s.message);
+      if (s.status === 'done') { const ser = { ...s.result.series, id: Math.random().toString(36).slice(2, 10), model: s.result.model, created: Date.now() }; mdUpsert(ser); return ser; }
+      if (s.status === 'error') throw new Error(s.error || 'Planeringen misslyckades.');
+    }
+  }
+  const mdRoster = () => rosterLocal().filter((a) => a.photos && a.photos.length);
+  /** Engelsk bildprompt för en scen: bildbeskrivning + utseende för rollfigurerna (artistlistans beskrivning när den finns) + Cinema. */
+  function mdShotPrompt(ser, sc, kind) {
+    const looks = (sc.characters || []).map((n) => { const c = (ser.characters || []).find((x) => x.name === n) || {}; const a = rosterLocal().find((x) => x.name.toLowerCase() === String(n).toLowerCase()); const d = (a && a.persona && a.persona.description) || c.description; return d ? `${n}: ${d}, adult` : ''; }).filter(Boolean);
+    let p = [sc.shot, looks.join('; '), sc.camera, 'vertical 9:16 cinematic micro-drama still'].filter(Boolean).join('. ');
+    const pre = ser.cinema && window.KinoCinema && window.KinoCinema.PRESETS.find((x) => x[0] === ser.cinema);
+    if (pre) p = window.KinoCinema.apply(p, pre[1], { kind });
+    return p;
+  }
+  const mdText = (s) => [`${s.title}`, s.logline, `Genre: ${s.genre} · ${s.episodes.length} avsnitt · ${s.ratio || '9:16'}`, '', 'ROLLER', ...(s.characters || []).map((c) => `- ${c.name} (${c.age}) ${c.role || ''}: ${c.description || ''}`),
+    ...s.episodes.flatMap((e) => ['', `AVSNITT ${e.n}: ${e.title}`, `HOOK (0–3 s): ${e.hook}`, ...e.scenes.flatMap((sc, i) => [`  Scen ${i + 1} (${sc.duration} s) – ${sc.shot}${sc.camera ? ` [${sc.camera}]` : ''}`, ...sc.dialogue.map((l) => `    ${l.character || '–'}: ${l.line}`)]), `CLIFFHANGER: ${e.cliffhanger}`])].join('\n');
+  const mdDownload = (name, text, type) => { const a = h('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name }); document.body.append(a); a.click(); a.remove(); };
+  function mikrodramaView(v) {
+    const roster = mdRoster();
+    const premise = h('textarea', { rows: 3, placeholder: 'Premiss, t.ex. "En fattig servitris visar sig vara arvtagerska till miljardärsfamiljen som förödmjukade henne"' });
+    const genre = select(MD_GENRES.map((g) => [g, g]), 'Drama');
+    const eps = select([3, 4, 5, 6, 7, 8, 9, 10].map((n) => [String(n), `${n} avsnitt`]), '5');
+    const secs = select([30, 45, 60, 75, 90].map((n) => [String(n), `${n} s`]), '60');
+    const cine = select([['', 'Ingen'], ...((window.KinoCinema && window.KinoCinema.PRESETS) || []).map((p) => [p[0], p[0]])], '');
+    const cast = new Set();
+    const castBox = h('div', { class: 'chips' }, ...(roster.length ? roster.map((a) => { const b = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', onclick: () => { if (cast.has(a.name)) cast.delete(a.name); else cast.add(a.name); b.setAttribute('aria-pressed', String(cast.has(a.name))); b.classList.toggle('on', cast.has(a.name)); } }, h('img', { src: a.photos[0], alt: '', class: 'chipimg' }), h('span', { class: 'cn' }, a.name)); return b; })
+      : [h('span', { class: 'meta' }, 'Artistlistan är tom – AI:n hittar på rollfigurer. '), h('a', { href: '#/persona' }, 'Skapa en AI-artist')]));
+    const status = h('p', { class: 'status', 'aria-live': 'polite' });
+    const say = (t, err) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); };
+    const go = h('button', { class: 'text primary', type: 'button' }, 'Skriv serien');
+    const out = h('div', { class: 'md-out' });
+    const savedBox = h('div', { class: 'md-saved' });
+    let cur = null; let ac = null;
+    const persist = () => { if (cur) mdUpsert(cur); paintSaved(); };
+    function paintSaved() {
+      const l = mdLoad(); savedBox.innerHTML = '';
+      if (!l.length) return;
+      savedBox.append(h('h3', {}, 'Mina serier'), h('div', { class: 'chips' }, ...l.map((s) => h('span', { class: 'chip' + (cur && cur.id === s.id ? ' on' : '') }, h('button', { class: 'text', type: 'button', onclick: () => { cur = s; paint(); paintSaved(); } }, `${s.title} · ${s.episodes.length} avs.`),
+        h('button', { class: 'text dim', type: 'button', 'aria-label': `Ta bort ${s.title}`, onclick: () => { if (!confirm(`Ta bort "${s.title}"?`)) return; mdSave(mdLoad().filter((x) => x.id !== s.id)); if (cur && cur.id === s.id) { cur = null; paint(); } paintSaved(); } }, '×')))));
+    }
+    const ed = (obj, key, rows, cls) => { const t = h(rows ? 'textarea' : 'input', { class: cls || null, rows: rows || null, value: obj[key] || '' }); t.value = obj[key] || ''; t.addEventListener('change', () => { obj[key] = t.value; persist(); }); return t; };
+    function sceneCard(e, sc, i) {
+      const msg = h('small', { class: 'meta' });
+      const thumb = h('div', { class: 'md-thumb' }, sc.img ? h('a', { href: sc.img, target: '_blank', rel: 'noopener' }, h('img', { src: sc.img, alt: `Nyckelbild scen ${i + 1}`, loading: 'lazy' })) : null);
+      const dl = h('div', { class: 'md-dlg' });
+      const paintD = () => { dl.innerHTML = ''; sc.dialogue.forEach((l, li) => dl.append(h('div', { class: 'md-line' }, ed(l, 'character', 0, 'md-who'), ed(l, 'line', 0, 'md-say'),
+        h('button', { class: 'text dim', type: 'button', title: 'Läppsynk med repliken', onclick: () => lip(l) }, 'Läppsynk'), h('button', { class: 'text dim', type: 'button', 'aria-label': 'Ta bort replik', onclick: () => { sc.dialogue.splice(li, 1); persist(); paintD(); } }, '×'))));
+        dl.append(h('button', { class: 'text dim', type: 'button', onclick: () => { sc.dialogue.push({ character: sc.characters[0] || '', line: '' }); persist(); paintD(); } }, '+ Replik')); };
+      function lip(l) {
+        const a = rosterLocal().find((x) => x.name.toLowerCase() === String(l.character || '').toLowerCase());
+        if (!a) return (msg.textContent = `${l.character || 'Rollfiguren'} finns inte i artistlistan – välj porträtt själv på Läppsynk-sidan.`, st.agentPick = { ...(st.agentPick || {}), lipsync: { artist: '', text: l.line } }, location.hash = '#/lappsynk');
+        st.agentPick = { ...(st.agentPick || {}), lipsync: { artist: a.name, text: l.line } }; location.hash = '#/lappsynk';
+      }
+      const bImg = h('button', { class: 'text md-img', type: 'button' }, sc.img ? 'Ny nyckelbild' : 'Nyckelbild');
+      bImg.run = async () => {
+        const p = mdShotPrompt(cur, sc, 'image'); if (minorText(p, st.lane)) return (msg.textContent = REFUSE);
+        bImg.disabled = true; const a2 = new AbortController(); const untrack = track('Mikrodrama: nyckelbild', () => a2.abort());
+        try { const imgs = await agentImages({ prompt: p, count: 1, ratio: cur.ratio || '9:16' }, a2.signal, () => {}, (t) => { msg.textContent = t; }); sc.img = abs(imgs[0].url); persist(); bImg.textContent = 'Ny nyckelbild'; msg.textContent = `Klar (${imgs[0].engineName}). Finns också i Mina verk.`; thumb.innerHTML = ''; thumb.append(h('a', { href: sc.img, target: '_blank', rel: 'noopener' }, h('img', { src: sc.img, alt: '' }))); }
+        catch (err) { msg.textContent = err.message; } finally { untrack(); bImg.disabled = false; }
+      };
+      bImg.onclick = () => bImg.run();
+      const bVid = h('button', { class: 'text', type: 'button', onclick: () => {
+        const p = mdShotPrompt(cur, sc, 'video'); if (minorText(p, st.lane)) return (msg.textContent = REFUSE);
+        const pre = cur.cinema && window.KinoCinema && window.KinoCinema.PRESETS.find((x) => x[0] === cur.cinema); if (pre) st.cinemaPrefill = pre[1];
+        st.viral = { title: `${cur.title} – avsnitt ${e.n}, scen ${i + 1}`, prompt: p, shots: sc.dialogue.map((l) => `${l.character}: ${l.line}`).join('\n'), format: cur.ratio || '9:16', target: 'video' }; location.hash = '#/video';
+      } }, 'Till Video');
+      paintD();
+      return h('div', { class: 'md-scene' }, h('div', { class: 'md-sh' }, h('b', {}, `Scen ${i + 1}`), h('span', { class: 'etag' }, `${sc.duration} s`), sc.characters.length ? h('small', { class: 'meta' }, sc.characters.join(', ')) : null),
+        field('Bild (engelska, till bild-/videomotorn)', ed(sc, 'shot', 3), true), field('Kamera', ed(sc, 'camera')), dl, thumb,
+        h('div', { class: 'quick' }, bImg, bVid, h('button', { class: 'text dim', type: 'button', onclick: () => { st.imagePrefill = mdShotPrompt(cur, sc, 'image'); location.hash = '#/image'; } }, 'Öppna i Bild')), msg);
+    }
+    function paint() {
+      out.innerHTML = ''; if (!cur) return;
+      const s = cur;
+      const batch = h('button', { class: 'text', type: 'button' }, 'Nyckelbilder avsnitt 1 (max 4)');
+      batch.onclick = async () => {
+        const ep = out.querySelector('.md-ep'); if (!ep) return; batch.disabled = true;
+        try { let n = 0; for (const btn of ep.querySelectorAll('.md-scene .md-img')) { if (n >= 4) break; if (btn.textContent !== 'Nyckelbild') continue; n++; await btn.run(); } } finally { batch.disabled = false; }
+      };
+      out.append(h('section', { class: 'md-head' }, field('Seriens titel', ed(s, 'title'), true), field('Logline', ed(s, 'logline', 2), true),
+        h('p', { class: 'meta' }, `${s.genre} · ${s.episodes.length} avsnitt à ca ${s.seconds || '?'} s · ${s.ratio || '9:16'} · ${s.lane === 'nsfw' ? 'NSFW' : 'SFW'}${s.cinema ? ` · Cinema: ${s.cinema}` : ''}${s.model ? ` · ${s.model}` : ''}`),
+        h('div', { class: 'md-chars' }, ...(s.characters || []).map((c) => h('div', { class: 'md-char' }, h('b', {}, `${c.name} (${c.age})`), c.roster || rosterLocal().some((a) => a.name === c.name) ? h('span', { class: 'etag' }, 'artistlistan') : null, h('small', {}, c.role || ''), ed(c, 'description', 2)))),
+        h('div', { class: 'quick' }, batch,
+          h('button', { class: 'text dim', type: 'button', onclick: () => mdDownload(`${s.title || 'mikrodrama'}.txt`, mdText(s), 'text/plain') }, 'Exportera manus (.txt)'),
+          h('button', { class: 'text dim', type: 'button', onclick: () => mdDownload(`${s.title || 'mikrodrama'}.json`, JSON.stringify(s, null, 2), 'application/json') }, 'Exportera JSON'),
+          h('button', { class: 'text dim', type: 'button', onclick: () => { let n = []; try { n = JSON.parse(localStorage.getItem('kino.mymixes')) || []; } catch { /* tom */ } n.unshift({ title: `Mikrodrama: ${s.title}`, prompt: mdText(s).slice(0, 4000) }); localStorage.setItem('kino.mymixes', JSON.stringify(n.slice(0, 50))); say('Sparad i Mina mallar.'); } }, 'Spara i Mina mallar'))));
+      s.episodes.forEach((e) => out.append(h('details', { class: 'md-ep', open: e.n === 1 }, h('summary', {}, h('b', {}, `Avsnitt ${e.n}: `), e.title),
+        field('Avsnittets titel', ed(e, 'title'), true), field('Hook (första 3 sekunderna)', ed(e, 'hook', 2), true),
+        ...e.scenes.map((sc, i) => sceneCard(e, sc, i)), field('Cliffhanger', ed(e, 'cliffhanger', 2), true))));
+    }
+    go.onclick = async () => {
+      if (ac) { ac.abort(); return; }
+      const p = premise.value.trim(); if (!p) return say('Skriv en premiss.', true);
+      if (minorText(p, st.lane)) return say(REFUSE, true);
+      ac = new AbortController(); go.textContent = 'Avbryt'; const untrack = track('Mikrodrama: skriver serien', () => ac && ac.abort());
+      say('Skriver serien… (kan ta 1–3 minuter)');
+      try {
+        const castL = [...cast].map((n) => { const a = rosterLocal().find((x) => x.name === n); return { name: n, roster: true, description: (a && a.persona && a.persona.description) || '' }; });
+        cur = await mdPlan({ premise: p, genre: genre.value, episodes: +eps.value, seconds: +secs.value, cast: castL, cinema: cine.value }, ac.signal, (t) => say(t));
+        say(`Klar: ${cur.title}. Sparad i Mina serier.`); paint(); paintSaved();
+      } catch (err) { say(err.name === 'AbortError' ? 'Avbrutet.' : err.message, true); }
+      finally { untrack(); ac = null; go.textContent = 'Skriv serien'; }
+    };
+    v.append(pagehead('Mikrodrama', 'Korta vertikala serier i ReelShort-stil: en premiss blir avsnitt med hook, scener, repliker och cliffhanger. Ändra fritt och skicka scener vidare till Bild, Video och Läppsynk.'),
+      h('section', { class: 'step' }, field('Premiss / idé', premise, true), h('div', { class: 'row' }, field('Genre', genre), field('Avsnitt', eps), field('Längd per avsnitt', secs), field('Cinema-preset', cine)),
+        h('b', {}, 'Rollista (valfritt, ur artistlistan)'), castBox,
+        h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW (vuxna 21+)' : 'SFW'}. Alla rollfigurer i romantik är vuxna; ansikten och röster bara ur dina samtyckta listor.`),
+        h('div', { class: 'quick' }, go), status),
+      savedBox, out);
+    if (st.mdOpen) { cur = mdLoad().find((x) => x.id === st.mdOpen) || null; st.mdOpen = null; }
+    paint(); paintSaved();
+  }
+  const VIEWS = { mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
     skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
-  const ALIAS = { lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
-  const SECTION = { '': '', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', verk: 'verk', bibliotek: 'verk' };
+  const ALIAS = { microdrama: 'mikrodrama', 'micro-drama': 'mikrodrama', lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
+  const SECTION = { '': '', mikrodrama: 'mikrodrama', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', verk: 'verk', bibliotek: 'verk' };
   function route() {
     let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
     let [k, q] = raw.split('?'); k = k || '';

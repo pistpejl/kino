@@ -579,3 +579,20 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .lipportrait { display:flex; align-items:center; gap:10px; }
 .lipportrait img { width:96px; height:96px; object-fit:cover; border-radius:12px; }
 .chip .chipimg { width:40px; height:40px; object-fit:cover; border-radius:8px; }
+
+/* Mikrodrama */
+.md-out { display:flex; flex-direction:column; gap:14px; margin-top:16px; }
+.md-head, .md-ep { background:var(--s1); border:1px solid var(--line); border-radius:var(--r); padding:14px; display:flex; flex-direction:column; gap:10px; }
+.md-ep > summary { cursor:pointer; font-size:16px; list-style:none; }
+.md-ep > summary::before { content:"▸ "; color:var(--accent-fg); } .md-ep[open] > summary::before { content:"▾ "; }
+.md-chars { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
+.md-char { background:var(--s2); border-radius:var(--r-sm); padding:10px; display:flex; flex-direction:column; gap:4px; }
+.md-scene { background:var(--s2); border:1px solid var(--line2); border-radius:var(--r-sm); padding:12px; display:flex; flex-direction:column; gap:8px; }
+.md-sh { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.md-dlg { display:flex; flex-direction:column; gap:6px; }
+.md-line { display:flex; gap:6px; align-items:center; }
+.md-line .md-who { flex:0 0 120px; min-width:0; } .md-line .md-say { flex:1; min-width:0; }
+.md-thumb img { width:120px; aspect-ratio:9/16; object-fit:cover; border-radius:10px; }
+.md-saved h3 { margin:16px 0 8px; }
+.md-saved .chip { flex-direction:row; align-items:center; min-height:44px; }
+@media (max-width:600px) { .md-line { flex-wrap:wrap; } .md-line .md-who { flex-basis:100%; } }
