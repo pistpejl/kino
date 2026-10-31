@@ -157,7 +157,7 @@
       $('#gateNo').onclick = () => { $('#gate').hidden = true; };
       return;
     }
-    st.lane = l; localStorage.setItem('kino.lane', l); paintLane(); route(); document.dispatchEvent(new CustomEvent('kino-lane'));
+    st.lane = l; localStorage.setItem('kino.lane', l); paintLane(); libReady.then(route, route); document.dispatchEvent(new CustomEvent('kino-lane'));
   }
   laneBtn.onclick = () => setLane(st.lane === 'nsfw' ? 'sfw' : 'nsfw');
 
@@ -221,6 +221,8 @@
     const hint = h('div', { class: 'hint', hidden: true });
     const inact = h('details', { class: 'inact', hidden: true });
     let engList = [];
+    let cin = null; // Cinema-panel (valfri)
+    const withCinema = (p, eng) => (cin && p && !(cin.skip && cin.skip()) && window.KinoCinema ? window.KinoCinema.apply(p, cin.get(), { kind: cin.kind, engine: eng }) : p);
     let run = null; // { ac, extra } for the job in flight
     const stopRun = async () => { const r = run; if (!r || r.ac.signal.aborted) return; r.ac.abort(); if (r.extra) await Promise.resolve().then(r.extra).catch(() => null); };
     const paintCancel = (on) => { cancelBtn.hidden = !on; cancelBtn.disabled = false; cancelBtn.textContent = 'Avbryt'; cancelBtn.onclick = on ? async () => { cancelBtn.disabled = true; cancelBtn.textContent = 'Avbryter…'; await stopRun(); } : null; };
@@ -275,7 +277,7 @@
       sayRun.signal = ac.signal; sayRun.setCancel = setCancel;
       const stopped = new Promise((_, rej) => ac.signal.addEventListener('abort', () => rej(cancelledErr()), { once: true }));
       let cancelled = false;
-      try { await Promise.race([onGo({ prompt: ta.value.trim(), engine: sel.value, say: sayRun, setCancel, signal: ac.signal }), stopped]); } catch (e) {
+      try { await Promise.race([onGo({ prompt: withCinema(ta.value.trim(), sel.value), engine: sel.value, say: sayRun, setCancel, signal: ac.signal }), stopped]); } catch (e) {
         cancelled = Boolean(e.cancelled || ac.signal.aborted);
         if (cancelled) say('Avbrutet. Jobbet stoppades och resultatet sparas inte.'); else say(e.message, true);
       } finally {
@@ -304,7 +306,8 @@
       $('.under', comp).append(gb);
     });
     sel.addEventListener('change', () => { cta.disabled = go.disabled; });
-    return { box, ta, sel, say, panel, cta, setCancel };
+    const setCinema = (p) => { cin = p; if (p) comp.after(p.el); };
+    return { box, ta, sel, say, panel, cta, setCancel, setCinema };
   }
   const field = (label, input, wide) => h('label', { class: wide ? 'wide' : null }, label, input);
   const select = (opts, val) => { const s = h('select'); opts.forEach(([v, t]) => s.append(h('option', { value: v, selected: v === val }, t))); return s; };
@@ -322,8 +325,9 @@
     if (kind === 'image' || kind === 'edit') {
       acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url, blob: item.blob }; location.hash = '#/video'; } }, 'Animera'));
       acts.append(h('button', { class: 'text', onclick: () => { st.carry = { name: item.name, url: item.url, blob: item.blob }; location.hash = '#/edit'; } }, 'Redigera'));
+      acts.append(h('button', { class: 'text', onclick: () => { st.lipPortrait = { name: item.name || 'verk.png', url: item.url, blob: item.blob, source: 'verk' }; location.hash = '#/lappsynk'; } }, 'Läppsynk'));
     }
-    acts.append(h('button', { class: 'text dim', onclick: () => { st.results[kind] = st.results[kind].filter((x) => x !== item); card.remove(); } }, 'Ta bort'));
+    acts.append(h('button', { class: 'text dim', onclick: () => { const i = st.results[kind].indexOf(item); if (i >= 0) st.results[kind].splice(i, 1); if (item.libId && LIB) LIB.remove(item.libId).catch(() => null); card.remove(); } }, 'Ta bort'));
     card.append(acts);
     // Coverr API terms: show a clickable Coverr credit when Coverr clips are used
     if (item.credits && item.credits.coverr) card.append(h('div', { class: 'meta' }, h('a', { href: item.credits.coverr.url || 'https://coverr.co', target: '_blank', rel: 'noopener' }, item.credits.coverr.text || 'Video från Coverr')));
@@ -332,6 +336,206 @@
   const EMPTY = { image: 'Dina bilder visas här.', video: 'Dina videoklipp visas här.', music: 'Din musikvideo visas här.', edit: 'Dina redigerade bilder visas här.' };
   const pagehead = (t, sub) => h('div', { class: 'pagehead' }, h('h2', {}, t), sub ? h('p', {}, sub) : null);
   function results(kind) { const g = h('div', { class: 'results', 'data-empty': EMPTY[kind] || 'Inget här än.' }); st.results[kind].forEach((i) => g.append(resultCard(i, kind))); return g; }
+
+  // ---- Tillgångsbibliotek (IndexedDB, bara i den här webbläsaren) ----
+  const LIB = window.KinoLib || null;
+  const LIB_RK = { image: 'image', edit: 'image', video: 'video', music: 'video' };
+  const fmtMB = (b) => `${(b / 1048576).toFixed(b < 10485760 ? 1 : 0)} MB`;
+  const libAuto = () => localStorage.getItem('kino.lib.auto') !== '0';
+  function persistResult(item, rk) {
+    if (!LIB || !item || item.libId || !item.url) return;
+    LIB.add({ blob: item.blob, url: abs(item.url), name: item.name || `${rk}-${Date.now()}`, kind: LIB_RK[rk], origin: 'verk', meta: { rk, engineName: item.engineName || '', credits: item.credits || null } })
+      .then((rec) => { if (rec) item.libId = rec.id; }).catch(() => null);
+  }
+  // Mina verk sparas automatiskt: varje nytt resultat (unshift) kopieras till biblioteket.
+  Object.keys(st.results).forEach((k) => { const a = st.results[k]; a.unshift = function (...xs) { xs.forEach((x) => persistResult(x, k)); return Array.prototype.unshift.apply(this, xs); }; });
+  const libReady = !LIB ? Promise.resolve() : LIB.list({ origin: 'verk' }).then((l) => {
+    l.forEach((rec) => { const rk = (rec.meta && rec.meta.rk) || (rec.kind === 'image' ? 'image' : 'video'); if (!st.results[rk] || rec.kind === 'audio') return; Array.prototype.push.call(st.results[rk], { name: rec.name, url: LIB.src(rec), blob: rec.blob, engineName: (rec.meta && rec.meta.engineName) || 'Sparad', credits: rec.meta && rec.meta.credits, libId: rec.id }); });
+  }).catch(() => null);
+  // Uppladdningar sparas (capture-fas, så det sker innan sidans egna onchange tömmer fältet).
+  document.addEventListener('change', (e) => {
+    const t = e.target; if (!LIB || !t || t.type !== 'file' || t._fromLib || !t.files || !libAuto()) return;
+    [...t.files].forEach((f) => { if (f.size <= LIB.MAX_ITEM && LIB.kindOf(f.type, f.name)) LIB.add({ blob: f, name: f.name, origin: 'upload' }).catch(() => null); });
+  }, true);
+  /** Put library files into a file input (works for hidden inputs too) and fire its change handler. */
+  async function fillInput(inp, recs) {
+    const dt = new DataTransfer(); for (const r of recs) dt.items.add(await LIB.file(r));
+    inp.files = dt.files; inp._fromLib = true; try { inp.dispatchEvent(new Event('change', { bubbles: true })); inp.dispatchEvent(new Event('input', { bubbles: true })); } finally { inp._fromLib = false; }
+  }
+  const acceptKinds = (accept) => { const a = String(accept || ''); const k = []; if (/image/.test(a)) k.push('image'); if (/video/.test(a)) k.push('video'); if (/audio|\.mp3|\.wav/.test(a)) k.push('audio'); return k.length ? k : LIB ? LIB.KINDS : []; };
+  /** Browser: tabs Uppladdningar / Mina verk, kind filter, delete, clear. onPick(rec) makes it a picker. */
+  function libraryBrowser({ kinds, onPick, multi } = {}) {
+    kinds = kinds || (LIB ? LIB.KINDS : []);
+    let origin = 'upload'; let kind = ''; const chosen = new Set();
+    const KN = { image: 'Bilder', video: 'Video', audio: 'Ljud' };
+    const grid = h('div', { class: 'libgrid' }); const info = h('div', { class: 'meta' });
+    const tabs = seg(...[['upload', 'Uppladdningar'], ['verk', 'Mina verk']].map(([o, t]) => h('button', { type: 'button', 'aria-pressed': String(o === origin), onclick: (e) => { origin = o; tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === e.currentTarget))); paint(); } }, t)));
+    const filt = select([['', kinds.length > 1 ? 'Alla typer' : KN[kinds[0]]], ...(kinds.length > 1 ? kinds.map((k) => [k, KN[k]]) : [])], '');
+    filt.setAttribute('aria-label', 'Filtrera på typ'); filt.onchange = () => { kind = filt.value; paint(); };
+    const clearBtn = h('button', { class: 'text dim danger', type: 'button', onclick: async () => { if (!confirm(`Rensa allt under ${origin === 'upload' ? 'Uppladdningar' : 'Mina verk'}? Det går inte att ångra.`)) return; await LIB.clear(origin); if (origin === 'verk') Object.keys(st.results).forEach((k) => st.results[k].splice(0)); paint(); } }, 'Rensa');
+    const pickBtn = multi ? h('button', { class: 'text primary', type: 'button', disabled: true, onclick: async () => { const l = (await LIB.list()).filter((a) => chosen.has(a.id)); onPick(l); } }, 'Använd valda') : null;
+    async function paint() {
+      grid.innerHTML = ''; if (!LIB) return grid.append(empty('Biblioteket fungerar inte här.', 'Webbläsaren saknar IndexedDB (t.ex. privat läge).'));
+      let l; try { l = (await LIB.list({ origin, kind: kind || undefined })).filter((a) => kinds.includes(a.kind)); } catch (e) { return grid.append(empty('Biblioteket kunde inte öppnas.', String(e.message || e))); }
+      const u = await LIB.usage().catch(() => null);
+      info.textContent = `${l.length} filer här${u ? ` · totalt ${fmtMB(u.bytes)} av ${fmtMB(u.max)} (äldst rensas automatiskt)` : ''}`;
+      if (!l.length) grid.append(empty(origin === 'upload' ? 'Inga uppladdningar ännu.' : 'Inga sparade verk ännu.', origin === 'upload' ? 'Filer du laddar upp i KINO hamnar här.' : 'Det du skapar sparas här automatiskt.'));
+      l.forEach((a) => {
+        const s = LIB.src(a);
+        const media = a.kind === 'image' ? h('img', { src: s, alt: '', loading: 'lazy' }) : a.kind === 'video' ? h('video', { src: s, muted: true, playsinline: true, preload: 'metadata', controls: !onPick }) : h('audio', { src: s, controls: true, preload: 'none' });
+        const card = h('div', { class: 'libitem' + (chosen.has(a.id) ? ' on' : '') }, media, h('div', { class: 'meta' }, `${a.name.slice(0, 40)} · ${a.size ? fmtMB(a.size) : 'länk'}`));
+        const acts = h('div', { class: 'acts' });
+        if (onPick) acts.append(h('button', { class: 'text primary', type: 'button', onclick: () => { if (!multi) return onPick([a]); if (chosen.has(a.id)) chosen.delete(a.id); else chosen.add(a.id); card.classList.toggle('on', chosen.has(a.id)); pickBtn.disabled = !chosen.size; pickBtn.textContent = `Använd valda (${chosen.size})`; } }, multi ? 'Välj' : 'Använd'));
+        else acts.append(h('a', { class: 'text', href: s, download: a.name, target: '_blank' }, 'Ladda ned'));
+        acts.append(h('button', { class: 'text dim danger', type: 'button', onclick: async () => { await LIB.remove(a.id); Object.keys(st.results).forEach((k) => { const i = st.results[k].findIndex((x) => x.libId === a.id); if (i >= 0) st.results[k].splice(i, 1); }); card.remove(); } }, 'Ta bort'));
+        card.append(acts); grid.append(card);
+      });
+    }
+    paint();
+    return h('div', { class: 'libbrowser' }, h('div', { class: 'librow' }, tabs, filt, clearBtn, pickBtn), info, grid);
+  }
+  function openLibrary({ kinds, onPick, multi }) {
+    const close = () => { ov.remove(); document.removeEventListener('keydown', esc); };
+    const esc = (e) => { if (e.key === 'Escape') close(); };
+    const ov = h('div', { class: 'gate libmodal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Tillgångsbibliotek', onclick: (e) => { if (e.target === ov) close(); } },
+      h('div', { class: 'gatebox libbox' }, h('div', { class: 'librow' }, h('b', {}, 'Tillgångsbibliotek'), h('button', { class: 'text dim', type: 'button', onclick: close }, 'Stäng')),
+        libraryBrowser({ kinds, multi, onPick: async (recs) => { try { await onPick(recs); close(); } catch (e) { alert(String(e.message || e)); } } })));
+    document.addEventListener('keydown', esc); document.body.append(ov);
+  }
+  /** "Från biblioteket" button that fills a file input. */
+  const libButton = (inp, label = 'Från biblioteket') => (LIB ? h('button', { class: 'text dim libpick', type: 'button', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openLibrary({ kinds: acceptKinds(inp.accept), multi: inp.multiple, onPick: (recs) => fillInput(inp, recs) }); } }, label) : null);
+  function bibliotekView(v) {
+    v.append(pagehead('Tillgångsbibliotek', 'Dina uppladdningar och färdiga verk, sparade i den här webbläsaren (inget laddas upp). Välj dem i alla filfält med "Från biblioteket".'),
+      h('label', { class: 'meta' }, (() => { const cb = h('input', { type: 'checkbox', checked: libAuto(), onchange: () => localStorage.setItem('kino.lib.auto', cb.checked ? '1' : '0') }); return cb; })(), ' Spara mina uppladdningar automatiskt'),
+      libraryBrowser({}));
+  }
+
+  // ---- Cinema-läge: kamera, objektiv, bländare, rörelse, utsnitt, vinkel, ljus, färg ----
+  function cinemaPanel(kind) {
+    const C = window.KinoCinema; if (!C) return null;
+    const LS = `kino.cinema.${kind}`;
+    let cur = C.normalize((() => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } })());
+    const keys = C.KEYS.filter((k) => kind === 'video' || k !== 'move');
+    const sels = {}; const custom = h('input', { type: 'text', placeholder: 'Egen text, t.ex. "regn på rutan, 1970-tal"', maxlength: 200 });
+    const prev = h('div', { class: 'meta cinprev' }); const sum = h('span', { class: 'meta' });
+    keys.forEach((k) => { const s = select(C.OPT[k].map(([id, sv]) => [id, sv]), cur[k] || ''); s.onchange = () => { cur[k] = s.value; save(); }; sels[k] = s; });
+    custom.value = cur.custom || ''; custom.oninput = () => { cur.custom = custom.value; save(); };
+    const presetBtns = C.PRESETS.map(([name, c]) => h('button', { class: 'chip', type: 'button', title: C.summary(c), onclick: () => set(c) }, h('span', { class: 'cn' }, name)));
+    function paint() { keys.forEach((k) => { sels[k].value = cur[k] || ''; }); custom.value = cur.custom || ''; const t = C.compile(cur, { kind }); prev.textContent = t ? `Läggs till prompten: ${t}` : 'Inget valt – prompten skickas som den är.'; sum.textContent = C.isEmpty(cur) ? '' : `· ${C.summary(cur)}`; }
+    function save() { cur = C.normalize(cur); localStorage.setItem(LS, JSON.stringify(cur)); paint(); }
+    function set(c) { cur = C.normalize(c || {}); save(); el.open = true; }
+    const el = h('details', { class: 'cinema' }, h('summary', {}, h('b', {}, 'Cinema'), ' ', sum),
+      h('div', { class: 'meta' }, 'Kamera, objektiv, ljus och färg som en filmfotograf. Välj en förinställning eller egna val – det läggs till din prompt anpassat för motorn.'),
+      h('div', { class: 'chips cinpresets' }, ...presetBtns, h('button', { class: 'chip', type: 'button', onclick: () => set({}) }, h('span', { class: 'cn' }, 'Rensa'))),
+      h('div', { class: 'cingrid' }, ...keys.map((k) => field(C.LABELS[k], sels[k])), field('Egen text', custom, true)), prev);
+    const onEv = (e) => { if (!el.isConnected) return document.removeEventListener('kino-cinema', onEv); set(e.detail); };
+    document.addEventListener('kino-cinema', onEv);
+    st.cinemaGet = () => (C.isEmpty(cur) ? null : { ...cur });
+    paint();
+    return { el, kind, get: () => cur, set };
+  }
+
+  // ---- Läppsynk: porträtt + ljud -> talande/sjungande klipp ----
+  async function lappsynkView(v) {
+    v.append(pagehead('Läppsynk', 'Välj ett porträtt ur din artistlista (eller egen AI-figur) och ett ljud – få ett klipp där munnen följer rösten. Bara era egna artister, aldrig kändisar.'));
+    const roster = rosterLocal().filter((a) => a.photos && a.photos.length);
+    let portrait = st.lipPortrait || null; st.lipPortrait = null;
+    const pick = st.agentPick && st.agentPick.lipsync ? st.agentPick.lipsync : null; if (pick) st.agentPick.lipsync = null;
+    const pv = h('div', { class: 'lipportrait' });
+    const paintP = () => { pv.innerHTML = ''; if (!portrait) return pv.append(h('span', { class: 'meta' }, 'Inget porträtt valt.')); pv.append(h('img', { src: portrait.blob ? URL.createObjectURL(portrait.blob) : abs(portrait.url), alt: '' }), h('span', { class: 'meta' }, `${portrait.name} · ${({ roster: 'artistlistan', persona: 'AI-figur', verk: 'Mina verk', upload: 'egen uppladdning' })[portrait.source]}`)); paintC(); };
+    const rosterChips = h('div', { class: 'chips' }, ...(roster.length ? roster.map((a) => h('button', { class: 'chip', type: 'button', onclick: async () => { portrait = { name: a.name, blob: await dataBlob(a.photos[0]), source: a.ai || a.persona ? 'persona' : 'roster' }; paintP(); } }, h('img', { src: a.photos[0], alt: '', class: 'chipimg' }), h('span', { class: 'cn' }, a.name), h('span', { class: 'ch' }, a.ai || a.persona ? 'AI-figur' : 'artist'))) : [h('span', { class: 'meta' }, 'Artistlistan är tom. '), h('a', { href: '#/persona' }, 'Skapa en AI-artist'), h('span', { class: 'meta' }, ' eller lägg till under Egen GPU › Artistlista.')]));
+    if (pick && pick.artist) { const a = roster.find((x) => x.name.toLowerCase() === String(pick.artist).toLowerCase()); if (a) dataBlob(a.photos[0]).then((b) => { portrait = { name: a.name, blob: b, source: a.ai || a.persona ? 'persona' : 'roster' }; paintP(); }); }
+    const pUp = h('input', { type: 'file', accept: 'image/*', onchange: () => { const f = pUp.files[0]; if (f) { portrait = { name: f.name, blob: f, source: pUp._fromLib ? 'verk' : 'upload' }; paintP(); } } });
+    // audio
+    const aIn = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,.ogg,audio/*' });
+    const from = h('input', { type: 'number', min: 0, step: 0.5, value: 0 }); const to = h('input', { type: 'number', min: 0, step: 0.5, value: 8 });
+    const tts = h('textarea', { rows: 3, maxlength: 600, placeholder: 'Eller skriv text som läses upp (text till tal), t.ex. "Hej! Nya singeln släpps på fredag."' });
+    const lang = select([['sv', 'Svenska'], ['en', 'Engelska']], 'sv');
+    if (pick && pick.text) tts.value = pick.text;
+    const amode = select([['file', 'Ljudfil eller del av låt'], ['tts', 'Text till tal']], pick && pick.text ? 'tts' : 'file');
+    const fileBox = h('div', { class: 'grid2' }, field('Ljud / låt', aIn, true), field('Från (s)', from), field('Till (s)', to), h('small', { class: 'meta wide' }, 'Max 12 sekunder per klipp. Välj den del av låten som ska sjungas.'));
+    const ttsBox = h('div', {}, field('Text', tts, true), field('Språk', lang));
+    const paintA = () => { fileBox.hidden = amode.value !== 'file'; ttsBox.hidden = amode.value !== 'tts'; }; amode.onchange = paintA; paintA();
+    const vocals = h('input', { type: 'checkbox' });
+    // engine
+    const eng = select([['auto', 'Automatiskt (egen GPU om ansluten, annars Hugging Face)'], ['gpu', 'Egen GPU: LatentSync 1.5 (Kaggle / Colab)'], ['hf', 'Hugging Face LTX-2 (gratis, ca 1 klipp/dag)']], 'auto');
+    const engInfo = h('div', { class: 'meta' }, 'Kollar motorer…');
+    let gpuOk = false; let hfOk = false;
+    Promise.all([colabHealth(), fetch(`${API}/lipsync/info`).then((r) => r.json()).catch(() => null)]).then(([c, i]) => {
+      gpuOk = c.state === 'on' && (!c.info || !c.info.features || c.info.features.includes('lipsync')); hfOk = Boolean(i && i.hf && i.hf.available);
+      engInfo.textContent = `Egen GPU: ${c.state === 'on' ? (gpuOk ? 'ansluten, LatentSync redo' : 'ansluten men LatentSync är inte installerad (kör LatentSync-cellen i notebooken)') : 'inte ansluten'} · Hugging Face: ${hfOk ? 'tillgänglig' : 'inte aktiverad på servern'}`;
+    });
+    const consent = h('input', { type: 'checkbox' });
+    const consentTxt = h('span', {});
+    function paintC() { consentTxt.textContent = portrait && portrait.source === 'upload' ? ' Jag intygar att personen på bilden är jag själv eller vår egen artist och har gett samtycke (inga kändisar, inga minderåriga)' : ' Jag intygar att porträttet är vår egen artist eller AI-figur och att samtycke finns'; }
+    paintC();
+    const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
+    const say = (m, err) => { status.textContent = m; status.classList.toggle('err', Boolean(err)); };
+    const grid = h('div', { class: 'results', 'data-empty': 'Dina läppsynkade klipp visas här.' });
+    st.results.video.filter((x) => /läppsynk|lipsync/i.test(x.engineName || '')).forEach((x) => grid.append(resultCard(x, 'video')));
+    const cancelBtn = h('button', { class: 'text cancel', type: 'button', hidden: true }, 'Avbryt');
+    const go = h('button', { class: 'text primary cta-main', type: 'button' }, 'Skapa läppsynk');
+    let ac = null;
+    async function getAudio(signal) {
+      if (amode.value === 'tts') {
+        const text = tts.value.trim(); if (!text) throw new Error('Skriv texten som ska läsas upp.');
+        if (minorText(text)) throw new Error(REFUSE);
+        say('Läser upp texten (text till tal)…');
+        const r = await fetch(`${API}/lipsync/tts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, lang: lang.value, lane: st.lane }), signal });
+        if (!r.ok) throw new Error(await errMsg(r));
+        const j = await r.json(); const out = await poll(j.jobId, (m) => say(m), signal);
+        return new File([await fetch(abs(out.url), { signal }).then((x) => x.blob())], 'tal.wav', { type: 'audio/wav' });
+      }
+      const f = aIn.files[0]; if (!f) throw new Error('Välj ett ljud eller en låt.'); if (f.size > 20 * 1048576) throw new Error('Ljudet får vara max 20 MB.'); return f;
+    }
+    go.onclick = async () => {
+      if (!portrait) return say('Välj ett porträtt först.', true);
+      if (!consent.checked) return say('Kryssa i samtycket först.', true);
+      if (st.lane === 'nsfw' && portrait.source === 'upload') return say('I vuxenläget går läppsynk bara med porträtt ur artistlistan, AI-figurer eller dina egna verk.', true);
+      const s0 = +from.value || 0; const s1 = +to.value || 0;
+      if (amode.value === 'file' && s1 && s1 <= s0) return say('"Till" måste vara större än "Från".', true);
+      const which = eng.value === 'auto' ? (gpuOk ? 'gpu' : 'hf') : eng.value;
+      if (which === 'gpu' && !gpuOk) return say('Egen GPU är inte ansluten eller saknar LatentSync. Anslut under Inställningar › Egen GPU, eller välj Hugging Face.', true);
+      ac = new AbortController(); go.disabled = true; cancelBtn.hidden = false;
+      let serverJob = null;
+      const untrack = track('Läppsynk', async () => { ac.abort(); if (serverJob) await fetch(`${API}/jobs/${serverJob}`, { method: 'DELETE' }).catch(() => null); });
+      cancelBtn.onclick = async () => { cancelBtn.disabled = true; ac.abort(); if (serverJob) await fetch(`${API}/jobs/${serverJob}`, { method: 'DELETE' }).catch(() => null); };
+      status.classList.add('busy');
+      try {
+        const img = new File([portrait.blob || await fetch(abs(portrait.url)).then((x) => x.blob())], /\.(png|jpe?g|webp)$/i.test(portrait.name) ? portrait.name : 'portratt.jpg', { type: (portrait.blob && portrait.blob.type) || 'image/jpeg' });
+        let out;
+        if (which === 'gpu') {
+          const audio = await getAudio(ac.signal);
+          const fd = new FormData(); fd.append('image', img); fd.append('audio', audio);
+          fd.append('start', amode.value === 'file' ? String(s0) : '0'); fd.append('end', amode.value === 'file' ? String(s1 || s0 + 12) : '0');
+          fd.append('vocals', vocals.checked && amode.value === 'file' ? 'true' : 'false'); fd.append('consent', 'true');
+          const sayG = (m) => say(m); sayG.signal = ac.signal;
+          say('Skickar till din GPU (LatentSync)…');
+          const r = await colabJob('/lipsync', fd, sayG);
+          const f = (r.files || []).find((x) => /\.mp4$/i.test(x.name)) || (r.files || [])[0]; if (!f) throw new Error('GPU:n gav inget klipp.');
+          out = { name: f.name, url: f.url, blob: f.blob, engineName: 'LatentSync 1.5 läppsynk (egen GPU)' };
+        } else {
+          const fd = new FormData(); fd.append('lane', st.lane); fd.append('image', img); fd.append('consent', 'true'); fd.append('source', portrait.source); fd.append('name', portrait.name);
+          if (amode.value === 'tts') { const t = tts.value.trim(); if (!t) throw new Error('Skriv texten som ska läsas upp.'); fd.append('ttsText', t); fd.append('lang', lang.value); }
+          else { const f = aIn.files[0]; if (!f) throw new Error('Välj ett ljud eller en låt.'); fd.append('audio', f); fd.append('start', String(s0)); fd.append('end', String(s1)); }
+          say('Skickar till Hugging Face (gratis, kan köa)…');
+          const r = await fetch(`${API}/lipsync`, { method: 'POST', body: fd, signal: ac.signal });
+          if (!r.ok) throw new Error(await errMsg(r));
+          const j = await r.json(); serverJob = j.jobId;
+          out = await poll(j.jobId, (m) => say(m || 'Jobbar…'), ac.signal);
+        }
+        st.results.video.unshift(out); grid.prepend(resultCard(out, 'video')); say(`Klart! Gjord av ${out.engineName}. Sparad i Mina verk.`);
+      } catch (e) { say(e.cancelled || ac.signal.aborted ? 'Avbrutet.' : String(e.message || e).slice(0, 300), !(e.cancelled || ac.signal.aborted)); }
+      finally { untrack(); go.disabled = false; cancelBtn.hidden = true; cancelBtn.disabled = false; status.classList.remove('busy'); }
+    };
+    paintP();
+    v.classList.add('two');
+    v.append(h('div', { class: 'compbox lipsync' },
+      h('section', { class: 'step' }, h('b', {}, '1. Porträtt'), rosterChips, h('div', { class: 'librow' }, field('Eget foto / från biblioteket', pUp, true)), pv),
+      h('section', { class: 'step' }, h('b', {}, '2. Ljud'), field('Källa', amode), fileBox, ttsBox, h('label', {}, vocals, ' Isolera sången först (bara egen GPU)')),
+      h('section', { class: 'step' }, h('b', {}, '3. Motor'), field('Motor', eng, true), engInfo, h('label', { class: 'wide' }, consent, consentTxt)),
+      status, h('div', { class: 'ctabar' }, go, cancelBtn)), grid);
+  }
 
   // ---- views ----
   const ICONS = {
@@ -406,7 +610,7 @@
     models.append(ul);
   }
 
-  const LAST_NAMES = { image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video' };
+  const LAST_NAMES = { image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk' };
   const hub = (v, title, sub, items) => {
     const nsfw = st.lane === 'nsfw';
     v.append(pagehead(title, sub), h('div', { class: 'hub' }, items.map(([ic, t, d, href, preset, sfwOnly]) => {
@@ -419,6 +623,7 @@
       ['agent', 'AI-agent', 'Skriv ett önskemål – agenten kör rätt verktyg åt dig', '#/agent'],
       ['music', 'Musikvideo', 'Låt + idé blir en klippt video', '#/music'],
       ['video', 'Video', 'Text eller bild blir ett klipp', '#/video'],
+      ['lipsync', 'Läppsynk', 'Din artist sjunger eller pratar', '#/lappsynk'],
       ['image', 'Bild', 'Skriv en text, få en bild', '#/image'],
       ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
       ['viral', 'Viral-mixer', 'TikTok-trender (video + musik) blir en prompt', '#/viral'],
@@ -432,7 +637,8 @@
       ['klipp', 'Klipp', 'Lång video blir korta klipp med text', '#/klipp'],
       ['timeline', 'Tidslinje', 'Klipp ihop och exportera mp4', '#/timeline'],
       ['analyze', 'Analysera video', 'Ladda upp ett klipp, få scener', '#/script', 'analyze'],
-      ['lipsync', 'Lip-sync', 'Egen GPU · munnen följer låten', '#/motor?t=lipsync'],
+      ['lipsync', 'Läppsynk', 'Porträtt + låt eller text blir ett sjungande klipp', '#/lappsynk'],
+      ['image', 'Tillgångsbibliotek', 'Uppladdningar och färdiga verk, sparade i webbläsaren', '#/bibliotek'],
       ['face', 'Ansiktsbyte', 'Egen GPU · bara samtyckta artister', '#/motor?t=faceswap'],
       ['voice', 'Röstbyte', 'Egen GPU · röster ur din röstlista', '#/motor?t=voice'],
       ['music', 'Fler GPU-verktyg', 'Sång/instrumental, låttext, auto-klipp, skala upp', '#/motor'],
@@ -441,7 +647,7 @@
   function verkView(v) {
     const kinds = [['music', 'Musikvideor'], ['video', 'Video'], ['image', 'Bilder'], ['edit', 'Redigerade bilder']];
     const n = kinds.reduce((a, [k]) => a + st.results[k].length, 0);
-    v.append(pagehead('Mina verk', 'Allt du skapat i den här sessionen. Ladda ned det du vill spara – det försvinner när du stänger sidan.'), h('div', { class: 'stoprow' }, stopAllButton(), h('span', { class: 'meta' }, 'Stoppar allt som körs: Render-servern, din egen GPU och Seedream i den här fliken.')));
+    v.append(pagehead('Mina verk', LIB ? 'Allt du skapat sparas i den här webbläsaren (Tillgångsbiblioteket). Ladda ned det du vill ha kvar för säkerhets skull.' : 'Allt du skapat i den här sessionen. Ladda ned det du vill spara – det försvinner när du stänger sidan.'), LIB ? h('a', { class: 'text', href: '#/bibliotek' }, 'Öppna Tillgångsbiblioteket ›') : null, h('div', { class: 'stoprow' }, stopAllButton(), h('span', { class: 'meta' }, 'Stoppar allt som körs: Render-servern, din egen GPU och Seedream i den här fliken.')));
     if (!n) return v.append(empty('Inget här än.', 'Det du skapar visas här.'), h('div', { class: 'quick' }, h('a', { class: 'text primary', href: '#/skapa' }, 'Skapa något')));
     kinds.forEach(([k, t]) => { if (st.results[k].length) v.append(h('h2', { class: 'sect' }, `${t} (${st.results[k].length})`), results(k)); });
   }
@@ -485,6 +691,7 @@
         j.images.forEach((i) => { st.results.image.unshift(i); grid.prepend(resultCard(i, 'image')); });
         say(j.loraNote || (j.images[0] && j.images[0].waitedSeconds != null ? `Gjord av ${j.engineName} (${j.images[0].waitedSeconds} s totalt).${j.note ? ' ' + j.note : ''}` : `Gjord av ${j.engineName}.`));
       } });
+    const cinI = cinemaPanel('image'); if (cinI) { c.setCinema(cinI); if (st.cinemaPrefill) { cinI.set(st.cinemaPrefill); st.cinemaPrefill = null; } }
     v.classList.add('two');
     if (st.imagePrefill) { c.ta.value = st.imagePrefill; st.imagePrefill = null; c.ta.dispatchEvent(new Event('input')); }
     v.append(pagehead('Bild', 'Skriv vad du vill se. Format och antal finns under Inställningar.'), c.box, grid);
@@ -957,10 +1164,10 @@
     own.oninput = refresh;
     const chip = (it) => { const i = all.indexOf(it); const b = h('button', { class: 'chip', type: 'button', title: it[1], 'aria-pressed': 'false', onclick: () => { const at = sel.indexOf(i); if (at >= 0) sel.splice(at, 1); else { if (sel.length >= 3) sel.shift(); sel.push(i); } body.querySelectorAll('.chip[data-i]').forEach((c) => { const on = sel.includes(+c.dataset.i); c.setAttribute('aria-pressed', String(on)); c.classList.toggle('on', on); }); refresh(); } }, h('span', { class: 'cn' }, it[0]), h('span', { class: 'ch' }, it[1])); b.dataset.i = i; return b; };
     const MK = 'kino.mymixes'; const load = () => { try { return JSON.parse(localStorage.getItem(MK)) || []; } catch { return []; } };
-    const paintMine = () => { mineBox.innerHTML = ''; const m = load(); if (!m.length) return mineBox.append(h('span', { class: 'meta' }, 'Inga egna mallar ännu.')); m.forEach((x, k) => mineBox.append(h('span', { class: 'chip' }, h('button', { class: 'text', type: 'button', onclick: () => { out.value = x.prompt; info.textContent = `Egen mall: ${x.title}`; } }, x.title), h('button', { class: 'text dim danger', type: 'button', 'aria-label': 'Ta bort', onclick: () => { const n = load(); n.splice(k, 1); localStorage.setItem(MK, JSON.stringify(n)); paintMine(); } }, 'Ta bort')))); };
+    const paintMine = () => { mineBox.innerHTML = ''; const m = load(); if (!m.length) return mineBox.append(h('span', { class: 'meta' }, 'Inga egna mallar ännu.')); m.forEach((x, k) => mineBox.append(h('span', { class: 'chip' }, h('button', { class: 'text', type: 'button', onclick: () => { out.value = x.prompt; info.textContent = `Egen mall: ${x.title}${x.cinema ? ' (med Cinema-val)' : ''}`; if (x.cinema) document.dispatchEvent(new CustomEvent('kino-cinema', { detail: x.cinema })); } }, x.title + (x.cinema ? ' 🎬' : '')), h('button', { class: 'text dim danger', type: 'button', 'aria-label': 'Ta bort', onclick: () => { const n = load(); n.splice(k, 1); localStorage.setItem(MK, JSON.stringify(n)); paintMine(); } }, 'Ta bort')))); };
     const tplOf = () => (sel.length ? all[sel[0]][3] : 'standard');
     const use = h('button', { class: 'text', type: 'button', onclick: () => { if (!out.value.trim()) return (info.textContent = 'Välj en prompt eller skriv egna idéer först.'); onPick({ title: sel.length ? sel.map((i) => all[i][0]).join(' + ') : 'Egen idé', prompt: out.value.trim(), negative: NEG, template: tplOf() }); } }, 'Använd prompt');
-    const save = h('button', { class: 'text', type: 'button', onclick: () => { if (!out.value.trim()) return; const title = (prompt('Namn på mallen:', sel.map((i) => all[i][0]).join(' + ') || 'Min mix') || '').trim(); if (!title) return; const n = load(); n.unshift({ title, prompt: out.value.trim() }); localStorage.setItem(MK, JSON.stringify(n.slice(0, 50))); paintMine(); } }, 'Spara som egen mall');
+    const save = h('button', { class: 'text', type: 'button', onclick: () => { if (!out.value.trim()) return; const title = (prompt('Namn på mallen:', sel.map((i) => all[i][0]).join(' + ') || 'Min mix') || '').trim(); if (!title) return; const n = load(); const cinema = st.cinemaGet && document.querySelector('details.cinema') ? st.cinemaGet() : null; n.unshift(cinema ? { title, prompt: out.value.trim(), cinema } : { title, prompt: out.value.trim() }); localStorage.setItem(MK, JSON.stringify(n.slice(0, 50))); paintMine(); } }, 'Spara som egen mall');
     const body = h('div', { class: 'clips-body' },
       PRESETS.map((grp) => h('section', { class: 'cgroup' }, h('h3', {}, grp.g, h('small', {}, `${grp.items.length} st`)), h('div', { class: 'chips' }, grp.items.map(chip)))),
       h('label', { class: 'wide' }, 'Egna idéer', own), info, h('label', { class: 'wide' }, 'Kombinerad prompt (redigerbar)', out),
@@ -1091,6 +1298,7 @@
     pre.open = true; c.box.querySelector('.composer').after(pre);
     const applyV = (x) => { const ta = c.box.querySelector('textarea'); if (ta) { ta.value = x.prompt + (x.shots ? '\n\n' + x.shots : ''); ta.dispatchEvent(new Event('input')); ta.focus(); } if ([...ratio.options].some((o) => o.value === x.format)) ratio.value = x.format; const stt = c.box.querySelector('.status'); if (stt) stt.textContent = `${x.title} från Viral-mixer ifylld · format ${ratio.value}`; };
     const vHere = { name: 'video', apply: applyV }; const vb = viralBox(vHere); pre.after(vb); takeViral('video', applyV);
+    const cinV = cinemaPanel('video'); if (cinV) { c.setCinema(cinV); if (st.cinemaPrefill) { cinV.set(st.cinemaPrefill); st.cinemaPrefill = null; } }
     v.classList.add('two');
     v.append(pagehead('Video', 'Beskriv ett klipp eller börja från en bild.'), c.box, gpuNote, clipSources(), grid);
   }
@@ -1103,7 +1311,7 @@
     const thumbs = h('div', { class: 'thumbs' });
     function paintSong() {
       songBox.innerHTML = ''; stepSync.fn();
-      if (!song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Välj låt')));
+      if (!song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Välj låt'), libButton(songIn)));
       songBox.append(h('div', { class: 'hintline' }, h('b', {}, song.name), h('button', { class: 'text dim', onclick: () => { song = null; paintSong(); } }, 'Ta bort låt')), h('audio', { controls: true, src: URL.createObjectURL(song) }));
     }
     function paintImgs() {
@@ -1116,7 +1324,7 @@
     // 3-step guide: Låt -> Idé/stil -> Bilder (valfritt), fixed "Skapa musikvideo" button
     const stepHead = (n, t, sub) => h('div', { class: 'stephead' }, h('span', { class: 'stepn' }, String(n)), h('div', {}, h('b', {}, t), h('small', {}, sub)), h('span', { class: 'stepok', 'aria-hidden': 'true' }, '✓'));
     const step1 = h('section', { class: 'step' }, stepHead(1, 'Låt', 'mp3, wav eller m4a · max 20 MB'), songIn, songBox);
-    const step3 = h('section', { class: 'step' }, stepHead(3, 'Bilder (valfritt)', 'Upp till 8 – annars skapar KINO dem'), imgIn, h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Välj bilder')), thumbs));
+    const step3 = h('section', { class: 'step' }, stepHead(3, 'Bilder (valfritt)', 'Upp till 8 – annars skapar KINO dem'), imgIn, h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Välj bilder'), libButton(imgIn)), thumbs));
     const bars = h('div', { class: 'steps', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'));
     const top = h('div', { class: 'uploads' }, step1);
     const cfg = await getConfig();
@@ -1188,6 +1396,7 @@
     c.box.querySelector('.composer').after(pre);
     const applyM = (x) => { c.ta.value = x.prompt + (x.shots ? '\n\n' + x.shots : ''); c.ta.dispatchEvent(new Event('input')); c.say(`${x.title} från Viral-mixer ifylld. Ändra texten om du vill.`); };
     const mb = viralBox({ name: 'music', apply: applyM }); pre.after(mb); takeViral('music', applyM);
+    const cinM = cinemaPanel('video'); if (cinM) { cinM.skip = () => motion.value === 'stock'; c.setCinema(cinM); }
     const step2 = h('section', { class: 'step' }, stepHead(2, 'Vad handlar den om?', 'Skriv själv eller välj stilar'), c.box);
     const syncSteps = () => { const done = [Boolean(song), Boolean(c.ta.value.trim()), imgs.length > 0]; [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('done', done[i])); const cur = done.indexOf(false); [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('cur', i === (cur < 0 ? 2 : cur))); [...bars.children].forEach((b, i) => b.classList.toggle('on', done[i])); };
     stepSync.fn = syncSteps; c.ta.addEventListener('input', syncSteps); syncSteps();
@@ -1207,7 +1416,7 @@
     }
     imgIn.onchange = () => { files = files.concat([...imgIn.files]).slice(0, 8); imgIn.value = ''; paint(); };
     paint();
-    const top = h('div', { class: 'uploads' }, imgIn, h('div', { class: 'tl-top' }, seg(h('span', { class: 'on', 'aria-current': 'page' }, 'Redigera'), h('a', { href: '#/timeline' }, 'Tidslinje'))), h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Lägg till referensbilder')), thumbs));
+    const top = h('div', { class: 'uploads' }, imgIn, h('div', { class: 'tl-top' }, seg(h('span', { class: 'on', 'aria-current': 'page' }, 'Redigera'), h('a', { href: '#/timeline' }, 'Tidslinje'))), h('div', { class: 'drop' }, h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => imgIn.click() }, 'Lägg till referensbilder'), libButton(imgIn)), thumbs));
     const grid = results('edit');
     const c = composer({ kind: 'edit', engineKind: 'edit', placeholder: 'Vad ska ändras?', noEngineText: 'Redigering fungerar inte just nu.',
       onGo: async ({ prompt, engine, say, setCancel, signal }) => {
@@ -1476,7 +1685,7 @@
     const songBox = h('div', { class: 'drop' });
     function paintSong() {
       songBox.innerHTML = ''; songBox.classList.remove('busy');
-      if (!S.song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Lägg till låt'), h('span', { class: 'meta' }, 'valfritt · mp3, wav, m4a · låttext behövs inte')));
+      if (!S.song) return songBox.append(h('div', { class: 'hintline' }, h('button', { class: 'text', onclick: () => songIn.click() }, 'Lägg till låt'), libButton(songIn), h('span', { class: 'meta' }, 'valfritt · mp3, wav, m4a · låttext behövs inte')));
       const want = S.seconds || 30; const d = S.song.duration;
       const cv = h('canvas', { class: 'wave', width: 600, height: 60 });
       const g = cv.getContext('2d');
@@ -1924,8 +2133,8 @@
   // ---- AI-agent (#/agent): önskemål på svenska -> plan (server) -> stegen körs här med KINO:s vanliga routes/sidor ----
   const AGENT_KEY = 'kino.agent.chat';
   const AGENT_TOOLS = { persona: 'Influencer-artist', image: 'Bilder', script: 'Manus', viral_trends: 'Trender', viral_mashup: 'Viral-mix', save_template: 'Spara i Mina mallar',
-    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', klipp: 'Klipp' };
-  const HANDOFF = { video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, klipp: 1 };
+    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp' };
+  const HANDOFF = { video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, lip_sync: 1, klipp: 1 };
   const STATUS_SV = { wait: 'Väntar', confirm: 'Bekräfta', run: 'Kör…', done: 'Klar', err: 'Fel', cancel: 'Avbruten', skip: 'Hoppades över' };
   const agentLoad = () => { try { return JSON.parse(localStorage.getItem(AGENT_KEY) || '[]'); } catch { return []; } };
   const agentSave = (l) => { const x = l.slice(-50); try { localStorage.setItem(AGENT_KEY, JSON.stringify(x)); } catch { localStorage.setItem(AGENT_KEY, JSON.stringify(x.slice(-20))); } return x; };
@@ -1981,7 +2190,8 @@
       }
       case 'image': {
         const persona = prev && prev.persona ? prev : null;
-        const prompt = a.prompt && !persona ? a.prompt : persona ? persona.prompt : `${promptOf(prev)}${a.prompt ? ', ' + a.prompt : ''}`;
+        const prompt0 = a.prompt && !persona ? a.prompt : persona ? persona.prompt : `${promptOf(prev)}${a.prompt ? ', ' + a.prompt : ''}`;
+        const prompt = a.cinema && window.KinoCinema && prompt0 ? window.KinoCinema.apply(prompt0, a.cinema, { kind: 'image' }) : prompt0;
         if (!prompt) throw new Error('Ingen prompt att göra bild av.');
         const imgs = await agentImages({ prompt, count: a.count || 1, ratio: persona ? '1:1' : a.ratio, persona: Boolean(persona) }, signal, setCancel, say);
         let note = `${imgs.length} bild(er) från ${imgs[0].engineName}. Finns också i Mina verk.`;
@@ -2026,6 +2236,7 @@
         const target = step.tool === 'video' ? 'video' : 'music';
         const prompt = [a.prompt || a.idea, promptOf(prev)].filter(Boolean).join('\n\n');
         if (minorText(prompt)) throw new Error(REFUSE);
+        if (a.cinema && step.tool === 'video') st.cinemaPrefill = a.cinema;
         st.viral = { title: 'Från agenten', prompt, shots: (prev && prev.shots) || '', format: a.ratio || '9:16', target };
         if (step.tool === 'stock_clips') st.preset = 'stock';
         return { text: target === 'video' ? 'Video-sidan öppnas ifylld. Välj motor och tryck Skapa video – där syns kö och Avbryt.' : 'Musikvideo-sidan öppnas ifylld. Ladda upp låten och tryck Skapa musikvideo.', go: target === 'video' ? '#/video' : '#/music' };
@@ -2033,6 +2244,7 @@
       case 'voice_swap': st.agentPick = { ...(st.agentPick || {}), voice: a.voice }; return { text: `Röstbyte öppnas med rösten ${a.voice} vald. Ladda upp låten och intyga rättigheterna.`, go: '#/motor?t=voice' };
       case 'face_swap': st.agentPick = { ...(st.agentPick || {}), artist: a.artist }; return { text: `Ansiktsbyte öppnas. Välj ${a.artist} för ansiktet i bilden/klippet.`, go: '#/motor?t=faceswap' };
       case 'openjutsu': st.agentPick = { ...(st.agentPick || {}), artist: a.artist }; return { text: `Karaktärsbyte öppnas med ${a.artist} vald. Ladda upp klippet (max 6 s).`, go: '#/motor?t=openjutsu' };
+      case 'lip_sync': st.agentPick = { ...(st.agentPick || {}), lipsync: { artist: a.artist, text: a.text } }; return { text: `Läppsynk öppnas med ${a.artist} vald${a.text ? ' och repliken ifylld (text till tal)' : ''}. ${a.text ? '' : 'Välj ljud eller en del av låten, '}intyga samtycket och tryck Skapa läppsynk.`, go: '#/lappsynk' };
       case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
       default: throw new Error('Okänt verktyg.');
     }
@@ -2129,9 +2341,9 @@
     document.addEventListener('kino-agent', onAg);
   }
   const VIEWS = { agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
-    skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, installningar: settingsView, motor: settingsView };
-  const ALIAS = { create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
-  const SECTION = { '': '', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', verk: 'verk' };
+    skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
+  const ALIAS = { lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
+  const SECTION = { '': '', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', verk: 'verk', bibliotek: 'verk' };
   function route() {
     let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
     let [k, q] = raw.split('?'); k = k || '';
@@ -2154,7 +2366,7 @@
     const btn = h('button', { type: 'button', class: 'upbox' }, h('span', { class: 'upicon', 'aria-hidden': 'true' }, '＋'), h('span', {}, h('b', {}, multi ? `Välj ${isVid ? 'filer' : isAud ? 'ljudfiler' : 'filer'}` : `Välj ${isVid ? 'video' : isAud ? 'ljudfil' : 'fil'}`), name));
     btn.onclick = (e) => { e.preventDefault(); inp.click(); };
     const upd = () => { const n = inp.files ? inp.files.length : 0; name.textContent = !n ? 'Ingen fil vald' : n === 1 ? inp.files[0].name : `${n} filer valda`; btn.classList.toggle('has', n > 0); };
-    inp.addEventListener('change', upd); inp.classList.add('vh'); inp.tabIndex = -1; inp.after(btn);
+    inp.addEventListener('change', upd); inp.classList.add('vh'); inp.tabIndex = -1; inp.after(btn); const lb = libButton(inp); if (lb) btn.after(lb);
   }
   new MutationObserver(() => document.querySelectorAll('#view input[type=file]').forEach(dressFile)).observe($('#view'), { childList: true, subtree: true });
   const fab = h('a', { class: 'agentfab', href: '#/agent', 'aria-label': 'Öppna AI-agenten', title: 'AI-agent' }, icon('agent')); document.body.append(fab);

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
     "lint": "next lint",
-    "test:wavespeed": "node scripts/test-wavespeed-map.mjs"
+    "test:wavespeed": "node scripts/test-wavespeed-map.mjs",
+    "test:cinema": "node --test scripts/test-cinema.mjs"
   },
   "dependencies": {
     "react": "^18",

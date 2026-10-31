@@ -554,3 +554,28 @@ html { scroll-padding-bottom:calc(var(--navh) + 96px + env(safe-area-inset-botto
 .agentfab svg { width:26px; height:26px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
 .agentfab[hidden] { display:none; }
 @media (min-width:900px) { .agentfab { bottom:24px; } .agent-input { bottom:12px; } }
+/* Cinema-läge */
+details.cinema { border:1px solid var(--line2); border-radius:var(--r-sm); background:var(--s1); padding:8px 12px; margin:10px 0; }
+details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; align-items:center; gap:6px; }
+.cinpresets { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+.cinpresets .chip { min-height:40px; min-width:0; }
+.cingrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }
+.cingrid label { display:flex; flex-direction:column; gap:4px; font-size:14px; }
+.cingrid .wide { grid-column:1/-1; }
+.cinprev { margin-top:8px; word-break:break-word; }
+/* Tillgångsbibliotek */
+.libpick { margin-top:4px; }
+.librow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; justify-content:space-between; }
+.libbrowser { display:flex; flex-direction:column; gap:10px; }
+.libgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; }
+.libitem { border:1px solid var(--line2); border-radius:var(--r-sm); background:var(--s2); padding:6px; display:flex; flex-direction:column; gap:4px; }
+.libitem.on { border-color:var(--accent-fg); }
+.libitem img, .libitem video { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; background:#000; }
+.libitem audio { width:100%; }
+.libitem .acts { display:flex; flex-wrap:wrap; gap:4px; }
+.libmodal .libbox { width:min(100%,760px); max-height:90vh; overflow:auto; text-align:left; font-size:16px; }
+/* Läppsynk */
+.lipsync .step { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
+.lipportrait { display:flex; align-items:center; gap:10px; }
+.lipportrait img { width:96px; height:96px; object-fit:cover; border-radius:12px; }
+.chip .chipimg { width:40px; height:40px; object-fit:cover; border-radius:8px; }

@@ -498,7 +498,10 @@ def task_lipsync(job):
     v25, wav, orig = os.path.join(d, "in25.mp4"), os.path.join(d, "cond.wav"), os.path.join(d, "orig.wav")
     trim = (["-ss", f"{s:.3f}"] if s > 0 else []) + (["-t", f"{e - s:.3f}"] if e > s else [])
     ff(*trim, "-i", job["audio"], orig)
-    ff("-stream_loop", "-1", "-i", job["video"], "-t", f"{probe_dur(orig):.3f}", "-r", "25", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", v25)
+    if job.get("still"):  # portratt (stillbild) -> 25 fps-video sa lang som ljudet; LatentSync rör munnen
+        ff("-loop", "1", "-i", job["video"], "-t", f"{probe_dur(orig):.3f}", "-r", "25", "-vf", "scale=trunc(min(iw\\,720)/2)*2:-2", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", v25)
+    else:
+        ff("-stream_loop", "-1", "-i", job["video"], "-t", f"{probe_dur(orig):.3f}", "-r", "25", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", v25)
     cond = run_demucs(orig, d)[0] if job["vocals"] else orig
     ff("-i", cond, "-ar", "16000", "-ac", "1", wav)
     raw = os.path.join(d, "ls_raw.mp4")
@@ -982,15 +985,17 @@ async def autocut(audio: UploadFile = File(...), clips: List[UploadFile] = File(
     return go(jid, audio=await save_upload(audio, d, "song"), clips=[await save_upload(c, d, f"clip{i:02}") for i, c in enumerate(clips)])
 
 @app.post("/lipsync")
-async def lipsync(video: UploadFile = File(...), audio: UploadFile = File(...), start: float = Form(0), end: float = Form(0),
+async def lipsync(video: Optional[UploadFile] = File(None), image: Optional[UploadFile] = File(None), audio: UploadFile = File(...), start: float = Form(0), end: float = Form(0),
                   vocals: bool = Form(True), steps: int = Form(20), consent: str = Form(""), description: str = Form(""),
                   authorization: Optional[str] = Header(None)):
     auth(authorization)
     if consent != "true": raise HTTPException(400, "Nekad: du måste intyga att personen är er egen artist eller AI-figur och har gett samtycke.")
     check_text(description, True)
     if end and end - start > 60: raise HTTPException(400, "Max 60 s per lipsync-körning på en T4.")
-    jid, d = submit("lipsync", task_lipsync, start=max(0.0, float(start)), end=float(end or 0), vocals=vocals, steps=max(10, min(int(steps), 40)))
-    return go(jid, video=await save_upload(video, d, "video"), audio=await save_upload(audio, d, "song"))
+    src = video or image  # video ELLER portratt (Läppsynk-sidan skickar en stillbild)
+    if src is None: raise HTTPException(400, "Skicka en video eller ett porträtt.")
+    jid, d = submit("lipsync", task_lipsync, start=max(0.0, float(start)), end=float(end or 0), vocals=vocals, steps=max(10, min(int(steps), 40)), still=video is None)
+    return go(jid, video=await save_upload(src, d, "portrait" if video is None else "video"), audio=await save_upload(audio, d, "song"))
 
 @app.post("/roster")
 async def roster_add(name: str = Form(...), consent: str = Form(""), photos: List[UploadFile] = File(...), authorization: Optional[str] = Header(None)):
