@@ -2578,7 +2578,7 @@
       h('section', { class: 'step' }, edit,
         h('h3', {}, '2. Utseende och ljud'), h('div', { class: 'row' }, field('Format', ratio), field('Röst', gender), field('Tempo', speed), field('Övergång', trans)),
         h('div', { class: 'row' }, field('Textning', h('label', { class: 'chk' }, subsOn, ' På')), field('Position', pos), field('Storlek', size), field('Färg', color), field('Kant', outline)),
-        h('div', { class: 'row' }, field('Bakgrundsmusik (valfri, duckas under rösten)', h('div', {}, music, libButton(music)), true), field('Musikvolym', vol), field('Titel i början', h('label', { class: 'chk' }, showTitle, ' Visa'))),
+        h('div', { class: 'row' }, field('Bakgrundsmusik (valfri, duckas under rösten)', music, true), field('Musikvolym', vol), field('Titel i början', h('label', { class: 'chk' }, showTitle, ' Visa'))),
         h('p', { class: 'lanenote' }, 'Bara SFW (stockklipp). Ca 720p, renderas på servern – 20–60 s video tar oftast 1–4 minuter.'),
         h('div', { class: 'quick' }, bRender), bar, status), out);
     if (st.lane === 'nsfw') say('Snabbvideo finns bara i SFW-läget – byt läge uppe till höger.', true);
