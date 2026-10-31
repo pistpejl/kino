@@ -523,3 +523,11 @@ html { scroll-padding-bottom:calc(var(--navh) + 96px + env(safe-area-inset-botto
 .viral .vcard:has(input:checked){border-color:#ff3b30;background:#1c1220}
 .viral .vhead{display:flex;align-items:center;gap:6px}
 .viral .err{color:#ff6b60}
+/* Skapa influencer-artist */
+.persona-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
+.persona-pick { padding: 0; border: 3px solid transparent; border-radius: 12px; overflow: hidden; background: none; cursor: pointer; }
+.persona-pick img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.persona-pick[aria-pressed="true"] { border-color: var(--accent, #7c5cff); }
+.persona-card { display: flex; gap: 14px; align-items: flex-start; margin-top: 12px; padding: 12px; border-radius: 12px; background: rgba(127,127,127,.08); }
+.persona-card img { width: 120px; height: 120px; object-fit: cover; border-radius: 10px; flex: none; }
+.persona-card p { margin: 6px 0; }

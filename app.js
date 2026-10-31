@@ -419,6 +419,7 @@
       ['image', 'Bild', 'Skriv en text, få en bild', '#/image'],
       ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
       ['viral', 'Viral-mixer', 'TikTok-trender (video + musik) blir en prompt', '#/viral'],
+      ['face', 'Skapa influencer-artist', 'Hitta på en AI-artist, få 4 ansikten, spara i artistlistan', '#/persona'],
       ['stock', 'Stockklipp till låt', 'Riktiga klipp i takt med musiken', '#/music', 'stock', true],
     ]);
   }
@@ -482,6 +483,7 @@
         say(j.loraNote || (j.images[0] && j.images[0].waitedSeconds != null ? `Gjord av ${j.engineName} (${j.images[0].waitedSeconds} s totalt).${j.note ? ' ' + j.note : ''}` : `Gjord av ${j.engineName}.`));
       } });
     v.classList.add('two');
+    if (st.imagePrefill) { c.ta.value = st.imagePrefill; st.imagePrefill = null; c.ta.dispatchEvent(new Event('input')); }
     v.append(pagehead('Bild', 'Skriv vad du vill se. Format och antal finns under Inställningar.'), c.box, grid);
   }
 
@@ -711,7 +713,7 @@
     });
     // Artistlista + ansiktsbyte
     const list = h('div', { class: 'chips' });
-    const renderList = () => { list.innerHTML = ''; rosterLocal().forEach((a) => list.append(h('span', { class: 'chip' }, h('span', { class: 'cn' }, a.name), h('span', { class: 'ch' }, `samtycke ${a.added}`), h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: () => { rosterSave(rosterLocal().filter((x) => x.id !== a.id)); renderList(); } }, '×')))); };
+    const renderList = () => { list.innerHTML = ''; rosterLocal().forEach((a) => list.append(h('span', { class: 'chip' }, h('span', { class: 'cn' }, a.name), h('span', { class: 'ch' }, a.ai ? `AI-genererad ${a.added}` : `samtycke ${a.added}`), a.ai && a.persona ? h('button', { type: 'button', class: 'text', onclick: () => personaToImage(a) }, 'Skapa bilder med artisten') : null, h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: () => { rosterSave(rosterLocal().filter((x) => x.id !== a.id)); renderList(); } }, '×')))); };
     const rN = h('input', { type: 'text', placeholder: 'Namn, t.ex. Ida Stina' }); const rP = file('Referensfoton', 'image/*', true); const rC = h('input', { type: 'checkbox' });
     const tRos = tool('Artistlista', 'Bara artister här kan bytas in. Sparas i din webbläsare och Colab-sessionen', [list, field('Namn', rN, true), rP.el, h('label', { class: 'wide' }, rC, ' Personen har gett samtycke')], 'Lägg till artist', async (say) => {
       if (!rC.checked) throw new Error('Kryssa i samtycket först.');
@@ -1832,10 +1834,94 @@
     if (K.job && K.status !== 'done' && K.status !== 'error' && !K.following) { K.following = true; follow(K.job); }
   }
 
-  const VIEWS = { klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
+  // ---- Skapa influencer-artist: påhittad vuxen AI-persona -> 4 porträtt -> artistlistan ----
+  const P_YOUNG_RE = /(^|[^a-zåäö0-9])(young(er)?|youthful|youth|petite|tiny|little|baby[\s-]*face|flat[\s-]*chested|innocent|pigtails|braces|student|college[\s-]*girl|nymphet|chibi|ung|unga|ungdomliga?|liten|lilla|späd|barnansikte|flickaktig|pojkaktig|oskyldig|tonårsaktig)(?=$|[^a-zåäö0-9])/i;
+  const P_REAL_RE = /(look(s|ing)?[\s-]*(a[\s-]*)?like|look[\s-]*alike|resembl\w*|doppelg(a|ä)nger|celebrity|celeb|famous|som liknar|liknar|ser ut som|kändis\w*|känd person|berömd\w*|kopia av|tvilling till)/i;
+  const P_PROPER_RE = /(^|[^\p{L}])\p{Lu}\p{Ll}+[\s-]+\p{Lu}\p{Ll}+/u;
+  function personaCheck(p) {
+    if (!p.name) return 'Skriv ett namn på artisten.';
+    if (!(Number(p.age) >= 21)) return 'Åldern måste vara minst 21 år. KINO skapar bara vuxna personer.';
+    const all = Object.values(p).join(' \n ');
+    if (minorText(all, 'nsfw') || P_YOUNG_RE.test(all)) return 'Nekad: bara vuxna (21+). Ord som syftar på barn, tonåringar eller ungt utseende är inte tillåtna.';
+    if (P_REAL_RE.test(all) || Object.entries(p).some(([k, x]) => k !== 'name' && P_PROPER_RE.test(String(x)))) return 'Nekad: inga verkliga eller kända personer och inga "liknar …"-beskrivningar. Artisten måste vara helt påhittad.';
+    return null;
+  }
+  const PORTRAIT_PREF = ['flux-klein', 'qwen-image', 'z-image', 'sana-sprint'];
+  async function personaView(v) {
+    const inp = (ph, type) => h('input', { type: type || 'text', placeholder: ph });
+    const f = { name: inp('t.ex. Nova Lind'), gender: select([['kvinna', 'Kvinna'], ['man', 'Man'], ['ickebinär', 'Ickebinär / androgyn']], 'kvinna'), age: h('input', { type: 'number', min: '21', max: '99', value: '25', step: '1' }),
+      hair: inp('t.ex. långt lockigt rött'), eyes: inp('t.ex. gröna'), body: inp('t.ex. atletisk'), ethnicity: inp('valfritt, t.ex. nordisk'), style: inp('t.ex. streetwear, minimalistisk'), genre: inp('t.ex. synthpop'), vibe: inp('t.ex. självsäker och varm') };
+    f.age.oninput = () => { if (Number(f.age.value) < 21) f.age.setCustomValidity('Minst 21 år'); else f.age.setCustomValidity(''); };
+    const rewrite = h('input', { type: 'checkbox', checked: true });
+    const status = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
+    const say = (t, err) => { status.textContent = t; status.classList.toggle('err', Boolean(err)); };
+    const grid = h('div', { class: 'persona-grid' });
+    const cardBox = h('div', { class: 'persona-card', hidden: true });
+    const genBtn = h('button', { class: 'text primary', type: 'button' }, 'Generera ansikten');
+    const saveBtn = h('button', { class: 'text primary', type: 'button', disabled: true }, 'Spara i artistrostern');
+    let chosen = null; let lastPrompt = ''; let busy = false;
+    const persona = () => Object.fromEntries(Object.entries(f).map(([k, el]) => [k, k === 'age' ? Math.floor(Number(el.value)) : el.value.trim()]));
+    const describe = (p) => [`fiktiv vuxen AI-artist ${p.name}, ${p.age} år`, p.gender, p.hair && `${p.hair} hår`, p.eyes && `${p.eyes} ögon`, p.body, p.ethnicity, p.style, p.genre && `${p.genre}-artist`, p.vibe].filter(Boolean).join(', ');
+    genBtn.onclick = async () => {
+      if (busy) return; const p = persona(); const err = personaCheck(p); if (err) return say(err, true);
+      busy = true; genBtn.disabled = true; saveBtn.disabled = true; chosen = null; grid.innerHTML = ''; cardBox.hidden = true;
+      try {
+        say(rewrite.checked ? 'Bygger porträttprompt (AI översätter till engelska)…' : 'Bygger porträttprompt…');
+        const r = await fetch(`${API}/persona/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ persona: p, rewrite: rewrite.checked, lane: st.lane }) });
+        const pj = await r.json().catch(() => ({})); if (!r.ok || !pj.ok) throw new Error(pj.error || `Servern svarade ${r.status}`);
+        lastPrompt = pj.prompt;
+        // Porträttet görs alltid i SFW-läget (påklädd neutral headshot), även när KINO står i NSFW.
+        const list = (await getEngines('sfw')).filter((e) => e.kind === 'image' && !e.puter && !e.async && e.id !== 'gpu-image' && e.status !== 'down');
+        const ids = [...PORTRAIT_PREF.filter((id) => list.some((e) => e.id === id)), ...list.map((e) => e.id).filter((id) => !PORTRAIT_PREF.includes(id))];
+        if (!ids.length) throw new Error('Ingen bildmotor svarar just nu. Försök igen om en stund.');
+        let made = 0; let engineName = ''; let lastErr = '';
+        for (const eng of ids) {
+          if (made >= 4) break;
+          say(`Genererar ${4 - made} porträtt med ${(list.find((e) => e.id === eng) || {}).name || eng}…`);
+          const ir = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane: 'sfw', engine: eng, prompt: lastPrompt, ratio: '1:1', count: 4 - made, lora: 'none' }) });
+          if (!ir.ok) { lastErr = await errMsg(ir); continue; }
+          const ij = await ir.json();
+          for (const im of ij.images || []) {
+            made++; engineName = ij.engineName;
+            const img = h('img', { src: abs(im.url), alt: `Porträttförslag ${made}` });
+            const b = h('button', { type: 'button', class: 'persona-pick', 'aria-pressed': 'false', onclick: () => { grid.querySelectorAll('.persona-pick').forEach((x) => x.setAttribute('aria-pressed', 'false')); b.setAttribute('aria-pressed', 'true'); chosen = { ...im, engineName: ij.engineName }; saveBtn.disabled = false; } }, img);
+            grid.append(b);
+          }
+        }
+        if (!made) throw new Error(lastErr || 'Inga porträtt kunde skapas.');
+        say(`${made} förslag från ${engineName}${pj.rewritten ? ` (prompt omskriven av ${pj.model})` : ''}. Välj ett ansikte och spara.`);
+      } catch (e) { say(e.message, true); } finally { busy = false; genBtn.disabled = false; }
+    };
+    saveBtn.onclick = async () => {
+      if (!chosen) return say('Välj ett ansikte först.', true);
+      const p = persona(); const err = personaCheck(p); if (err) return say(err, true);
+      saveBtn.disabled = true;
+      try {
+        say('Skriver persona-kort…');
+        const cr = await fetch(`${API}/persona/card`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ persona: p }) });
+        const card = await cr.json().catch(() => ({})); if (!cr.ok || !card.ok) throw new Error(card.error || 'Kunde inte skapa persona-kortet');
+        const blob = await fetch(abs(chosen.url)).then((x) => { if (!x.ok) throw new Error('Kunde inte hämta bilden'); return x.blob(); });
+        const photo = await shrink(blob);
+        const a = { id: Math.random().toString(36).slice(2, 10), name: p.name, photos: [photo], consent: true, ai: true, added: new Date().toLocaleString('sv-SE'),
+          persona: { ...p, lane: st.lane, description: describe(p), prompt: lastPrompt, engine: chosen.engineName }, card: { bio: card.bio, tone: card.tone, hashtags: card.hashtags } };
+        rosterSave([...rosterLocal(), a]);
+        cardBox.hidden = false; cardBox.innerHTML = '';
+        cardBox.append(h('img', { src: photo, alt: p.name }), h('div', {}, h('b', {}, `${p.name} `, h('span', { class: 'etag' }, 'AI-genererad / påhittad')), h('p', {}, card.bio), h('p', { class: 'meta' }, `Ton i bildtexter: ${card.tone}`), h('p', { class: 'meta' }, card.hashtags.join(' ')),
+          h('div', { class: 'quick' }, h('button', { class: 'text primary', type: 'button', onclick: () => personaToImage(a) }, 'Skapa bilder med artisten'), h('a', { class: 'text dim', href: '#/motor?t=roster' }, 'Visa artistlistan'))));
+        say(`${p.name} är sparad i artistlistan och kan användas i ansiktsbyte och Openjutsu (synkas när egen GPU är ansluten).`);
+      } catch (e) { say(e.message, true); saveBtn.disabled = false; }
+    };
+    v.append(pagehead('Skapa influencer-artist', 'Hitta på en egen AI-artist: beskriv personen, generera fyra ansikten, välj ett och spara i artistlistan. Gratis, med KINO:s egna bildmotorer.'),
+      h('div', { class: 'grid2' }, field('Namn', f.name), field('Kön / stil', f.gender), field('Ålder (minst 21)', f.age), field('Hår', f.hair), field('Ögon', f.eyes), field('Kroppstyp', f.body), field('Etnicitet (valfritt)', f.ethnicity),
+        field('Stil', f.style), field('Genre', f.genre), field('Personlighet / vibe', f.vibe, true), h('label', { class: 'wide' }, rewrite, ' Låt AI skriva om prompten (svenska → engelska)')),
+      h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW' : 'SFW'} (sparas med artisten). Porträtten blir alltid en påklädd, neutral headshot – även i NSFW-läge. Bara vuxna (21+), inga verkliga eller kända personer och inga uppladdade foton.`),
+      h('div', { class: 'quick' }, genBtn, saveBtn), status, grid, cardBox);
+  }
+  function personaToImage(a) { st.imagePrefill = `${a.persona.description}, adult`; location.hash = '#/image'; }
+  const VIEWS = { persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
     skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, installningar: settingsView, motor: settingsView };
   const ALIAS = { create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
-  const SECTION = { '': '', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', verk: 'verk' };
+  const SECTION = { '': '', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', verk: 'verk' };
   function route() {
     let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
     let [k, q] = raw.split('?'); k = k || '';
