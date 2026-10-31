@@ -531,3 +531,26 @@ html { scroll-padding-bottom:calc(var(--navh) + 96px + env(safe-area-inset-botto
 .persona-card { display: flex; gap: 14px; align-items: flex-start; margin-top: 12px; padding: 12px; border-radius: 12px; background: rgba(127,127,127,.08); }
 .persona-card img { width: 120px; height: 120px; object-fit: cover; border-radius: 10px; flex: none; }
 .persona-card p { margin: 6px 0; }
+
+/* ---- AI-agent ---- */
+.agent-list { display:flex; flex-direction:column; gap:12px; margin:12px 0; }
+.agent-msg { max-width:min(720px,100%); padding:12px 14px; border-radius:var(--r); background:var(--s1); border:1px solid var(--line); }
+.agent-msg p { margin:0 0 6px; white-space:pre-wrap; }
+.agent-msg.user { align-self:flex-end; background:var(--s3); }
+.agent-msg.agent { align-self:flex-start; }
+.agent-q { color:var(--warn); }
+.agent-steps { margin:8px 0 0; padding-left:20px; display:flex; flex-direction:column; gap:10px; }
+.agent-step { display:flex; flex-direction:column; gap:4px; }
+.agent-st { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.agent-step.done .chip { color:var(--ok); } .agent-step.err .chip { color:var(--accent); } .agent-step.confirm .chip { color:var(--warn); }
+.agent-step.run .chip::before { content:''; display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; background:var(--warn); animation:agentpulse 1s infinite alternate; }
+@keyframes agentpulse { to { opacity:.25; } }
+.agent-res pre { margin:4px 0; padding:8px; background:var(--s2); border-radius:var(--r-sm); white-space:pre-wrap; font:13px/1.45 inherit; max-height:220px; overflow:auto; }
+.agent-thumbs { display:flex; gap:6px; flex-wrap:wrap; }
+.agent-thumbs img { width:96px; height:96px; object-fit:cover; border-radius:var(--r-sm); border:1px solid var(--line); }
+.agent-input { position:sticky; bottom:calc(var(--navh) + 8px); display:flex; flex-direction:column; gap:8px; padding:10px; background:var(--s1); border:1px solid var(--line2); border-radius:var(--r); }
+.agent-input textarea { width:100%; box-sizing:border-box; resize:vertical; }
+.agentfab { position:fixed; right:16px; bottom:calc(var(--navh) + 84px + env(safe-area-inset-bottom)); z-index:40; width:52px; height:52px; border-radius:50%; display:grid; place-items:center; background:var(--accent); color:#fff; box-shadow:0 6px 20px rgba(0,0,0,.45); }
+.agentfab svg { width:26px; height:26px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+.agentfab[hidden] { display:none; }
+@media (min-width:900px) { .agentfab { bottom:24px; } .agent-input { bottom:12px; } }

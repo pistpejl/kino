@@ -348,6 +348,7 @@
   Object.assign(ICONS, {
     lipsync: '<path d="M4 12c2-3 5-4 8-4s6 1 8 4c-2 3-5 4-8 4s-6-1-8-4z"/><path d="M4 12h16"/>',
     face: '<circle cx="12" cy="12" r="8"/><circle cx="9" cy="10.5" r=".8"/><circle cx="15" cy="10.5" r=".8"/><path d="M9 15c1.7 1.3 4.3 1.3 6 0"/>',
+    agent: '<path d="M4 5h16v11H9l-5 4z"/><path d="M9 10h.01M12 10h.01M15 10h.01"/>',
     voice: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   });
   const icon = (k) => { const e = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); e.setAttribute('viewBox', '0 0 24 24'); e.setAttribute('aria-hidden', 'true'); e.innerHTML = ICONS[k]; return e; };
@@ -414,6 +415,7 @@
   };
   function skapaView(v) {
     hub(v, 'Skapa', 'Välj vad du vill göra.', [
+      ['agent', 'AI-agent', 'Skriv ett önskemål – agenten kör rätt verktyg åt dig', '#/agent'],
       ['music', 'Musikvideo', 'Låt + idé blir en klippt video', '#/music'],
       ['video', 'Video', 'Text eller bild blir ett klipp', '#/video'],
       ['image', 'Bild', 'Skriv en text, få en bild', '#/image'],
@@ -770,7 +772,7 @@
         vList.append(h('span', { class: 'chip' }, h('span', { class: 'cn' }, v.name), h('span', { class: 'ch' }, stt), h('button', { type: 'button', 'aria-label': 'Ta bort', onclick: async () => { if (!confirm(`Ta bort rösten ${v.name} från motorn?`)) return; await fetch(`${colabCfg().url}/voices/${v.id}`, { method: 'DELETE', headers: colabHdr() }).catch(() => {}); voicesSync(); } }, '×')));
         if (v.status === 'ready') vSel.append(h('option', { value: v.id }, v.name));
       });
-      vSel.value = [...vSel.options].some((o) => o.value === cur) ? cur : '';
+      vSel.value = [...vSel.options].some((o) => o.value === cur) ? cur : ''; agentPick(vSel, 'voice');
     };
     async function voicesSync() { voiceList = await fetch(`${colabCfg().url}/voices`, { headers: colabHdr() }).then((x) => (x.ok ? x.json() : [])).catch(() => []); renderVoices(); }
     const vN = h('input', { type: 'text', placeholder: 'Namn, t.ex. Ida Stina' }); const vF = file('Träningsljud (1–10 min totalt, mp3/wav/m4a)', 'audio/*', true);
@@ -810,7 +812,7 @@
     const oV = file('Video (huvudpersonen byts)', 'video/*'); const oA = select([['', '– välj artist –']], ''); const oS = num(0);
     const oL = h('input', { type: 'number', value: 5, min: 2, max: 6, step: 0.5, style: 'width:6em' }); const oR = select([['480p', '480p (rekommenderas på T4)'], ['720p', '720p (långsammare)']], '480p');
     const oLip = h('input', { type: 'checkbox', checked: true }); const oC = h('input', { type: 'checkbox' }); const oBar = h('progress', { max: 100, value: 0, style: 'width:100%', hidden: true });
-    const oFill = () => { const cur = oA.value; oA.innerHTML = ''; [['', '– välj artist –'], ...rosterLocal().filter((a) => rosterServer[a.id]).map((a) => [rosterServer[a.id], a.name])].forEach(([v, t]) => oA.append(h('option', { value: v }, t))); oA.value = cur; };
+    const oFill = () => { const cur = oA.value; oA.innerHTML = ''; [['', '– välj artist –'], ...rosterLocal().filter((a) => rosterServer[a.id]).map((a) => [rosterServer[a.id], a.name])].forEach(([v, t]) => oA.append(h('option', { value: v }, t))); oA.value = cur; agentPick(oA, 'artist'); };
     oA.onfocus = oFill;
     const tOj = tool('🎭 Karaktärsbyte (Openjutsu)', 'Huvudpersonen i klippet byts mot en artist ur artistlistan – kamera, rörelse och ljud behålls. Max 6 s. Experimentellt på T4: räkna med 30–90 min', [oV.el, field('Artist (ur artistlistan)', oA),
       field('Start (s)', oS), field('Längd (s, 2–6)', oL), field('Upplösning', oR), h('label', {}, oLip, ' Munnen följer ljudet (lipsync)'),
@@ -1918,10 +1920,214 @@
       h('div', { class: 'quick' }, genBtn, saveBtn), status, grid, cardBox);
   }
   function personaToImage(a) { st.imagePrefill = `${a.persona.description}, adult`; location.hash = '#/image'; }
-  const VIEWS = { persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
+  // ---- AI-agent (#/agent): önskemål på svenska -> plan (server) -> stegen körs här med KINO:s vanliga routes/sidor ----
+  const AGENT_KEY = 'kino.agent.chat';
+  const AGENT_TOOLS = { persona: 'Influencer-artist', image: 'Bilder', script: 'Manus', viral_trends: 'Trender', viral_mashup: 'Viral-mix', save_template: 'Spara i Mina mallar',
+    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', klipp: 'Klipp' };
+  const HANDOFF = { video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, klipp: 1 };
+  const STATUS_SV = { wait: 'Väntar', confirm: 'Bekräfta', run: 'Kör…', done: 'Klar', err: 'Fel', cancel: 'Avbruten', skip: 'Hoppades över' };
+  const agentLoad = () => { try { return JSON.parse(localStorage.getItem(AGENT_KEY) || '[]'); } catch { return []; } };
+  const agentSave = (l) => { const x = l.slice(-50); try { localStorage.setItem(AGENT_KEY, JSON.stringify(x)); } catch { localStorage.setItem(AGENT_KEY, JSON.stringify(x.slice(-20))); } return x; };
+  function agentPick(sel, key) { const want = st.agentPick && st.agentPick[key]; if (!want) return; const o = [...sel.options].find((x) => x.textContent.trim().toLowerCase() === want.toLowerCase()); if (o) { sel.value = o.value; st.agentPick[key] = null; } }
+  async function agentContext() {
+    const g = await colabHealth(); const gpu = g.state === 'on'; let voices = [];
+    if (gpu) voices = await fetch(`${colabCfg().url}/voices`, { headers: colabHdr(), signal: AbortSignal.timeout(8000) }).then((x) => (x.ok ? x.json() : [])).then((l) => l.filter((v) => v.status === 'ready').map((v) => v.name)).catch(() => []);
+    const engines = (await getEngines(st.lane).catch(() => [])).filter((e) => e.status !== 'down').map((e) => `${e.kind}:${e.id}`);
+    return { gpu, voices, roster: rosterLocal().map((a) => a.name), engines };
+  }
+  async function agentScript(args, signal) {
+    const r = await fetch(`${API}/script`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...args, lane: st.lane }), signal });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.message || j.error || `Servern svarade ${r.status}`);
+    for (;;) {
+      await abortable(new Promise((ok) => setTimeout(ok, 2500)), signal);
+      const s = await fetch(`${API}/script/jobs/${j.jobId}`, { signal }).then((x) => x.json()).catch(() => null);
+      if (!s) continue; if (s.status === 'done') return s.result; if (s.status === 'error') throw new Error(s.refused ? REFUSE : s.error);
+    }
+  }
+  async function agentImages({ prompt, count, ratio, persona }, signal, setCancel, say) {
+    if (minorText(prompt)) throw new Error(REFUSE);
+    const lane = persona ? 'sfw' : st.lane; // porträtt alltid SFW, som på artistsidan
+    const list = (await getEngines(lane)).filter((e) => e.kind === 'image' && !e.puter && e.id !== 'gpu-image' && e.status !== 'down');
+    const pref = persona ? PORTRAIT_PREF : [];
+    const ids = [...pref.filter((id) => list.some((e) => e.id === id)), ...list.filter((e) => !e.async).map((e) => e.id).filter((id) => !pref.includes(id)), ...list.filter((e) => e.async).map((e) => e.id)];
+    if (!ids.length) throw new Error('Ingen bildmotor svarar just nu.');
+    const out = []; let lastErr = '';
+    for (const eng of ids) {
+      if (out.length >= count) break;
+      say(`${count - out.length} bild(er) med ${(list.find((e) => e.id === eng) || {}).name || eng}…`);
+      const n = Math.min(4, count - out.length);
+      const r = await fetch(`${API}/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lane, engine: eng, prompt, ratio: ratio || '1:1', count: n, lora: persona ? 'none' : 'auto' }), signal });
+      if (!r.ok) { lastErr = await errMsg(r); if (r.status === 422) throw new Error(lastErr); continue; }
+      let j = await r.json();
+      if (j.async) { setCancel(() => fetch(`${API}/jobs/${j.jobId}`, { method: 'DELETE' }).catch(() => null)); try { j = await poll(j.jobId, say, signal); } catch (e) { if (e.cancelled) throw e; lastErr = e.message; continue; } finally { setCancel(null); } }
+      for (const im of j.images || []) { const item = { ...im, engineName: j.engineName }; st.results.image.unshift(item); out.push(item); }
+    }
+    if (!out.length) throw new Error(lastErr || 'Inga bilder kunde skapas.');
+    return out;
+  }
+  const promptOf = (o) => (o && (o.prompt || o.idea)) || '';
+  async function agentRunStep(step, outs, ctl) {
+    const a = step.args || {}; const prev = a.from != null ? outs[a.from] : null; const { signal, say, setCancel } = ctl;
+    const json = async (path, body) => { const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) throw new Error(j.error || j.message || `Servern svarade ${r.status}`); return j; };
+    switch (step.tool) {
+      case 'persona': {
+        const p = { name: a.name, gender: a.gender, age: a.age, hair: a.hair, eyes: a.eyes, body: a.body, ethnicity: a.ethnicity, style: a.style, genre: a.genre, vibe: a.vibe };
+        const err = personaCheck(p); if (err) throw new Error(err);
+        say('Porträttprompt…'); const pj = await json('/persona/prompt', { persona: p, rewrite: true, lane: st.lane });
+        say('Persona-kort…'); const card = await json('/persona/card', { persona: p });
+        const description = [`fiktiv vuxen AI-artist ${p.name}, ${p.age} år`, p.gender, p.hair && `${p.hair} hår`, p.eyes && `${p.eyes} ögon`, p.body, p.style, p.genre && `${p.genre}-artist`, p.vibe].filter(Boolean).join(', ');
+        return { persona: p, prompt: pj.prompt, card, description, text: `${p.name}, ${p.age} år – ${card.bio}\n${(card.hashtags || []).join(' ')}` };
+      }
+      case 'image': {
+        const persona = prev && prev.persona ? prev : null;
+        const prompt = a.prompt && !persona ? a.prompt : persona ? persona.prompt : `${promptOf(prev)}${a.prompt ? ', ' + a.prompt : ''}`;
+        if (!prompt) throw new Error('Ingen prompt att göra bild av.');
+        const imgs = await agentImages({ prompt, count: a.count || 1, ratio: persona ? '1:1' : a.ratio, persona: Boolean(persona) }, signal, setCancel, say);
+        let note = `${imgs.length} bild(er) från ${imgs[0].engineName}. Finns också i Mina verk.`;
+        if (persona) {
+          const blob = await fetch(abs(imgs[0].url)).then((x) => x.blob()).catch(() => null);
+          if (blob) {
+            const p = persona.persona;
+            rosterSave([...rosterLocal(), { id: Math.random().toString(36).slice(2, 10), name: p.name, photos: [await shrink(blob)], consent: true, ai: true, added: new Date().toLocaleString('sv-SE'),
+              persona: { ...p, lane: st.lane, description: persona.description, prompt: persona.prompt, engine: imgs[0].engineName }, card: { bio: persona.card.bio, tone: persona.card.tone, hashtags: persona.card.hashtags } }]);
+            note += ` ${p.name} är sparad i artistlistan (första bilden).`;
+          }
+        }
+        return { images: imgs.map((i) => abs(i.url)), prompt, text: note };
+      }
+      case 'script': {
+        say('Skriver manus…'); const r = await agentScript({ idea: a.idea || promptOf(prev), seconds: a.seconds, scenes: a.scenes, song: a.song }, signal);
+        const scenes = r.scenes || [];
+        return { prompt: scenes.map((s) => s.prompt).join(' | '), text: scenes.map((s, i) => `${i + 1}. ${s.text || s.prompt}`).join('\n'), link: '#/script' };
+      }
+      case 'viral_trends': {
+        say('Hämtar trender…'); const r = await fetch(`${API}/viral/trends?kind=${a.kind}`, { signal }).then((x) => x.json()); if (!r.ok) throw new Error(r.error || 'Kunde inte hämta trender');
+        return { cards: r.cards, kind: a.kind, text: r.cards.slice(0, 6).map((c) => `• ${c.name}: ${c.hook || c.format || ''}`).join('\n') };
+      }
+      case 'viral_mashup': {
+        let cards = prev && prev.cards;
+        if (!cards) { const r = await fetch(`${API}/viral/trends?kind=${a.kind}`, { signal }).then((x) => x.json()); cards = r.cards || []; }
+        say('Mixar trendmönster…');
+        const m = await json('/viral/mashup', { kind: a.kind, lane: st.lane, cards: cards.slice(0, a.picks || 2), idea: a.idea, seconds: a.seconds, format: '9:16' });
+        const shots = (m.shots || []).map((s) => `${s.t} ${s.visual}${s.text ? ` [${s.text}]` : ''}`).join('\n');
+        return { prompt: m.prompt, shots, title: m.title, text: `${m.title}\n${m.prompt}` };
+      }
+      case 'save_template': {
+        const p = promptOf(prev); if (!p) throw new Error('Ingen prompt att spara.');
+        let n = []; try { n = JSON.parse(localStorage.getItem('kino.mymixes')) || []; } catch { /* tom */ }
+        n.unshift({ title: a.title, prompt: p }); localStorage.setItem('kino.mymixes', JSON.stringify(n.slice(0, 50)));
+        return { text: `Sparad i Mina mallar som "${a.title}".` };
+      }
+      case 'video': case 'music_video': case 'stock_clips': {
+        const target = step.tool === 'video' ? 'video' : 'music';
+        const prompt = [a.prompt || a.idea, promptOf(prev)].filter(Boolean).join('\n\n');
+        if (minorText(prompt)) throw new Error(REFUSE);
+        st.viral = { title: 'Från agenten', prompt, shots: (prev && prev.shots) || '', format: a.ratio || '9:16', target };
+        if (step.tool === 'stock_clips') st.preset = 'stock';
+        return { text: target === 'video' ? 'Video-sidan öppnas ifylld. Välj motor och tryck Skapa video – där syns kö och Avbryt.' : 'Musikvideo-sidan öppnas ifylld. Ladda upp låten och tryck Skapa musikvideo.', go: target === 'video' ? '#/video' : '#/music' };
+      }
+      case 'voice_swap': st.agentPick = { ...(st.agentPick || {}), voice: a.voice }; return { text: `Röstbyte öppnas med rösten ${a.voice} vald. Ladda upp låten och intyga rättigheterna.`, go: '#/motor?t=voice' };
+      case 'face_swap': st.agentPick = { ...(st.agentPick || {}), artist: a.artist }; return { text: `Ansiktsbyte öppnas. Välj ${a.artist} för ansiktet i bilden/klippet.`, go: '#/motor?t=faceswap' };
+      case 'openjutsu': st.agentPick = { ...(st.agentPick || {}), artist: a.artist }; return { text: `Karaktärsbyte öppnas med ${a.artist} vald. Ladda upp klippet (max 6 s).`, go: '#/motor?t=openjutsu' };
+      case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
+      default: throw new Error('Okänt verktyg.');
+    }
+  }
+  const AG = { msgs: null, live: new Map() };
+  function agentView(v) {
+    if (!AG.msgs) AG.msgs = agentLoad();
+    let msgs = AG.msgs;
+    const list = h('div', { class: 'agent-list', 'aria-live': 'polite' });
+    const ta = h('textarea', { rows: 2, placeholder: 'Skriv ett önskemål, t.ex. "skapa en influencer-artist som gör neon-pop och gör 3 bilder av henne"' });
+    const send = h('button', { class: 'text primary', type: 'button' }, 'Skicka');
+    const clear = h('button', { class: 'text dim', type: 'button' }, 'Rensa');
+    const store = () => { msgs = AG.msgs = agentSave(msgs); document.dispatchEvent(new CustomEvent('kino-agent')); };
+    const live = AG.live; // msg index -> { ac, cancel }
+    const argText = (s) => Object.entries(s.args || {}).filter(([k, x]) => x !== '' && x != null && k !== 'from').map(([k, x]) => `${k}: ${String(x).slice(0, 80)}`).join(' · ') + (s.args && s.args.from != null ? ` · från steg ${s.args.from + 1}` : '');
+    function paint() {
+      list.innerHTML = '';
+      if (!msgs.length) list.append(empty('Vad vill du skapa?', 'Agenten planerar och kör KINO:s verktyg steg för steg. Tunga jobb (video, GPU, många bilder) frågar först.'));
+      msgs.forEach((m, mi) => {
+        const box = h('div', { class: `agent-msg ${m.role}` }, h('p', {}, m.text || ''));
+        if (m.question) box.append(h('p', { class: 'agent-q' }, m.question));
+        if (m.steps && m.steps.length) {
+          const ol = h('ol', { class: 'agent-steps' });
+          m.steps.forEach((s, si) => {
+            const res = h('div', { class: 'agent-res' });
+            if (s.out && s.out.images) res.append(h('div', { class: 'agent-thumbs' }, s.out.images.map((u) => h('a', { href: u, target: '_blank', rel: 'noopener' }, h('img', { src: u, alt: 'Resultat', loading: 'lazy' })))));
+            if (s.out && s.out.text) res.append(h('pre', {}, s.out.text));
+            if (s.out && s.out.go) res.append(h('a', { class: 'text', href: s.out.go }, 'Öppna igen ›'));
+            if (s.out && s.out.link) res.append(h('a', { class: 'text dim', href: s.out.link }, 'Öppna Manus ›'));
+            if (s.error) res.append(h('p', { class: 'status err' }, s.error));
+            if (s.status === 'run' && s.msg) res.append(h('p', { class: 'meta' }, s.msg));
+            const row = h('div', { class: 'quick' });
+            if (s.status === 'confirm') row.append(h('button', { class: 'text primary', type: 'button', onclick: () => run(mi, si, true) }, 'Kör'), h('button', { class: 'text dim', type: 'button', onclick: () => stopRest(mi, si) }, 'Avbryt'));
+            if (s.status === 'run') row.append(h('button', { class: 'text cancel', type: 'button', onclick: () => { const l = live.get(mi); if (l) { l.ac.abort(); if (l.cancel) l.cancel(); } } }, 'Avbryt'));
+            ol.append(h('li', { class: `agent-step ${s.status}` }, h('div', { class: 'agent-st' }, h('b', {}, AGENT_TOOLS[s.tool] || s.tool), s.heavy ? h('span', { class: 'etag' }, 'tungt') : null, h('span', { class: 'chip' }, STATUS_SV[s.status] || s.status)),
+              h('small', { class: 'meta' }, argText(s)), s.why ? h('small', {}, s.why) : null, res, row));
+          });
+          box.append(ol);
+        }
+        list.append(box);
+      });
+      list.lastElementChild && list.lastElementChild.scrollIntoView({ block: 'end' });
+    }
+    function stopRest(mi, si) { msgs[mi].steps.forEach((s, i) => { if (i >= si && ['wait', 'confirm'].includes(s.status)) s.status = 'cancel'; }); store(); paint(); }
+    async function run(mi, from, confirmed) {
+      const m = msgs[mi]; if (!m || live.has(mi)) return;
+      for (let si = from; si < m.steps.length; si++) {
+        const s = m.steps[si]; if (s.status === 'done') continue;
+        if (['cancel', 'skip'].includes(s.status) && si !== from) continue;
+        if (s.heavy && !(confirmed && si === from)) { s.status = 'confirm'; store(); paint(); return; }
+        const dep = s.args && s.args.from != null ? m.steps[s.args.from] : null;
+        if (dep && dep.status !== 'done') { s.status = 'skip'; s.error = `Steg ${s.args.from + 1} blev inte klart.`; continue; }
+        const ac = new AbortController(); const l = { ac, cancel: null }; live.set(mi, l);
+        const untrack = track(`Agent: ${AGENT_TOOLS[s.tool]}`, () => { ac.abort(); if (l.cancel) return l.cancel(); });
+        s.status = 'run'; s.error = null; s.msg = ''; store(); paint();
+        try {
+          const outs = m.steps.map((x) => x.out || null);
+          s.out = await agentRunStep(s, outs, { signal: ac.signal, say: (t) => { s.msg = t; document.dispatchEvent(new CustomEvent('kino-agent')); }, setCancel: (fn) => { l.cancel = fn; } });
+          s.status = 'done';
+        } catch (e) {
+          s.status = e.cancelled || ac.signal.aborted ? 'cancel' : 'err'; s.error = s.status === 'cancel' ? 'Avbrutet. Jobbet stoppades.' : e.message;
+        } finally { untrack(); live.delete(mi); }
+        store(); paint();
+        if (s.status !== 'done') { stopRest(mi, si + 1); return; }
+        if (s.out && s.out.go) { const rest = m.steps.slice(si + 1).some((x) => x.status === 'wait'); if (rest) { m.steps[si + 1].status = 'confirm'; store(); } location.hash = s.out.go; return; }
+        confirmed = false;
+      }
+    }
+    async function ask() {
+      const wish = ta.value.trim(); if (!wish || send.disabled) return;
+      ta.value = ''; msgs.push({ role: 'user', text: wish, ts: Date.now() }); store(); paint();
+      if (minorText(wish)) { msgs.push({ role: 'agent', text: REFUSE }); store(); return paint(); }
+      send.disabled = true; const wait = { role: 'agent', text: 'Planerar…' }; msgs.push(wait); paint();
+      try {
+        const context = await agentContext();
+        const history = msgs.slice(-8, -2).map((x) => ({ role: x.role, text: x.text }));
+        const r = await fetch(`${API}/agent/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wish, lane: st.lane, context, history }) });
+        const j = await r.json().catch(() => ({}));
+        msgs.pop();
+        if (!r.ok || !j.ok) msgs.push({ role: 'agent', text: j.error || `Kunde inte planera (servern svarade ${r.status}).` });
+        else msgs.push({ role: 'agent', text: j.reply || (j.question ? '' : 'Här är planen.'), question: j.question || null, steps: (j.steps || []).map((s) => ({ ...s, status: 'wait' })), model: j.model });
+      } catch (e) { msgs.pop(); msgs.push({ role: 'agent', text: `Kunde inte nå servern: ${e.message}` }); } finally { send.disabled = false; }
+      store(); paint();
+      const mi = msgs.length - 1; if (msgs[mi].steps && msgs[mi].steps.length) run(mi, 0, false);
+    }
+    send.onclick = ask;
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
+    clear.onclick = () => { if (live.size) return alert('Stoppa pågående steg först.'); if (!msgs.length || confirm('Rensa hela chatten?')) { msgs = []; store(); paint(); } };
+    v.append(pagehead('AI-agent', 'Skriv vad du vill göra på svenska. Agenten väljer verktyg, visar varje steg och frågar innan tunga jobb.'),
+      h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW' : 'SFW'}. Samma säkerhetsregler som i resten av KINO: bara vuxna, inga verkliga eller kända personer i NSFW, röst- och ansiktsbyte bara ur dina samtyckta listor.`),
+      list, h('div', { class: 'agent-input' }, ta, h('div', { class: 'quick' }, send, clear)));
+    paint();
+    const onAg = () => { if (!list.isConnected) return document.removeEventListener('kino-agent', onAg); msgs = AG.msgs; paint(); };
+    document.addEventListener('kino-agent', onAg);
+  }
+  const VIEWS = { agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
     skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, installningar: settingsView, motor: settingsView };
   const ALIAS = { create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
-  const SECTION = { '': '', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', verk: 'verk' };
+  const SECTION = { '': '', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', verk: 'verk' };
   function route() {
     let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
     let [k, q] = raw.split('?'); k = k || '';
@@ -1947,6 +2153,8 @@
     inp.addEventListener('change', upd); inp.classList.add('vh'); inp.tabIndex = -1; inp.after(btn);
   }
   new MutationObserver(() => document.querySelectorAll('#view input[type=file]').forEach(dressFile)).observe($('#view'), { childList: true, subtree: true });
+  const fab = h('a', { class: 'agentfab', href: '#/agent', 'aria-label': 'Öppna AI-agenten', title: 'AI-agent' }, icon('agent')); document.body.append(fab);
+  const paintFab = () => { fab.hidden = /^#\/agent/.test(location.hash); }; window.addEventListener('hashchange', paintFab); paintFab();
   paintLane(); route();
   colabHealth().then((r) => paintPill(r.state === 'on'));
 })();
