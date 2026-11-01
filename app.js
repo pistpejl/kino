@@ -2559,7 +2559,12 @@
           h('button', { class: 'text dim', type: 'button', onclick: () => { let n = []; try { n = JSON.parse(localStorage.getItem('kino.mymixes')) || []; } catch { /* tom */ } n.unshift({ title: `Mikrodrama: ${s.title}`, prompt: mdText(s).slice(0, 4000) }); localStorage.setItem('kino.mymixes', JSON.stringify(n.slice(0, 50))); say('Sparad i Mina mallar.'); } }, 'Spara i Mina mallar'))));
       s.episodes.forEach((e) => out.append(h('details', { class: 'md-ep', open: e.n === 1 }, h('summary', {}, h('b', {}, `Avsnitt ${e.n}: `), e.title),
         field('Avsnittets titel', ed(e, 'title'), true), field('Hook (första 3 sekunderna)', ed(e, 'hook', 2), true), ...(e.caption || e.hashtags && e.hashtags.length || s.viral ? [h('div', { class: 'row' }, field('Hook-text på skärmen', ed(e, 'caption'), true), field('Hashtags', (() => { const t = h('input', {}); t.value = (e.hashtags || []).join(' '); t.onchange = () => { e.hashtags = t.value.split(/\s+/).filter(Boolean); persist(); }; return t; })(), true))] : []),
-        ...e.scenes.map((sc, i) => sceneCard(e, sc, i)), field('Cliffhanger', ed(e, 'cliffhanger', 2), true))));
+        ...e.scenes.map((sc, i) => sceneCard(e, sc, i)), field('Cliffhanger', ed(e, 'cliffhanger', 2), true),
+        h('div', { class: 'quick' }, h('button', { class: 'text primary', type: 'button', title: 'Repliker blir röst + ord-för-ord-text, nyckelbilder eller stockklipp blir bild, hook-texten visas först', onclick: () => {
+          if (s.lane === 'nsfw' || st.lane === 'nsfw') return say('Storyboard-rendering använder stockklipp och finns bara i SFW-läget.', true);
+          const ep = { title: e.title, hook: e.hook, caption: e.caption, scenes: e.scenes.map((sc) => ({ shot: sc.shot, duration: sc.duration, dialogue: sc.dialogue, img: sc.img && /\/api\/kino\/files\//.test(sc.img) ? sc.img : undefined })) };
+          st.svPrefill = { title: `${s.title} – ${e.title}`, hook: e.caption || '', sentences: [], fromEpisode: { series: { title: s.title, ratio: s.ratio || '9:16' }, episode: ep } }; location.hash = '#/snabbvideo';
+        } }, 'Storyboard → rendera avsnittet')))));
     }
     go.onclick = async () => {
       if (ac) { ac.abort(); return; }
@@ -2612,6 +2617,8 @@
     const gender = select([['female', 'Kvinna'], ['male', 'Man']], 'female'); const speed = select([['0.9', 'Lugn'], ['1', 'Normal'], ['1.15', 'Snabb']], '1');
     const pos = select([['bottom', 'Nederst'], ['middle', 'Mitten'], ['top', 'Överst']], 'bottom'); const size = select([['small', 'Liten'], ['medium', 'Mellan'], ['large', 'Stor']], 'medium');
     const color = select([['white', 'Vit'], ['yellow', 'Gul'], ['cyan', 'Cyan'], ['pink', 'Rosa']], 'white'); const outline = select([['outline', 'Kontur'], ['box', 'Ruta'], ['none', 'Ingen']], 'outline');
+    const capStyle = select([['words', 'Ord för ord (TikTok)'], ['classic', 'Klassisk']], 'words'); let capTouched = false; capStyle.onchange = () => { capTouched = true; };
+    ratio.addEventListener('change', () => { if (!capTouched) capStyle.value = ratio.value === '9:16' ? 'words' : 'classic'; });
     const subsOn = h('input', { type: 'checkbox', checked: true }); const showTitle = h('input', { type: 'checkbox', checked: true });
     const trans = select([['fade', 'Toning'], ['none', 'Hårt klipp']], 'fade');
     const music = h('input', { type: 'file', accept: 'audio/*,.mp3,.wav,.m4a' }); const vol = h('input', { type: 'range', min: '0.05', max: '0.6', step: '0.05', value: '0.2' });
@@ -2619,10 +2626,57 @@
     const say = (t, err, p) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); if (p != null) { bar.hidden = false; bar.value = p; } };
     const bScript = h('button', { class: 'text primary', type: 'button' }, 'Skriv manus');
     const bRender = h('button', { class: 'text primary', type: 'button', disabled: true }, 'Rendera');
-    const edit = h('div', { class: 'sv-edit' }); const out = h('div', { class: 'sv-out' });
+    const edit = h('div', { class: 'sv-edit' }); const out = h('div', { class: 'sv-out' }); const board = h('div', { class: 'sb-wrap' });
     let cur = st.svPrefill || null; st.svPrefill = null; let ac = null; let jobId = null;
+    const bBoard = h('button', { class: 'text', type: 'button', disabled: true }, 'Visa storyboard');
+    // ---- Live storyboard: scene cards (thumbnail, line, duration) – swap clip, edit, reorder, delete, then Rendera. Only stock searches here. ----
+    const sbPost = async (path, body) => { const r = await fetch(`${API}/snabbvideo/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane }) }); const j = await r.json().catch(() => ({})); if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`); return j; };
+    const media = (c, alt) => { if (!c) return h('div', { class: 'sb-none' }, 'Inget klipp'); if (c.kind === 'image' || c.thumb) return h('img', { src: abs(c.kind === 'image' ? c.url : c.thumb), alt, loading: 'lazy' }); return h('video', { src: `${c.url}#t=1`, muted: true, playsinline: true, preload: 'metadata' }); };
+    function paintBoard() {
+      board.innerHTML = ''; if (!cur || !cur.board) return;
+      const sc = cur.board; const total = sc.reduce((a, x) => a + (x.seconds || 0) + 0.25, 0);
+      const grid = h('div', { class: 'sb-grid' });
+      sc.forEach((x, i) => {
+        const msg = h('small', { class: 'meta' });
+        const t = h('textarea', { rows: 3, placeholder: x.silent ? '(tyst bild – skriv en replik för röst)' : '' }); t.value = x.text || ''; t.oninput = () => { x.text = t.value; if (t.value.trim()) x.silent = false; x.seconds = x.silent ? x.seconds : Math.max(1, +(t.value.split(/\s+/).filter(Boolean).length / 2.6).toFixed(1)); dur.textContent = `${x.seconds} s`; };
+        const dur = h('span', { class: 'etag' }, `${x.seconds} s`);
+        const swap = h('button', { class: 'text', type: 'button', title: 'Byt till nästa stockklipp' }, 'Byt klipp');
+        swap.onclick = async () => {
+          if (!x.alts || !x.alts.length) {
+            swap.disabled = true; msg.textContent = 'Söker fler klipp…';
+            try { const used = [x.clip && x.clip.url, ...(x.seen || [])].filter(Boolean); const j = await sbPost('storyboard/alts', { terms: x.terms, title: cur.title, exclude: used }); x.alts = j.alts || []; msg.textContent = x.alts.length ? '' : 'Inga fler klipp – ändra sökorden.'; }
+            catch (e) { msg.textContent = e.message; } finally { swap.disabled = false; }
+            if (!x.alts.length) return;
+          }
+          if (x.clip) { x.seen = [...(x.seen || []), x.clip.url].slice(-40); }
+          x.clip = x.alts.shift(); paintBoard();
+        };
+        const k = h('input', { placeholder: 'sökord (engelska)' }); k.value = (x.terms || []).join(', '); k.onchange = () => { x.terms = k.value.split(',').map((y) => y.trim()).filter(Boolean); x.alts = []; };
+        const mv = (d) => { const j = i + d; if (j < 0 || j >= sc.length) return; [sc[i], sc[j]] = [sc[j], sc[i]]; paintBoard(); };
+        grid.append(h('div', { class: 'sb-card' },
+          h('div', { class: 'sb-thumb' + (cur.ratio === '16:9' ? ' wide' : '') }, media(x.clip, `Scen ${i + 1}`), h('b', { class: 'sb-n' }, String(i + 1)), dur),
+          t, k, h('small', { class: 'meta' }, x.clip ? `${x.clip.kind === 'image' ? 'Nyckelbild' : (x.clip.source || 'Stock')}${x.clip.credit ? ` · ${x.clip.credit}` : ''}` : 'Inget klipp hittat'),
+          h('div', { class: 'quick sb-ctl' }, swap,
+            h('button', { class: 'text dim', type: 'button', 'aria-label': 'Flytta upp', disabled: i === 0, onclick: () => mv(-1) }, '↑'),
+            h('button', { class: 'text dim', type: 'button', 'aria-label': 'Flytta ned', disabled: i === sc.length - 1, onclick: () => mv(1) }, '↓'),
+            h('button', { class: 'text dim', type: 'button', 'aria-label': 'Ta bort scen', onclick: () => { sc.splice(i, 1); paintBoard(); } }, '×')), msg));
+      });
+      board.append(h('h3', {}, `Storyboard – ${sc.length} scener · ca ${Math.round(total)} s`), cur.hook ? h('p', { class: 'meta' }, `Hook-text: ${cur.hook}`) : null,
+        h('p', { class: 'meta' }, 'Byt klipp, ändra repliker, flytta och ta bort – inget tungt körs förrän du trycker Rendera.'), grid);
+    }
+    async function loadBoard(body) {
+      bBoard.disabled = true; say('Söker stockklipp per scen…');
+      try {
+        const j = await sbPost('storyboard', body);
+        cur = { ...(cur || {}), title: cur && cur.title || j.title, hook: j.hook || (cur && cur.hook) || '', ratio: j.ratio, board: j.scenes };
+        cur.sentences = j.scenes.map((x) => ({ text: x.text, terms: x.terms })); if (j.ratio && ratio.value !== j.ratio) { ratio.value = j.ratio; ratio.dispatchEvent(new Event('change')); }
+        say(`Storyboard klar: ${j.scenes.length} scener, ca ${Math.round(j.seconds)} s. Ändra och tryck Rendera.`); paintEdit(); paintBoard();
+      } catch (e) { say(e.message, true); } finally { bBoard.disabled = !cur; }
+    }
+    bBoard.onclick = () => { if (!cur) return; cur.sentences = cur.sentences.filter((x) => x.text.trim()); loadBoard({ title: cur.title, hook: cur.hook, sentences: cur.sentences, ratio: ratio.value }); };
     function paintEdit() {
-      edit.innerHTML = ''; bRender.disabled = !cur; if (!cur) return;
+      edit.innerHTML = ''; bRender.disabled = !cur; bBoard.disabled = !cur; if (!cur) return;
+      if (cur.board) { edit.append(h('p', { class: 'meta' }, 'Manuset redigeras i storyboarden nedan. '), h('button', { class: 'text dim', type: 'button', onclick: () => { cur.sentences = cur.board.filter((x) => (x.text || '').trim()).map((x) => ({ text: x.text, terms: x.terms })); cur.board = null; paintBoard(); paintEdit(); } }, 'Tillbaka till textmanus')); return; }
       const ti = h('input', { value: cur.title || '' }); ti.value = cur.title || ''; ti.oninput = () => { cur.title = ti.value; };
       const rows = h('div', { class: 'sv-rows' });
       const paintRows = () => { rows.innerHTML = ''; cur.sentences.forEach((x, i) => { const t = h('textarea', { rows: 2 }); t.value = x.text; t.oninput = () => { x.text = t.value; };
@@ -2637,17 +2691,20 @@
       if (ac) { ac.abort(); return; }
       const t = topic.value.trim(); if (!t) return say('Skriv ett ämne.', true); if (minorText(t, st.lane)) return say(REFUSE, true);
       ac = new AbortController(); stopBtn(bScript, 'Avbryt'); const untrack = track('Snabbvideo: manus', () => ac && ac.abort());
-      try { const r = await svScript({ topic: t, lang: lang.value, seconds: +secs.value, tone: tone.value }, ac.signal, (m, p) => say(m, false, p)); cur = { ...r }; say(`Manus klart: ${cur.sentences.length} meningar. Ändra och tryck Rendera.`); paintEdit(); }
+      try { const r = await svScript({ topic: t, lang: lang.value, seconds: +secs.value, tone: tone.value }, ac.signal, (m, p) => say(m, false, p)); cur = { ...r }; say(`Manus klart: ${cur.sentences.length} meningar. Ändra, visa storyboard eller tryck Rendera.`); paintEdit(); paintBoard(); }
       catch (e) { say(e.name === 'AbortError' ? 'Avbrutet.' : e.message, e.name !== 'AbortError'); }
       finally { untrack(); ac = null; stopBtn(bScript, 'Skriv manus'); }
     };
     bRender.onclick = async () => {
       if (ac) { ac.abort(); if (jobId) fetch(`${API}/snabbvideo/jobs/${jobId}`, { method: 'DELETE' }).catch(() => null); return; }
-      if (!cur) return; cur.sentences = cur.sentences.filter((x) => x.text.trim()); if (!cur.sentences.length) return say('Manuset är tomt.', true);
+      if (!cur) return;
+      if (cur.board) cur.sentences = cur.board.filter((x) => (x.text || '').trim() || x.silent).map((x) => ({ text: (x.text || '').trim(), terms: x.terms, clip: x.clip, alts: (x.alts || []).slice(0, 4), silent: !(x.text || '').trim() && x.silent, seconds: x.seconds }));
+      else cur.sentences = cur.sentences.filter((x) => x.text.trim());
+      if (!cur.sentences.some((x) => x.text)) return say('Manuset är tomt.', true);
       if (minorText([cur.title, ...cur.sentences.map((x) => x.text)].join(' '), st.lane)) return say(REFUSE, true);
       if (st.lane === 'nsfw') return say('Snabbvideo använder stockklipp och finns bara i SFW-läget.', true);
-      const spec = { title: cur.title, sentences: cur.sentences, lang: lang.value, gender: gender.value, speed: +speed.value, ratio: ratio.value, transition: trans.value, showTitle: showTitle.checked,
-        subs: { on: subsOn.checked, pos: pos.value, size: size.value, color: color.value, outline: outline.value }, musicVolume: +vol.value, lane: st.lane };
+      const spec = { title: cur.title, hook: cur.hook || '', sentences: cur.sentences, lang: lang.value, gender: gender.value, speed: +speed.value, ratio: ratio.value, transition: trans.value, showTitle: showTitle.checked,
+        subs: { on: subsOn.checked, style: capStyle.value, pos: pos.value, size: size.value, color: color.value, outline: outline.value }, musicVolume: +vol.value, lane: st.lane };
       const fd = new FormData(); fd.append('spec', JSON.stringify(spec)); if (music.files[0]) fd.append('music', music.files[0]);
       ac = new AbortController(); jobId = null; stopBtn(bRender, 'Avbryt'); bScript.disabled = true;
       const untrack = track('Snabbvideo: renderar', () => { if (ac) ac.abort(); if (jobId) fetch(`${API}/snabbvideo/jobs/${jobId}`, { method: 'DELETE' }).catch(() => null); });
@@ -2665,14 +2722,15 @@
     };
     v.append(pagehead('Snabbvideo', 'Ett ämne blir en färdig kort video: AI-manus, gratis röst, stockklipp per mening, inbränd textning och valfri musik. Skriv manus, ändra, rendera.'),
       h('section', { class: 'step' }, h('h3', {}, '1. Ämne'), field('Ämne', topic, true), h('div', { class: 'row' }, field('Språk', lang), field('Längd', secs), field('Ton', tone)), h('div', { class: 'quick' }, bScript)),
-      h('section', { class: 'step' }, edit,
+      h('section', { class: 'step' }, edit, board, h('div', { class: 'quick' }, bBoard),
         h('h3', {}, '2. Utseende och ljud'), h('div', { class: 'row' }, field('Format', ratio), field('Röst', gender), field('Tempo', speed), field('Övergång', trans)),
-        h('div', { class: 'row' }, field('Textning', h('label', { class: 'chk' }, subsOn, ' På')), field('Position', pos), field('Storlek', size), field('Färg', color), field('Kant', outline)),
+        h('div', { class: 'row' }, field('Textning', h('label', { class: 'chk' }, subsOn, ' På')), field('Textstil', capStyle), field('Position', pos), field('Storlek', size), field('Färg', color), field('Kant', outline)),
         h('div', { class: 'row' }, field('Bakgrundsmusik (valfri, duckas under rösten)', music, true), field('Musikvolym', vol), field('Titel i början', h('label', { class: 'chk' }, showTitle, ' Visa'))),
         h('p', { class: 'lanenote' }, 'Bara SFW (stockklipp). Ca 720p, renderas på servern – 20–60 s video tar oftast 1–4 minuter.'),
         h('div', { class: 'quick' }, bRender), bar, status), out);
     if (st.lane === 'nsfw') say('Snabbvideo finns bara i SFW-läget – byt läge uppe till höger.', true);
     paintEdit();
+    if (cur && cur.fromEpisode) { const fe = cur.fromEpisode; delete cur.fromEpisode; if (st.lane !== 'nsfw') loadBoard(fe); }
   }
   const VIEWS = { snabbvideo: snabbvideoView, mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
     skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
