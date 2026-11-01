@@ -2661,7 +2661,7 @@
             h('button', { class: 'text dim', type: 'button', 'aria-label': 'Flytta ned', disabled: i === sc.length - 1, onclick: () => mv(1) }, '↓'),
             h('button', { class: 'text dim', type: 'button', 'aria-label': 'Ta bort scen', onclick: () => { sc.splice(i, 1); paintBoard(); } }, '×')), msg));
       });
-      board.append(h('h3', {}, `Storyboard – ${sc.length} scener · ca ${Math.round(total)} s`), cur.hook ? h('p', { class: 'meta' }, `Hook-text: ${cur.hook}`) : null,
+      board.append(h('h3', {}, `Storyboard – ${sc.length} scener · ca ${Math.round(total)} s`), ...(cur.hook ? [h('p', { class: 'meta' }, `Hook-text (visas först): ${cur.hook}`)] : []),
         h('p', { class: 'meta' }, 'Byt klipp, ändra repliker, flytta och ta bort – inget tungt körs förrän du trycker Rendera.'), grid);
     }
     async function loadBoard(body) {
