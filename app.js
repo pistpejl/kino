@@ -556,6 +556,7 @@
     mikrodrama: '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="m10.5 9.5 4 2.5-4 2.5z"/>',
     lipsync: '<path d="M4 12c2-3 5-4 8-4s6 1 8 4c-2 3-5 4-8 4s-6-1-8-4z"/><path d="M4 12h16"/>',
     face: '<circle cx="12" cy="12" r="8"/><circle cx="9" cy="10.5" r=".8"/><circle cx="15" cy="10.5" r=".8"/><path d="M9 15c1.7 1.3 4.3 1.3 6 0"/>',
+    v2p: '<rect x="3" y="3" width="8" height="8" rx="1"/><path d="m6 5.5 3 1.5-3 1.5z"/><path d="M14 6h7M14 10h5M3 15h18M3 19h13"/>',
     agent: '<path d="M4 5h16v11H9l-5 4z"/><path d="M9 10h.01M12 10h.01M15 10h.01"/>',
     voice: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   });
@@ -615,7 +616,7 @@
     models.append(ul);
   }
 
-  const LAST_NAMES = { snabbvideo: 'Snabbvideo', mikrodrama: 'Mikrodrama', image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk' };
+  const LAST_NAMES = { snabbvideo: 'Snabbvideo', mikrodrama: 'Mikrodrama', image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk', 'video-prompt': 'Video → prompt' };
   const hub = (v, title, sub, items) => {
     const nsfw = st.lane === 'nsfw';
     v.append(pagehead(title, sub), h('div', { class: 'hub' }, items.map(([ic, t, d, href, preset, sfwOnly]) => {
@@ -642,6 +643,7 @@
       ['klipp', 'Klipp', 'Lång video blir korta klipp med text', '#/klipp'],
       ['timeline', 'Tidslinje', 'Klipp ihop och exportera mp4', '#/timeline'],
       ['analyze', 'Analysera video', 'Ladda upp ett klipp, få scener', '#/script', 'analyze'],
+      ['v2p', 'Video → prompt', 'Ladda upp ett klipp, få en text-till-video-prompt med scener', '#/video-prompt'],
       ['lipsync', 'Läppsynk', 'Porträtt + låt eller text blir ett sjungande klipp', '#/lappsynk'],
       ['image', 'Tillgångsbibliotek', 'Uppladdningar och färdiga verk, sparade i webbläsaren', '#/bibliotek'],
       ['face', 'Ansiktsbyte', 'Egen GPU · bara samtyckta artister', '#/motor?t=faceswap'],
@@ -2139,7 +2141,7 @@
   // ---- AI-agent (#/agent): önskemål på svenska -> plan (server) -> stegen körs här med KINO:s vanliga routes/sidor ----
   const AGENT_KEY = 'kino.agent.chat';
   const AGENT_TOOLS = { persona: 'Influencer-artist', image: 'Bilder', script: 'Manus', viral_trends: 'Trender', viral_mashup: 'Viral-mix', save_template: 'Spara i Mina mallar',
-    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo' };
+    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', video_to_prompt: 'Video → prompt', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo' };
   const HANDOFF = { video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, lip_sync: 1, klipp: 1 };
   const STATUS_SV = { wait: 'Väntar', confirm: 'Bekräfta', run: 'Kör…', done: 'Klar', err: 'Fel', cancel: 'Avbruten', skip: 'Hoppades över' };
   const agentLoad = () => { try { return JSON.parse(localStorage.getItem(AGENT_KEY) || '[]'); } catch { return []; } };
@@ -2281,6 +2283,7 @@
         return { text: `${text}\nVideon är klar (${Math.round(r.duration)} s) och sparad i Mina verk: ${abs(r.url)}`, link: '#/verk' };
       }
       case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
+      case 'video_to_prompt': return { text: 'Video → prompt öppnas. Ladda upp klippet (max 5 min).', go: '#/video-prompt' };
       default: throw new Error('Okänt verktyg.');
     }
   }
@@ -2414,6 +2417,7 @@
     v.classList.add('mdv');
     const roster = mdRoster();
     const premise = h('textarea', { rows: 3, placeholder: 'Premiss, t.ex. "En fattig servitris visar sig vara arvtagerska till miljardärsfamiljen som förödmjukade henne"' });
+    if (st.mdPremise) { premise.value = st.mdPremise; st.mdPremise = null; }
     const genre = select(MD_GENRES.map((g) => [g, g]), 'Drama');
     const eps = select([3, 4, 5, 6, 7, 8, 9, 10].map((n) => [String(n), `${n} avsnitt`]), '5');
     const secs = select([30, 45, 60, 75, 90].map((n) => [String(n), `${n} s`]), '60');
@@ -2611,6 +2615,7 @@
   function snabbvideoView(v) {
     v.classList.add('mdv', 'svv');
     const topic = h('textarea', { rows: 2, placeholder: 'Ämne, t.ex. "Varför Stockholm byggdes på fjorton öar"' });
+    if (st.svTopic) { topic.value = st.svTopic; st.svTopic = null; }
     const lang = select(SV_LANGS, 'sv'); const secs = select([15, 20, 30, 45, 60, 90].map((n) => [String(n), `${n} s`]), '30');
     const tone = select([['fakta', 'Fakta'], ['berättande', 'Berättande'], ['peppande', 'Peppande'], ['humor', 'Humor']], 'fakta');
     const ratio = select([['9:16', '9:16 stående'], ['16:9', '16:9 liggande'], ['1:1', '1:1 kvadrat']], '9:16');
@@ -2732,10 +2737,57 @@
     paintEdit();
     if (cur && cur.fromEpisode) { const fe = cur.fromEpisode; delete cur.fromEpisode; if (st.lane !== 'nsfw') loadBoard(fe); }
   }
+  // ---- Video → prompt: clip (≤5 min) -> numbered 3x3 frame grids -> NVIDIA vision -> text-to-video prompt + timed scenes. Only describes. ----
+  function videoPromptView(v) {
+    v.classList.add('mdv');
+    const inp = h('input', { type: 'file', accept: 'video/*,.mp4,.mov,.webm,.mkv' });
+    const status = h('p', { class: 'status', 'aria-live': 'polite' });
+    const say = (t, err) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); };
+    const go = h('button', { class: 'text primary', type: 'button' }, 'Gör prompt');
+    const out = h('div', {});
+    const mm = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    const probe = (f) => new Promise((res) => { const el = document.createElement('video'); el.preload = 'metadata'; el.onloadedmetadata = () => { URL.revokeObjectURL(el.src); res(el.duration); }; el.onerror = () => res(null); el.src = URL.createObjectURL(f); });
+    let busy = false;
+    go.onclick = async () => {
+      const f = inp.files && inp.files[0]; if (!f) return say('Välj ett videoklipp först.', true);
+      if (busy) return; const d = await probe(f);
+      if (d && d > 301) return say(`Klippet är ${mm(d)} långt – max 5 minuter.`, true);
+      if (f.size > 100 * 1024 * 1024) return say('Filen är för stor (max 100 MB).', true);
+      busy = true; go.disabled = true; out.innerHTML = ''; say('Laddar upp…');
+      try {
+        const fd = new FormData(); fd.append('video', f);
+        const r = await fetch(`${API}/video2prompt`, { method: 'POST', body: fd }); const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+        let s = null;
+        for (let i = 0; i < 300; i++) {
+          await new Promise((ok) => setTimeout(ok, 2000));
+          s = await fetch(`${API}/video2prompt/jobs/${j.jobId}`).then((x) => x.json()).catch(() => null);
+          if (!s) continue; if (s.status !== 'running') break; say(s.message || 'Jobbar…');
+        }
+        if (!s || s.status !== 'done') throw new Error((s && s.error) || 'Tog för lång tid.');
+        paint(s.result); say(`Klar · ${s.result.frames} bildrutor · ${s.result.model}`);
+      } catch (e) { say(e.message === 'Failed to fetch' ? 'Servern svarar inte (den kan behöva vakna – vänta en minut och försök igen).' : e.message, true); }
+      finally { busy = false; go.disabled = false; }
+    };
+    function paint(r) {
+      const ta = h('textarea', { rows: 8 }); ta.value = r.prompt;
+      const copy = h('button', { class: 'text', type: 'button', onclick: () => { (navigator.clipboard ? navigator.clipboard.writeText(ta.value) : Promise.reject()).then(() => say('Prompten kopierad.'), () => say('Kunde inte kopiera – markera texten manuellt.', true)); } }, 'Kopiera prompt');
+      const toVideo = h('button', { class: 'text', type: 'button', onclick: () => { st.viral = { title: 'Video → prompt', prompt: ta.value, format: '16:9', target: 'video' }; location.hash = '#/video'; } }, 'Till Video');
+      const toSv = h('button', { class: 'text', type: 'button', onclick: () => { st.svTopic = ta.value; location.hash = '#/snabbvideo'; } }, 'Till Snabbvideo');
+      const toMd = h('button', { class: 'text', type: 'button', onclick: () => { st.mdPremise = ta.value; location.hash = '#/mikrodrama'; } }, 'Till Mikrodrama');
+      out.append(
+        h('h3', {}, 'Prompt'), ta, h('div', { class: 'quick' }, copy, toVideo, toSv, toMd),
+        h('h3', {}, 'Scener'), h('ol', { class: 'meta' }, ...r.scenes.map((sc) => h('li', {}, h('b', {}, mm(sc.t) + ' '), sc.desc))),
+        h('h3', {}, 'Rutnät'), h('div', {}, ...r.gridUrls.map((u) => h('a', { href: abs(u), target: '_blank', rel: 'noopener' }, h('img', { src: abs(u), alt: 'Rutnät av bildrutor', style: 'width:100%;max-width:720px;display:block;margin:0 0 8px;border-radius:8px' })))));
+    }
+    v.append(h('h2', {}, 'Video → prompt'),
+      h('p', { class: 'meta' }, 'Ladda upp ett klipp (max 5 min). En bildruta per sekund läggs i numrerade 3×3-rutnät med tidsstämpel, och en AI-bildmodell skriver en text-till-video-prompt och en scenlista. Den beskriver bara videon – personer beskrivs generellt, aldrig vem de är. Inget ljud/tal transkriberas.'),
+      inp, h('div', { class: 'quick' }, go), status, out);
+  }
   const VIEWS = { snabbvideo: snabbvideoView, mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
-    skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
-  const ALIAS = { quickvideo: 'snabbvideo', 'quick-video': 'snabbvideo', microdrama: 'mikrodrama', 'micro-drama': 'mikrodrama', lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
-  const SECTION = { '': '', snabbvideo: 'snabbvideo', mikrodrama: 'mikrodrama', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', verk: 'verk', bibliotek: 'verk' };
+    skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, 'video-prompt': videoPromptView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
+  const ALIAS = { video2prompt: 'video-prompt', videoprompt: 'video-prompt', quickvideo: 'snabbvideo', 'quick-video': 'snabbvideo', microdrama: 'mikrodrama', 'micro-drama': 'mikrodrama', lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
+  const SECTION = { '': '', snabbvideo: 'snabbvideo', mikrodrama: 'mikrodrama', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', 'video-prompt': 'verktyg', verk: 'verk', bibliotek: 'verk' };
   function route() {
     let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
     let [k, q] = raw.split('?'); k = k || '';
