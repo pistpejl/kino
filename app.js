@@ -1532,6 +1532,7 @@
       const vol = h('input', { type: 'range', min: 0, max: 1.5, step: 0.05, value: T.music.volume });
       vol.oninput = () => { T.music.volume = +vol.value; };
       musicBox.append(h('div', { class: 'hintline' }, h('b', {}, `Musik: ${T.music.name}`), h('button', { class: 'text dim danger', onclick: () => { T.music = null; paintMusic(); } }, 'Ta bort')), h('label', { class: 'tl-vol' }, 'Volym ', vol));
+      const src = T.music.url || (T.music.file ? URL.createObjectURL(T.music.file) : ''); if (src) { const au = h('audio', { controls: true, src, preload: 'metadata' }); au.volume = Math.min(1, T.music.volume); vol.addEventListener('input', () => { au.volume = Math.min(1, +vol.value); }); musicBox.append(au); }
     }
     function num(val, on, step = 0.1) { const i = h('input', { type: 'number', step, min: 0, value: val, inputmode: 'decimal' }); i.onchange = () => on(+i.value); return i; }
     function paintList() {
@@ -2435,7 +2436,7 @@
     const tplNote = h('div', { class: 'md-tplnote' });
     const musicOn = h('input', { type: 'checkbox' }); const viralOn = h('input', { type: 'checkbox' });
     const songIn = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,audio/*' });
-    const songBox = h('div', { class: 'md-song' }, field('Låt / soundtrack (valfri – används i performance-scener)', songIn, true));
+    const songBox = h('div', { class: 'md-song' }, field('Låt / soundtrack (valfri – används i performance-scener)', songIn, true), audioPreview(songIn));
     const paintMusic = () => { songBox.hidden = !musicOn.checked; };
     musicOn.onchange = paintMusic;
     const paintTplNote = () => { tplNote.innerHTML = ''; if (tpl) tplNote.append(h('span', { class: 'chip on' }, `Mall: ${tpl.title}`, h('button', { class: 'text dim', type: 'button', 'aria-label': 'Ta bort mall', onclick: () => { tpl = null; paintTplNote(); } }, '×'))); };
@@ -2619,6 +2620,17 @@
       if (s.status === 'error' || s.status === 'cancelled') throw Object.assign(new Error(s.error || 'Misslyckades.'), { cancelled: s.status === 'cancelled' });
     }
   }
+  // ---- Music preview: listen to the chosen track (and roughly hear the volume) before rendering ----
+  function audioPreview(input, vol, startIn) {
+    const a = h('audio', { controls: true, hidden: true, preload: 'metadata', class: 'mprev' });
+    const note = h('small', { class: 'meta', hidden: true }, 'Förhandslyssna. Volymreglaget ändrar uppspelningen ungefär som musiken låter under rösten.');
+    let url = null;
+    const apply = () => { if (vol) a.volume = Math.max(0, Math.min(1, +vol.value)); };
+    const set = () => { if (url) URL.revokeObjectURL(url); const f = input.files && input.files[0]; url = f ? URL.createObjectURL(f) : null; a.hidden = !url; note.hidden = !url || !vol; if (url) a.src = url; else { a.pause(); a.removeAttribute('src'); } apply(); };
+    input.addEventListener('change', set); if (vol) vol.addEventListener('input', apply);
+    if (startIn) a.addEventListener('play', () => { const s0 = +startIn.value || 0; if (a.currentTime < s0) a.currentTime = s0; });
+    return h('div', { class: 'mprevwrap wide' }, a, note);
+  }
   // ---- Format gallery (short-form format PATTERNS; own wording, no creator content) ----
   let FMT = null;
   const loadFormats = () => FMT || (FMT = fetch(`${API}/formats?full=1`).then((x) => x.json()).then((d) => (d && Array.isArray(d.formats) ? d : { categories: [], formats: [] })).catch(() => { FMT = null; return { categories: [], formats: [] }; }));
@@ -2681,6 +2693,7 @@
     ratio.addEventListener('change', () => { if (!capTouched) capStyle.value = ratio.value === '9:16' ? 'words' : 'classic'; });
     const subsOn = h('input', { type: 'checkbox', checked: true }); const showTitle = h('input', { type: 'checkbox', checked: true });
     const trans = select([['fade', 'Toning'], ['none', 'Hårt klipp']], 'fade');
+    const fit = select([['fill', 'Fyll (beskär)'], ['blur', 'Kantremsor med blur-bakgrund'], ['bars', 'Svarta kantremsor']], 'fill');
     const fp = formatPicker(fmtTake('snabbvideo'), 'Välj format (valfritt – styr manus, storyboard, textning och övergångar)');
     fp.on(() => { const f = fp.format(); if (!f) return; const c = f.caption; capStyle.value = c.style; capTouched = true; pos.value = c.pos; size.value = c.size; color.value = c.color; outline.value = c.outline; subsOn.checked = true; trans.value = f.transition; });
     const music = h('input', { type: 'file', accept: 'audio/*,.mp3,.wav,.m4a' }); const vol = h('input', { type: 'range', min: '0.05', max: '0.6', step: '0.05', value: '0.2' });
@@ -2746,7 +2759,7 @@
         rows.append(h('div', { class: 'sv-row' }, h('b', { title: x.beat || '' }, x.beat ? `${i + 1} · ${x.beat}` : String(i + 1)), h('div', {}, t, k), h('button', { class: 'text dim', type: 'button', 'aria-label': 'Ta bort mening', onclick: () => { cur.sentences.splice(i, 1); paintRows(); } }, '×'))); });
         rows.append(h('button', { class: 'text dim', type: 'button', onclick: () => { cur.sentences.push({ text: '', terms: [] }); paintRows(); } }, '+ Mening')); };
       paintRows();
-      edit.append(h('h3', {}, 'Manus – ändra fritt'), field('Titel', ti, true), rows, h('p', { class: 'meta' }, `${cur.model ? `Skrivet av ${cur.model} · ` : ''}En mening = ett textblock och 1–2 stockklipp (Pixabay/Coverr).`));
+      edit.append(h('h3', {}, 'Manus – ändra fritt'), field('Titel', ti, true), rows, h('p', { class: 'meta' }, 'Tips: skriv [pause: 2s] (eller [paus: 2s]) i en mening för en tystnad i rösten, max 5 s. Markeringen syns inte i textningen.'), h('p', { class: 'meta' }, `${cur.model ? `Skrivet av ${cur.model} · ` : ''}En mening = ett textblock och 1–2 stockklipp (Pixabay/Coverr).`));
     }
     const stopBtn = (b, label) => { b.textContent = label; };
     bScript.onclick = async () => {
@@ -2766,7 +2779,7 @@
       if (minorText([cur.title, ...cur.sentences.map((x) => x.text)].join(' '), st.lane)) return say(REFUSE, true);
       if (st.lane === 'nsfw') return say('Snabbvideo använder stockklipp och finns bara i SFW-läget.', true);
       const spec = { title: cur.title, hook: cur.hook || '', sentences: cur.sentences, lang: lang.value, gender: gender.value, speed: +speed.value, ratio: ratio.value, transition: trans.value, showTitle: showTitle.checked,
-        subs: { on: subsOn.checked, style: capStyle.value, pos: pos.value, size: size.value, color: color.value, outline: outline.value }, musicVolume: +vol.value, lane: st.lane };
+        subs: { on: subsOn.checked, style: capStyle.value, pos: pos.value, size: size.value, color: color.value, outline: outline.value }, musicVolume: +vol.value, fit: fit.value, lane: st.lane };
       const fd = new FormData(); fd.append('spec', JSON.stringify(spec)); if (music.files[0]) fd.append('music', music.files[0]);
       ac = new AbortController(); jobId = null; stopBtn(bRender, 'Avbryt'); bScript.disabled = true;
       const untrack = track('Snabbvideo: renderar', () => { if (ac) ac.abort(); if (jobId) fetch(`${API}/snabbvideo/jobs/${jobId}`, { method: 'DELETE' }).catch(() => null); });
@@ -2787,7 +2800,7 @@
       h('section', { class: 'step' }, edit, board, h('div', { class: 'quick' }, bBoard),
         h('h3', {}, '2. Utseende och ljud'), h('div', { class: 'row' }, field('Format', ratio), field('Röst', gender), field('Tempo', speed), field('Övergång', trans)),
         h('div', { class: 'row' }, field('Textning', h('label', { class: 'chk' }, subsOn, ' På')), field('Textstil', capStyle), field('Position', pos), field('Storlek', size), field('Färg', color), field('Kant', outline)),
-        h('div', { class: 'row' }, field('Bakgrundsmusik (valfri, duckas under rösten)', music, true), field('Musikvolym', vol), field('Titel i början', h('label', { class: 'chk' }, showTitle, ' Visa'))),
+        h('div', { class: 'row' }, field('Bakgrundsmusik (valfri, duckas under rösten)', music, true), field('Musikvolym', vol), field('Titel i början', h('label', { class: 'chk' }, showTitle, ' Visa'))), audioPreview(music, vol), h('div', { class: 'row' }, field('Klipp som inte passar formatet', fit)),
         h('p', { class: 'lanenote' }, 'Bara SFW (stockklipp). Ca 720p, renderas på servern – 20–60 s video tar oftast 1–4 minuter.'),
         h('div', { class: 'quick' }, bRender), bar, status), out);
     if (st.lane === 'nsfw') say('Snabbvideo finns bara i SFW-läget – byt läge uppe till höger.', true);
@@ -2893,7 +2906,7 @@
       catch (e) { say(net(e), true); } finally { busy = false; }
     };
     const song = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,.ogg,audio/*' }); const songStart = h('input', { type: 'number', min: 0, step: 0.5, value: 0 });
-    const songBox = h('div', { class: 'grid2' }, field('Din låt', song, true), field('Börja låten vid (s)', songStart)); const paintAu = () => { songBox.hidden = audio.value !== 'song'; }; audio.onchange = paintAu; paintAu();
+    const songBox = h('div', { class: 'grid2' }, field('Din låt', song, true), field('Börja låten vid (s)', songStart), audioPreview(song, null, songStart)); const paintAu = () => { songBox.hidden = audio.value !== 'song'; }; audio.onchange = paintAu; paintAu();
     const animate = select([['auto', 'Animera med videomotor (LTX-2.3 / MiniMax), Ken Burns när kvoten är slut'], ['kenburns', 'Bara Ken Burns (snabbt, sparar kvot)']], 'auto');
     // storyboard
     let ana = null; let shotRows = []; let lastResult = null; let busy = false; let ac = null; let jobId = null;

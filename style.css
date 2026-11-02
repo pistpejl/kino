@@ -663,3 +663,5 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .fmtcard .etag{align-self:flex-start}
 #view input[type=search]{width:100%;padding:8px}
 .fmtcard .quick{flex-wrap:wrap}
+.mprevwrap{display:flex;flex-direction:column;gap:4px;margin:6px 0}
+.mprevwrap audio,.drop audio{width:100%;max-width:520px}
