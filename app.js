@@ -571,6 +571,7 @@
       ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
       ['snabbvideo', 'Snabbvideo', 'Ämne till färdig kort video med röst, stockklipp och textning', '#/snabbvideo'],
       ['mikrodrama', 'Mikrodrama', 'Kort vertikal serie med hook, repliker och cliffhanger', '#/mikrodrama'],
+      ['snabbvideo', 'Format', 'Välj ett beprövat kortvideoformat och använd det direkt', '#/format'],
       ['analyze', 'Analysera video', 'Ladda upp ett klipp, få scener', '#/script', 'analyze'],
       ['stock', 'Stockklipp', 'Riktiga klipp till din låt', '#/music', 'stock', true],
       ['edit', 'Redigera', 'Ändra en bild med text', '#/edit'],
@@ -617,7 +618,7 @@
     models.append(ul);
   }
 
-  const LAST_NAMES = { snabbvideo: 'Snabbvideo', mikrodrama: 'Mikrodrama', image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk', 'video-prompt': 'Video → prompt', 'gor-om': 'Gör om klipp' };
+  const LAST_NAMES = { snabbvideo: 'Snabbvideo', mikrodrama: 'Mikrodrama', image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk', 'video-prompt': 'Video → prompt', 'gor-om': 'Gör om klipp', format: 'Format' };
   const hub = (v, title, sub, items) => {
     const nsfw = st.lane === 'nsfw';
     v.append(pagehead(title, sub), h('div', { class: 'hub' }, items.map(([ic, t, d, href, preset, sfwOnly]) => {
@@ -634,6 +635,7 @@
       ['image', 'Bild', 'Skriv en text, få en bild', '#/image'],
       ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
       ['viral', 'Viral-mixer', 'TikTok-trender (video + musik) blir en prompt', '#/viral'],
+      ['snabbvideo', 'Format', 'Galleri med kortvideoformat – hooks, klippstilar, serier, musik', '#/format'],
       ['face', 'Skapa influencer-artist', 'Hitta på en AI-artist, få 4 ansikten, spara i artistlistan', '#/persona'],
       ['stock', 'Stockklipp till låt', 'Riktiga klipp i takt med musiken', '#/music', 'stock', true],
     ]);
@@ -1197,6 +1199,7 @@
     const mood = h('input', { placeholder: 'Stämning, t.ex. melankolisk men dansant' });
     const lyrics = h('input', { placeholder: 'Textrad ur din låt (valfritt)' });
     const fmt = select([['9:16', '9:16'], ['1:1', '1:1'], ['16:9', '16:9']], '9:16');
+    const vfp = formatPicker('', 'Kortvideoformat (valfritt)');
     const len = select([['8', '8 s'], ['10', '10 s'], ['15', '15 s'], ['20', '20 s'], ['30', '30 s'], ['45', '45 s'], ['60', '60 s']], '15');
     const musicFields = h('div', { class: 'grid2' }, field('Låt / artist', song), field('Genre', genre), field('Stämning', mood), field('Textrad', lyrics));
     const out = h('textarea', { rows: 6, placeholder: 'Mixad viral prompt visas här och kan redigeras' });
@@ -1231,7 +1234,7 @@
       if (cards.length < 2) return say('Välj 2–4 trendkort först.', true);
       say('Mixar…'); mixBtn.disabled = true;
       try {
-        const r = await fetch(`${API}/viral/mashup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: S.kind, cards, idea: idea.value, song: song.value, genre: genre.value, mood: mood.value, lyrics: lyrics.value, format: fmt.value, seconds: Number(len.value), lane: st.lane }) }).then((x) => x.json());
+        const r = await fetch(`${API}/viral/mashup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: S.kind, cards, shortFormat: vfp.get() || undefined, idea: idea.value, song: song.value, genre: genre.value, mood: mood.value, lyrics: lyrics.value, format: fmt.value, seconds: Number(len.value), lane: st.lane }) }).then((x) => x.json());
         if (!r.ok) throw new Error(r.error || 'fel');
         S.mix = r; out.value = r.prompt;
         shots.value = [...r.shots.map((x) => `${x.t} [${x.beat}] ${x.visual}${x.text ? ' — text: ' + x.text : ''}`), '', r.songSection ? 'Del av låten: ' + r.songSection : '', r.loop ? 'Loop: ' + r.loop : '', 'Text på skärmen: ' + (r.onScreenText || []).join(' | '), 'Caption: ' + r.caption, 'Hashtags: ' + (r.hashtags || []).join(' ')].filter((x) => x !== '').join('\n');
@@ -1248,7 +1251,7 @@
       h('button', { class: 'text', type: 'button', onclick: () => { if (!out.value.trim()) return; const title = (prompt('Namn på mallen:', payload().title) || '').trim(); if (!title) return; let n = []; try { n = JSON.parse(localStorage.getItem(MK)) || []; } catch {} n.unshift({ title, prompt: out.value.trim() }); localStorage.setItem(MK, JSON.stringify(n.slice(0, 50))); say('Sparad i Mina mallar.'); } }, 'Spara i Mina mallar'));
     paintTabs();
     const body = h('div', { class: 'clips-body' }, tabs, h('div', { class: 'under' }, fetchBtn), srcInfo, cardsBox,
-      h('label', { class: 'wide' }, 'Din idé', idea), musicFields, h('div', { class: 'grid2' }, field('Format', fmt), field('Längd', len)),
+      h('label', { class: 'wide' }, 'Din idé', idea), musicFields, h('div', { class: 'grid2' }, field('Format', fmt), field('Längd', len)), vfp.el,
       h('div', { class: 'under' }, mixBtn), status, h('label', { class: 'wide' }, 'Viral prompt (redigerbar)', out), h('label', { class: 'wide' }, 'Bildlista, text, caption & hashtags', shots), btns,
       h('div', { class: 'meta' }, 'Bara mönster: KINO laddar aldrig ner eller återanvänder andras videor eller ljud och härmar inga verkliga artisters röst eller utseende. Använd din egen musik.'));
     return h('details', { class: 'clips presets viral' }, h('summary', {}, h('span', { class: 'ttl' }, 'Viral-mixer'), h('span', { class: 'count' }, 'TikTok-trender → prompt'), h('span', { class: 'chev', 'aria-hidden': 'true' })), body);
@@ -2258,7 +2261,7 @@
       case 'micro_drama': {
         if (minorText(a.premise, st.lane)) throw new Error(REFUSE);
         const castL = (a.cast || []).map((n) => { const x = rosterLocal().find((r) => r.name === n); return { name: n, roster: true, description: (x && x.persona && x.persona.description) || '' }; });
-        const ser = await mdPlan({ premise: a.premise || promptOf(prev), genre: a.genre, episodes: a.episodes, seconds: a.seconds, cast: castL, template: a.template || undefined, music: a.music, viral: a.viral }, signal, say);
+        const ser = await mdPlan({ premise: a.premise || promptOf(prev), genre: a.genre, episodes: a.episodes, seconds: a.seconds, cast: castL, template: a.template || undefined, music: a.music, viral: a.viral, format: a.format || undefined }, signal, say);
         const e1 = ser.episodes[0]; st.mdOpen = ser.id;
         let text = `${ser.title}\n${ser.logline}\nAvsnitt 1 hook: ${e1.hook}\n${ser.episodes.length} avsnitt sparade under Mikrodrama › Mina serier.`;
         let images;
@@ -2274,18 +2277,19 @@
       case 'quick_video': {
         if (minorText(a.topic, st.lane)) throw new Error(REFUSE);
         if (st.lane === 'nsfw') throw new Error('Snabbvideo finns bara i SFW-läget.');
-        const sc = await svScript({ topic: a.topic || promptOf(prev), lang: a.lang, seconds: a.seconds }, signal, (m) => say && say(m));
-        st.svPrefill = sc;
+        const sc = await svScript({ topic: a.topic || promptOf(prev), lang: a.lang, seconds: a.seconds, format: a.format || undefined }, signal, (m) => say && say(m));
+        st.svPrefill = sc; if (a.format) st.fmtPick = { ...(st.fmtPick || {}), snabbvideo: a.format };
         const text = `${sc.title}\n${sc.sentences.map((x) => x.text).join(' ')}`;
         if (!a.render) return { text: `${text}\nManuset öppnas i Snabbvideo – ändra och tryck Rendera.`, link: '#/snabbvideo' };
-        const fd = new FormData(); fd.append('spec', JSON.stringify({ title: sc.title, sentences: sc.sentences, lang: a.lang, ratio: a.ratio, lane: st.lane }));
+        const fd = new FormData(); fd.append('spec', JSON.stringify({ title: sc.title, sentences: sc.sentences, lang: a.lang, ratio: a.ratio, lane: st.lane, ...(sc.subs ? { subs: sc.subs, transition: sc.transition } : {}) }));
         let id = null; setCancel && setCancel(() => { if (id) fetch(`${API}/snabbvideo/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
         const r = await svJob('render', { body: fd }, signal, (m) => say && say(m), (x) => { id = x; });
         st.results.video.unshift({ name: r.name, url: r.url, engineName: r.engineName || 'Snabbvideo', credits: r.credits });
         return { text: `${text}\nVideon är klar (${Math.round(r.duration)} s) och sparad i Mina verk: ${abs(r.url)}`, link: '#/verk' };
       }
       case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
-      case 'remake_clip': if (st.lane === 'nsfw') throw new Error('Gör om klipp finns bara i SFW-läget.'); st.agentPick = { ...(st.agentPick || {}), remake: { instructions: a.instructions || '', artist: a.artist || '' } }; return { text: 'Gör om klipp öppnas. Ladda upp referensklippet (eget eller med tillstånd, max 60 s) och välj dina bilder.', go: '#/gor-om' };
+      case 'remake_clip': if (st.lane === 'nsfw') throw new Error('Gör om klipp finns bara i SFW-läget.'); st.agentPick = { ...(st.agentPick || {}), remake: { instructions: a.instructions || '', artist: a.artist || '' } }; if (a.format) st.fmtPick = { ...(st.fmtPick || {}), remake: a.format }; return { text: 'Gör om klipp öppnas. Ladda upp referensklippet (eget eller med tillstånd, max 60 s) och välj dina bilder.', go: '#/gor-om' };
+      case 'formats': return { text: 'Formatgalleriet öppnas. Välj ett format och tryck Använd i Snabbvideo, Gör om klipp eller Mikrodrama.', go: `#/format${a.q ? `?q=${encodeURIComponent(a.q)}` : ''}` };
       case 'video_to_prompt': return { text: 'Video → prompt öppnas. Ladda upp klippet (max 5 min).', go: '#/video-prompt' };
       default: throw new Error('Okänt verktyg.');
     }
@@ -2424,6 +2428,7 @@
     const genre = select(MD_GENRES.map((g) => [g, g]), 'Drama');
     const eps = select([3, 4, 5, 6, 7, 8, 9, 10].map((n) => [String(n), `${n} avsnitt`]), '5');
     const secs = select([30, 45, 60, 75, 90].map((n) => [String(n), `${n} s`]), '60');
+    const mfp = formatPicker(fmtTake('mikrodrama'), 'Format (valfritt – styr hook, tempo och struktur per avsnitt)');
     const cine = select([['', 'Ingen'], ...((window.KinoCinema && window.KinoCinema.PRESETS) || []).map((p) => [p[0], p[0]])], '');
     // ---- Mallar, förslag, musikläge ----
     let tpl = null; // vald mall {id,title,...} eller egen mall
@@ -2583,7 +2588,7 @@
         const castL = [...cast].map((n) => { const a = rosterLocal().find((x) => x.name === n); return { name: n, roster: true, description: (a && a.persona && a.persona.description) || '' }; });
         const song = musicOn.checked && songIn.files[0] ? songIn.files[0] : null;
         const tid = tpl ? (String(tpl.id || '').startsWith('my-') ? tpl.template : tpl.id) : '';
-        cur = await mdPlan({ premise: p, genre: genre.value, episodes: +eps.value, seconds: +secs.value, cast: castL, cinema: cine.value, template: tid || undefined, music: musicOn.checked, viral: viralOn.checked, song: song ? { name: song.name } : undefined }, ac.signal, (t) => say(t));
+        cur = await mdPlan({ premise: p, genre: genre.value, episodes: +eps.value, seconds: +secs.value, cast: castL, cinema: cine.value, template: tid || undefined, format: mfp.get() || undefined, music: musicOn.checked, viral: viralOn.checked, song: song ? { name: song.name } : undefined }, ac.signal, (t) => say(t));
         if (song) { MD_SONGS.set(cur.id, song); cur.song = { name: song.name }; mdUpsert(cur); }
         say(`Klar: ${cur.title}. Sparad i Mina serier.`); paint(); paintSaved();
       } catch (err) { say(err.name === 'AbortError' ? 'Avbrutet.' : err.message, true); }
@@ -2591,7 +2596,7 @@
     };
     v.append(pagehead('Mikrodrama', 'Korta vertikala serier i ReelShort-stil: en premiss blir avsnitt med hook, scener, repliker och cliffhanger. Ändra fritt och skicka scener vidare till Bild, Video och Läppsynk.'),
       gal,
-      h('section', { class: 'step' }, tplNote, field('Premiss / idé', premise, true), h('div', { class: 'quick' }, sugBtn, saveTpl), sugBox, h('div', { class: 'row' }, field('Genre', genre), field('Avsnitt', eps), field('Längd per avsnitt', secs), field('Cinema-preset', cine)),
+      h('section', { class: 'step' }, tplNote, field('Premiss / idé', premise, true), h('div', { class: 'quick' }, sugBtn, saveTpl), sugBox, h('div', { class: 'row' }, field('Genre', genre), field('Avsnitt', eps), field('Längd per avsnitt', secs), field('Cinema-preset', cine)), mfp.el,
         h('div', { class: 'row md-modes' }, h('label', { class: 'chk' }, musicOn, ' 🎤 Musikartist i huvudrollen (performance-scener + låt)'), h('label', { class: 'chk' }, viralOn, ' 🔥 Viralt format (hook 1–2 s, 30–60 s, caption + hashtags)')), songBox,
         h('b', {}, 'Rollista (valfritt, ur artistlistan – första valda blir huvudroll)'), castBox,
         h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW (vuxna 21+)' : 'SFW'}. Alla rollfigurer i romantik är vuxna; ansikten och röster bara ur dina samtyckta listor.`),
@@ -2614,6 +2619,53 @@
       if (s.status === 'error' || s.status === 'cancelled') throw Object.assign(new Error(s.error || 'Misslyckades.'), { cancelled: s.status === 'cancelled' });
     }
   }
+  // ---- Format gallery (short-form format PATTERNS; own wording, no creator content) ----
+  let FMT = null;
+  const loadFormats = () => FMT || (FMT = fetch(`${API}/formats?full=1`).then((x) => x.json()).then((d) => (d && Array.isArray(d.formats) ? d : { categories: [], formats: [] })).catch(() => { FMT = null; return { categories: [], formats: [] }; }));
+  const fmtTake = (k) => { const id = st.fmtPick && st.fmtPick[k]; if (id) st.fmtPick[k] = null; return id || ''; };
+  function formatPicker(initial, label = 'Format (valfritt)') {
+    const sel = h('select', {}, h('option', { value: '' }, 'Inget format'));
+    const note = h('small', { class: 'meta fmtnote' }); const wrap = h('div', { class: 'fmtpick wide' }, field(label, sel, true), note, h('a', { class: 'text dim', href: '#/format' }, 'Bläddra bland format'));
+    let list = [];
+    const show = () => { const f = list.find((x) => x.id === sel.value); note.textContent = f ? `${f.description} Hook: ${f.hook.onScreen} · ca ${f.pacing.cutsPerSec} klipp/s · ${f.beats.map((b) => b.label).join(' → ')}` : ''; wrap.dispatchEvent(new Event('fmt')); };
+    sel.onchange = show;
+    loadFormats().then((d) => { list = d.formats; d.categories.forEach((c) => { const g = h('optgroup', { label: c.sv }); list.filter((f) => f.category === c.id).forEach((f) => g.append(h('option', { value: f.id }, `${f.sv} (${f.en})`))); sel.append(g); }); if (initial) { sel.value = initial; show(); } });
+    return { el: wrap, get: () => sel.value, format: () => list.find((x) => x.id === sel.value) || null, on: (fn) => wrap.addEventListener('fmt', fn) };
+  }
+  async function formatView(v, q) {
+    const qs = new URLSearchParams(q || '');
+    v.append(pagehead('Format', 'Beprövade kortvideoformat – hooks, klippstilar, ansiktslöst, serier och musik. Välj ett och använd det i Snabbvideo, Gör om klipp eller Mikrodrama. Mönster, inte kopior: skriv alltid ditt eget innehåll.'));
+    const search = h('input', { type: 'search', placeholder: 'Sök format, t.ex. "före efter", "hook", "lista"', value: qs.get('q') || '' });
+    let cat = qs.get('c') || '';
+    const cats = h('div', { class: 'chips' }); const grid = h('div', { class: 'fmtgrid' }); const count = h('p', { class: 'meta' });
+    v.append(h('div', { class: 'step' }, field('Sök', search, true), cats), count, grid);
+    const d = await loadFormats();
+    if (!d.formats.length) { count.textContent = 'Kunde inte hämta formaten (servern kan behöva vakna – ladda om om en minut).'; return; }
+    const use = (f, k, href) => () => { st.fmtPick = { ...(st.fmtPick || {}), [k]: f.id }; location.hash = href; };
+    const card = (f) => {
+      const det = h('details', {}, h('summary', {}, 'Struktur, hook och klipp'),
+        h('p', {}, h('b', {}, 'Beats: '), f.beats.map((b) => `${b.label}${b.what ? ` (${b.what})` : ''}`).join(' → ')),
+        h('table', { class: 'fmttab' }, h('tr', {}, h('th', {}, 'Längd'), h('th', {}, 'Tidskod per beat')), ...[15, 30, 60].map((n) => h('tr', {}, h('td', {}, `${n} s`), h('td', {}, f.structure[n].map((b) => `${b.label} ${b.start}–${b.end}`).join(' · '))))),
+        h('p', {}, h('b', {}, 'Hook – sagt: '), f.hook.spoken), h('p', {}, h('b', {}, 'Hook – text i bild: '), f.hook.onScreen), h('p', {}, h('b', {}, 'Hook – bild: '), f.hook.visual),
+        h('p', {}, h('b', {}, 'Bildlista: '), f.shots.join(', ')),
+        h('p', {}, h('b', {}, 'Tempo: '), `ca ${f.pacing.cutsPerSec} klipp/s (snitt ${f.pacing.avgShot} s per bild) · övergång: ${f.transition === 'fade' ? 'toning' : 'hårt klipp'}`),
+        h('p', {}, h('b', {}, 'Textning: '), f.caption.desc || f.caption.preset), h('p', {}, h('b', {}, 'Musik/ljud: '), f.music), h('p', {}, h('b', {}, 'CTA: '), f.cta),
+        h('p', { class: 'meta' }, `Passar: ${f.engines.join(', ')}`));
+      return h('div', { class: 'fmtcard' }, h('span', { class: 'etag' }, (d.categories.find((c) => c.id === f.category) || {}).sv || f.category),
+        h('h3', {}, f.sv, ' ', h('small', { class: 'meta' }, `(${f.en})`)), h('p', {}, f.description), det,
+        h('div', { class: 'quick' },
+          h('button', { class: 'text primary', type: 'button', onclick: use(f, 'snabbvideo', '#/snabbvideo') }, 'Använd i Snabbvideo'),
+          h('button', { class: 'text', type: 'button', disabled: st.lane === 'nsfw', title: st.lane === 'nsfw' ? 'Bara i SFW-läget' : '', onclick: use(f, 'remake', '#/gor-om') }, 'Använd i Gör om klipp'),
+          h('button', { class: 'text', type: 'button', onclick: use(f, 'mikrodrama', '#/mikrodrama') }, 'Använd i Mikrodrama')));
+    };
+    const paint = () => {
+      const w = search.value.trim().toLowerCase();
+      cats.innerHTML = ''; [['', `Alla (${d.formats.length})`], ...d.categories.map((c) => [c.id, `${c.sv} (${c.count})`])].forEach(([id, t]) => cats.append(h('button', { class: 'chip' + (cat === id ? ' on' : ''), type: 'button', onclick: () => { cat = id; paint(); } }, t)));
+      const list = d.formats.filter((f) => (!cat || f.category === cat) && (!w || [f.sv, f.en, f.description, f.hook.onScreen, f.id].join(' ').toLowerCase().includes(w)));
+      count.textContent = `${list.length} format`; grid.innerHTML = ''; grid.append(...list.map(card));
+    };
+    search.oninput = paint; paint();
+  }
   const svScript = (body, signal, say) => svJob('script', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane }) }, signal, say);
   function snabbvideoView(v) {
     v.classList.add('mdv', 'svv');
@@ -2629,6 +2681,8 @@
     ratio.addEventListener('change', () => { if (!capTouched) capStyle.value = ratio.value === '9:16' ? 'words' : 'classic'; });
     const subsOn = h('input', { type: 'checkbox', checked: true }); const showTitle = h('input', { type: 'checkbox', checked: true });
     const trans = select([['fade', 'Toning'], ['none', 'Hårt klipp']], 'fade');
+    const fp = formatPicker(fmtTake('snabbvideo'), 'Välj format (valfritt – styr manus, storyboard, textning och övergångar)');
+    fp.on(() => { const f = fp.format(); if (!f) return; const c = f.caption; capStyle.value = c.style; capTouched = true; pos.value = c.pos; size.value = c.size; color.value = c.color; outline.value = c.outline; subsOn.checked = true; trans.value = f.transition; });
     const music = h('input', { type: 'file', accept: 'audio/*,.mp3,.wav,.m4a' }); const vol = h('input', { type: 'range', min: '0.05', max: '0.6', step: '0.05', value: '0.2' });
     const status = h('p', { class: 'status', 'aria-live': 'polite' }); const bar = h('progress', { max: 1, value: 0, hidden: true });
     const say = (t, err, p) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); if (p != null) { bar.hidden = false; bar.value = p; } };
@@ -2662,7 +2716,7 @@
         const k = h('input', { placeholder: 'sökord (engelska)' }); k.value = (x.terms || []).join(', '); k.onchange = () => { x.terms = k.value.split(',').map((y) => y.trim()).filter(Boolean); x.alts = []; };
         const mv = (d) => { const j = i + d; if (j < 0 || j >= sc.length) return; [sc[i], sc[j]] = [sc[j], sc[i]]; paintBoard(); };
         grid.append(h('div', { class: 'sb-card' },
-          h('div', { class: 'sb-thumb' + (cur.ratio === '16:9' ? ' wide' : '') }, media(x.clip, `Scen ${i + 1}`), h('b', { class: 'sb-n' }, String(i + 1)), dur),
+          h('div', { class: 'sb-thumb' + (cur.ratio === '16:9' ? ' wide' : '') }, media(x.clip, `Scen ${i + 1}`), h('b', { class: 'sb-n' }, String(i + 1)), dur, x.beat ? h('span', { class: 'etag sb-beat' }, x.beat) : null),
           t, k, h('small', { class: 'meta' }, x.clip ? `${x.clip.kind === 'image' ? 'Nyckelbild' : (x.clip.source || 'Stock')}${x.clip.credit ? ` · ${x.clip.credit}` : ''}` : 'Inget klipp hittat'),
           h('div', { class: 'quick sb-ctl' }, swap,
             h('button', { class: 'text dim', type: 'button', 'aria-label': 'Flytta upp', disabled: i === 0, onclick: () => mv(-1) }, '↑'),
@@ -2677,11 +2731,11 @@
       try {
         const j = await sbPost('storyboard', body);
         cur = { ...(cur || {}), title: cur && cur.title || j.title, hook: j.hook || (cur && cur.hook) || '', ratio: j.ratio, board: j.scenes };
-        cur.sentences = j.scenes.map((x) => ({ text: x.text, terms: x.terms })); if (j.ratio && ratio.value !== j.ratio) { ratio.value = j.ratio; ratio.dispatchEvent(new Event('change')); }
+        cur.sentences = j.scenes.map((x) => ({ text: x.text, terms: x.terms, beat: x.beat })); if (j.ratio && ratio.value !== j.ratio) { ratio.value = j.ratio; ratio.dispatchEvent(new Event('change')); }
         say(`Storyboard klar: ${j.scenes.length} scener, ca ${Math.round(j.seconds)} s. Ändra och tryck Rendera.`); paintEdit(); paintBoard();
       } catch (e) { say(e.message, true); } finally { bBoard.disabled = !cur; }
     }
-    bBoard.onclick = () => { if (!cur) return; cur.sentences = cur.sentences.filter((x) => x.text.trim()); loadBoard({ title: cur.title, hook: cur.hook, sentences: cur.sentences, ratio: ratio.value }); };
+    bBoard.onclick = () => { if (!cur) return; cur.sentences = cur.sentences.filter((x) => x.text.trim()); loadBoard({ title: cur.title, hook: cur.hook, sentences: cur.sentences, ratio: ratio.value, format: fp.get() || undefined }); };
     function paintEdit() {
       edit.innerHTML = ''; bRender.disabled = !cur; bBoard.disabled = !cur; if (!cur) return;
       if (cur.board) { edit.append(h('p', { class: 'meta' }, 'Manuset redigeras i storyboarden nedan. '), h('button', { class: 'text dim', type: 'button', onclick: () => { cur.sentences = cur.board.filter((x) => (x.text || '').trim()).map((x) => ({ text: x.text, terms: x.terms })); cur.board = null; paintBoard(); paintEdit(); } }, 'Tillbaka till textmanus')); return; }
@@ -2689,7 +2743,7 @@
       const rows = h('div', { class: 'sv-rows' });
       const paintRows = () => { rows.innerHTML = ''; cur.sentences.forEach((x, i) => { const t = h('textarea', { rows: 2 }); t.value = x.text; t.oninput = () => { x.text = t.value; };
         const k = h('input', { placeholder: 'sökord (engelska), kommaseparerade' }); k.value = (x.terms || []).join(', '); k.oninput = () => { x.terms = k.value.split(',').map((y) => y.trim()).filter(Boolean); };
-        rows.append(h('div', { class: 'sv-row' }, h('b', {}, String(i + 1)), h('div', {}, t, k), h('button', { class: 'text dim', type: 'button', 'aria-label': 'Ta bort mening', onclick: () => { cur.sentences.splice(i, 1); paintRows(); } }, '×'))); });
+        rows.append(h('div', { class: 'sv-row' }, h('b', { title: x.beat || '' }, x.beat ? `${i + 1} · ${x.beat}` : String(i + 1)), h('div', {}, t, k), h('button', { class: 'text dim', type: 'button', 'aria-label': 'Ta bort mening', onclick: () => { cur.sentences.splice(i, 1); paintRows(); } }, '×'))); });
         rows.append(h('button', { class: 'text dim', type: 'button', onclick: () => { cur.sentences.push({ text: '', terms: [] }); paintRows(); } }, '+ Mening')); };
       paintRows();
       edit.append(h('h3', {}, 'Manus – ändra fritt'), field('Titel', ti, true), rows, h('p', { class: 'meta' }, `${cur.model ? `Skrivet av ${cur.model} · ` : ''}En mening = ett textblock och 1–2 stockklipp (Pixabay/Coverr).`));
@@ -2699,7 +2753,7 @@
       if (ac) { ac.abort(); return; }
       const t = topic.value.trim(); if (!t) return say('Skriv ett ämne.', true); if (minorText(t, st.lane)) return say(REFUSE, true);
       ac = new AbortController(); stopBtn(bScript, 'Avbryt'); const untrack = track('Snabbvideo: manus', () => ac && ac.abort());
-      try { const r = await svScript({ topic: t, lang: lang.value, seconds: +secs.value, tone: tone.value }, ac.signal, (m, p) => say(m, false, p)); cur = { ...r }; say(`Manus klart: ${cur.sentences.length} meningar. Ändra, visa storyboard eller tryck Rendera.`); paintEdit(); paintBoard(); }
+      try { const r = await svScript({ topic: t, lang: lang.value, seconds: +secs.value, tone: tone.value, format: fp.get() || undefined }, ac.signal, (m, p) => say(m, false, p)); cur = { ...r }; say(`Manus klart: ${cur.sentences.length} meningar. Ändra, visa storyboard eller tryck Rendera.`); paintEdit(); paintBoard(); }
       catch (e) { say(e.name === 'AbortError' ? 'Avbrutet.' : e.message, e.name !== 'AbortError'); }
       finally { untrack(); ac = null; stopBtn(bScript, 'Skriv manus'); }
     };
@@ -2729,7 +2783,7 @@
       finally { untrack(); ac = null; jobId = null; stopBtn(bRender, 'Rendera'); bScript.disabled = false; }
     };
     v.append(pagehead('Snabbvideo', 'Ett ämne blir en färdig kort video: AI-manus, gratis röst, stockklipp per mening, inbränd textning och valfri musik. Skriv manus, ändra, rendera.'),
-      h('section', { class: 'step' }, h('h3', {}, '1. Ämne'), field('Ämne', topic, true), h('div', { class: 'row' }, field('Språk', lang), field('Längd', secs), field('Ton', tone)), h('div', { class: 'quick' }, bScript)),
+      h('section', { class: 'step' }, h('h3', {}, '1. Ämne'), field('Ämne', topic, true), h('div', { class: 'row' }, field('Språk', lang), field('Längd', secs), field('Ton', tone)), fp.el, h('div', { class: 'quick' }, bScript)),
       h('section', { class: 'step' }, edit, board, h('div', { class: 'quick' }, bBoard),
         h('h3', {}, '2. Utseende och ljud'), h('div', { class: 'row' }, field('Format', ratio), field('Röst', gender), field('Tempo', speed), field('Övergång', trans)),
         h('div', { class: 'row' }, field('Textning', h('label', { class: 'chk' }, subsOn, ' På')), field('Textstil', capStyle), field('Position', pos), field('Storlek', size), field('Färg', color), field('Kant', outline)),
@@ -2830,6 +2884,14 @@
     // 3. inställningar
     const instr = h('textarea', { rows: 2, maxlength: 600, placeholder: 'Valfritt: vad ska behållas/ändras? T.ex. "byt flaskan mot min sneaker, behåll neonljuset"' }); if (pick && pick.instructions) instr.value = pick.instructions;
     const audio = select([['original', 'Behåll originalljudet'], ['song', 'Använd min låt'], ['none', 'Inget ljud']], 'original');
+    const rfp = formatPicker(fmtTake('remake') || (pick && pick.format) || '', 'Format (valfritt – styr bildbeskrivningar och struktur)');
+    const fromFmt = h('button', { class: 'text', type: 'button' }, 'Inget referensklipp? Bygg storyboard från formatet');
+    fromFmt.onclick = async () => {
+      if (!rfp.get()) return say('Välj ett format först (under 3. Inställningar).', true); if (busy) return; busy = true; ana = null; lastResult = null; board.innerHTML = ''; out.innerHTML = '';
+      try { const r = await fetch(`${API}/remake/from-format`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: rfp.get(), seconds: 15, ratio: '9:16', lane: st.lane }) }); const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`); ana = j.result; paintShots(); say(`Storyboard från formatet: ${ana.shots.length} klipp (tyst – välj gärna din låt). Välj bilder och tryck Gör om.`); }
+      catch (e) { say(net(e), true); } finally { busy = false; }
+    };
     const song = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,.ogg,audio/*' }); const songStart = h('input', { type: 'number', min: 0, step: 0.5, value: 0 });
     const songBox = h('div', { class: 'grid2' }, field('Din låt', song, true), field('Börja låten vid (s)', songStart)); const paintAu = () => { songBox.hidden = audio.value !== 'song'; }; audio.onchange = paintAu; paintAu();
     const animate = select([['auto', 'Animera med videomotor (LTX-2.3 / MiniMax), Ken Burns när kvoten är slut'], ['kenburns', 'Bara Ken Burns (snabbt, sparar kvot)']], 'auto');
@@ -2860,7 +2922,7 @@
       if (f.size > 100 * 1048576) return say('Filen är för stor (max 100 MB).', true);
       busy = true; anaBtn.disabled = true; say('Laddar upp…'); ana = null; lastResult = null; board.innerHTML = ''; out.innerHTML = '';
       try {
-        const fd = new FormData(); fd.append('video', f); fd.append('lane', st.lane);
+        const fd = new FormData(); fd.append('video', f); fd.append('lane', st.lane); if (rfp.get()) fd.append('format', rfp.get());
         const r = await fetch(`${API}/remake/analyze`, { method: 'POST', body: fd }); const j = await r.json().catch(() => ({}));
         if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
         ana = await pollRm(j.jobId, (s) => say(s.message || 'Analyserar…'));
@@ -2879,7 +2941,7 @@
       try {
         const shots = shotRows.map((r) => ({ start: +r.start.value, end: +r.end.value, framing: r.framing.value, camera: r.camera.value, subject: r.subject.value, action: r.action.value, setting: r.setting.value, asset: r.assetSel.value }));
         const fd = new FormData(); fd.append('remakeId', ana.remakeId); fd.append('lane', st.lane); fd.append('shots', JSON.stringify(shots));
-        fd.append('instructions', instr.value.trim()); fd.append('audio', audio.value); fd.append('songStart', songStart.value || '0'); fd.append('animate', animate.value); fd.append('consent', consent.checked ? 'true' : '');
+        fd.append('instructions', instr.value.trim()); fd.append('format', rfp.get()); fd.append('audio', audio.value); fd.append('songStart', songStart.value || '0'); fd.append('animate', animate.value); fd.append('consent', consent.checked ? 'true' : '');
         if (only) fd.append('only', JSON.stringify(only));
         if (!only || !lastResult) { fd.append('assetsMeta', JSON.stringify(assets.map((a) => ({ name: a.name, kind: a.kind, source: a.source })))); assets.forEach((a, k) => fd.append('assets', a.blob, `bild${k}.${/png/.test(a.blob.type) ? 'png' : 'jpg'}`)); }
         if (audio.value === 'song' && song.files[0]) fd.append('song', song.files[0]);
@@ -2906,15 +2968,15 @@
     paintA();
     v.append(
       h('p', { class: 'lanenote' }, 'Använd bara klipp du själv äger eller har tillstånd att använda. Bilder: bara dina egna påhittade artister, produkter och kläder – inga kändisar eller verkliga personers ansikten utan samtycke.'),
-      h('section', { class: 'step' }, h('b', {}, '1. Referensklipp'), vin, h('div', { class: 'quick' }, anaBtn)),
+      h('section', { class: 'step' }, h('b', {}, '1. Referensklipp'), vin, h('div', { class: 'quick' }, anaBtn, fromFmt)),
       h('section', { class: 'step' }, h('b', {}, '2. Dina bilder (max 5)'), h('small', { class: 'meta' }, 'Ur artistlistan:'), rosterChips, verkImgs.length ? h('small', { class: 'meta' }, 'Ur Mina verk:') : null, verkImgs.length ? verkChips : null, field('Ladda upp (produkt, kläder eller egen artist)', upIn, true), aList, consentRow),
-      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), field('Ljud', audio), songBox, field('Rörelse', animate, true)),
+      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true)),
       status, board, h('div', { class: 'quick' }, go, cancelBtn), out);
   }
   const VIEWS = { snabbvideo: snabbvideoView, mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
-    skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, 'video-prompt': videoPromptView, 'gor-om': gorOmView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
-  const ALIAS = { remake: 'gor-om', 'gör-om': 'gor-om', gorom: 'gor-om', video2prompt: 'video-prompt', videoprompt: 'video-prompt', quickvideo: 'snabbvideo', 'quick-video': 'snabbvideo', microdrama: 'mikrodrama', 'micro-drama': 'mikrodrama', lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
-  const SECTION = { '': '', snabbvideo: 'snabbvideo', mikrodrama: 'mikrodrama', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', 'video-prompt': 'verktyg', 'gor-om': 'verktyg', verk: 'verk', bibliotek: 'verk' };
+    skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, 'video-prompt': videoPromptView, 'gor-om': gorOmView, format: formatView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
+  const ALIAS = { formats: 'format', formater: 'format', 'format-galleri': 'format', remake: 'gor-om', 'gör-om': 'gor-om', gorom: 'gor-om', video2prompt: 'video-prompt', videoprompt: 'video-prompt', quickvideo: 'snabbvideo', 'quick-video': 'snabbvideo', microdrama: 'mikrodrama', 'micro-drama': 'mikrodrama', lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
+  const SECTION = { '': '', snabbvideo: 'snabbvideo', mikrodrama: 'mikrodrama', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', 'video-prompt': 'verktyg', 'gor-om': 'verktyg', format: 'skapa', verk: 'verk', bibliotek: 'verk' };
   function route() {
     let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
     let [k, q] = raw.split('?'); k = k || '';

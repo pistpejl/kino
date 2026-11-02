@@ -650,3 +650,16 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .sb-card textarea,.sb-card input{width:100%;box-sizing:border-box;background:var(--s1);font-size:.9em}
 .sb-card input{font-size:.8em;opacity:.85}
 .sb-ctl{flex-wrap:wrap;gap:4px}
+
+/* Format gallery */
+.fmtgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:10px}
+.fmtcard{border:1px solid var(--line,#333);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px}
+.fmtcard h3{margin:4px 0}
+.fmtcard details p{margin:4px 0}
+.fmttab{font-size:.85em;border-collapse:collapse;width:100%}
+.fmttab td,.fmttab th{padding:3px 4px;border-top:1px solid var(--line,#333);text-align:left;vertical-align:top}
+.fmtpick{display:flex;flex-direction:column;gap:4px;margin:6px 0}
+.sb-beat{position:absolute;left:6px;bottom:6px}
+.fmtcard .etag{align-self:flex-start}
+#view input[type=search]{width:100%;padding:8px}
+.fmtcard .quick{flex-wrap:wrap}
