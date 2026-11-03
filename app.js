@@ -1350,7 +1350,7 @@
     const g = await grokToggle();
     const mp = h('input', { type: 'checkbox', checked: true });
     const mpEl = h('label', { class: 'wide' }, mp, ' Planera i tre omgångar (bildplan → kontinuitet → polering)');
-    const motion = select([['none', 'ingen (klipp i takt med musiken)'], ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (riktig rörelse, upp till 30 s, ca 1 klipp/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stockklipp (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – riktigt stockmaterial, inte AI`]] : [])], 'none');
+    const motion = select([['none', 'ingen (klipp i takt med musiken)'], ...(st.lane === 'sfw' ? [['hf-auto', 'AI-video på de första bilderna (LTX-2.3 → Kandinsky 6.0 → MiniMax H3, gratis kvot)'], ['ltx-2.3', 'AI-video: LTX-2.3 först'], ['kandinsky-6', 'AI-video: Kandinsky 6.0 först (5 s-klipp, ca 1–2 min/klipp)'], ['minimax-h3', 'AI-video: MiniMax H3 först']] : []), ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (riktig rörelse, upp till 30 s, ca 1 klipp/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stockklipp (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – riktigt stockmaterial, inte AI`]] : [])], 'none');
     // Stock source: 3-way toggle Riktiga / AI / Blanda (sent as source=real|ai|mix)
     let stockSrc = 'real';
     const srcBtns = [['real', 'Riktiga'], ['ai', 'AI'], ['mix', 'Blanda']].map(([v, t]) => h('button', { type: 'button', class: 'seg-b', 'data-v': v, onclick: () => { stockSrc = v; paintSrc(); } }, t));
@@ -2959,7 +2959,8 @@
     };
     const song = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,.ogg,audio/*' }); const songStart = h('input', { type: 'number', min: 0, step: 0.5, value: 0 });
     const songBox = h('div', { class: 'grid2' }, field('Din låt', song, true), field('Börja låten vid (s)', songStart), audioPreview(song, null, songStart)); const paintAu = () => { songBox.hidden = audio.value !== 'song'; }; audio.onchange = paintAu; paintAu();
-    const animate = select([['auto', 'Animera med videomotor (LTX-2.3 / MiniMax), Ken Burns när kvoten är slut'], ['kenburns', 'Bara Ken Burns (snabbt, sparar kvot)']], 'auto');
+    const animate = select([['auto', 'Animera med videomotor (LTX-2.3 → Kandinsky 6.0 → MiniMax H3), Ken Burns när kvoten är slut'], ['kenburns', 'Bara Ken Burns (snabbt, sparar kvot)']], 'auto');
+    const vEngine = select([['', 'Automatiskt (LTX-2.3 först)'], ['ltx-2.3', 'LTX-2.3 först'], ['kandinsky-6', 'Kandinsky 6.0 först'], ['minimax-h3', 'MiniMax H3 först']], '');
     // storyboard
     let ana = null; let shotRows = []; let lastResult = null; let busy = false; let ac = null; let jobId = null;
     const board = h('div', {}); const out = h('div', {});
@@ -3006,7 +3007,7 @@
       try {
         const shots = shotRows.map((r) => ({ start: +r.start.value, end: +r.end.value, framing: r.framing.value, camera: r.camera.value, subject: r.subject.value, action: r.action.value, setting: r.setting.value, asset: r.assetSel.value }));
         const fd = new FormData(); fd.append('remakeId', ana.remakeId); fd.append('lane', st.lane); fd.append('shots', JSON.stringify(shots));
-        fd.append('instructions', instr.value.trim()); fd.append('format', rfp.get()); fd.append('audio', audio.value); fd.append('songStart', songStart.value || '0'); fd.append('animate', animate.value); fd.append('consent', consent.checked ? 'true' : '');
+        fd.append('instructions', instr.value.trim()); fd.append('format', rfp.get()); fd.append('audio', audio.value); fd.append('songStart', songStart.value || '0'); fd.append('animate', animate.value); fd.append('videoEngine', vEngine.value); fd.append('consent', consent.checked ? 'true' : '');
         if (only) fd.append('only', JSON.stringify(only));
         if (!only || !lastResult) { fd.append('assetsMeta', JSON.stringify(assets.map((a) => ({ name: a.name, kind: a.kind, source: a.source })))); assets.forEach((a, k) => fd.append('assets', a.blob, `bild${k}.${/png/.test(a.blob.type) ? 'png' : 'jpg'}`)); }
         if (audio.value === 'song' && song.files[0]) fd.append('song', song.files[0]);
@@ -3035,7 +3036,7 @@
       h('p', { class: 'lanenote' }, 'Använd bara klipp du själv äger eller har tillstånd att använda. Bilder: bara dina egna påhittade artister, produkter och kläder – inga kändisar eller verkliga personers ansikten utan samtycke.'),
       h('section', { class: 'step' }, h('b', {}, '1. Referensklipp'), vin, h('div', { class: 'quick' }, anaBtn, fromFmt)),
       h('section', { class: 'step' }, h('b', {}, '2. Dina bilder (max 5)'), h('small', { class: 'meta' }, 'Ur artistlistan:'), rosterChips, verkImgs.length ? h('small', { class: 'meta' }, 'Ur Mina verk:') : null, verkImgs.length ? verkChips : null, field('Ladda upp (produkt, kläder eller egen artist)', upIn, true), aList, consentRow),
-      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true)),
+      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true), field('Videomotor', vEngine)),
       status, board, h('div', { class: 'quick' }, go, cancelBtn), out);
   }
   const VIEWS = { snabbvideo: snabbvideoView, mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
