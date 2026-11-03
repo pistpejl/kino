@@ -1348,6 +1348,8 @@
     const action = h('input', { type: 'text' });
     const overlay = h('input', { type: 'text', placeholder: 'Stockläge: valfri titeltext' });
     const g = await grokToggle();
+    const mp = h('input', { type: 'checkbox', checked: true });
+    const mpEl = h('label', { class: 'wide' }, mp, ' Planera i tre omgångar (bildplan → kontinuitet → polering)');
     const motion = select([['none', 'ingen (klipp i takt med musiken)'], ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (riktig rörelse, upp till 30 s, ca 1 klipp/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stockklipp (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – riktigt stockmaterial, inte AI`]] : [])], 'none');
     // Stock source: 3-way toggle Riktiga / AI / Blanda (sent as source=real|ai|mix)
     let stockSrc = 'real';
@@ -1361,7 +1363,7 @@
     paintSrc();
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'Vad handlar videon om?', noEngineText: 'Ingen bildmodell svarar (behövs utan egna bilder)',
-      settings: [field('Genre', genre), field('Format', ratio), field('Längd', len), field('Utseende', look), field('Handling', action), field('Rörelse', motion, true), field('Stockklipp', srcToggle, true), field('Text i bild', overlay), g.el, field('Låttext', lyrics, true)],
+      settings: [field('Genre', genre), field('Format', ratio), field('Längd', len), field('Utseende', look), field('Handling', action), field('Rörelse', motion, true), field('Stockklipp', srcToggle, true), field('Text i bild', overlay), g.el, mpEl, field('Låttext', lyrics, true)],
       onGo: async ({ prompt, engine, say, setCancel, signal }) => {
         const cancelJob = (id) => setCancel(async () => { await fetch(`${API}/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
         if (motion.value === 'stock') {
@@ -1386,7 +1388,7 @@
         if (!imgs.length && engine.startsWith('puter:')) return say('Seedream körs i din webbläsare och kan inte göra stillbilder till musikvideo. Välj en annan modell eller ladda upp bilder.', true);
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('prompt', prompt); fd.append('genre', genre.value); fd.append('ratio', ratio.value); fd.append('seconds', len.value);
-        fd.append('lyrics', lyrics.value); fd.append('look', look.value); fd.append('action', action.value); fd.append('grok', g.cb.checked ? '1' : '0'); fd.append('motion', motion.value); fd.append('imageEngine', engine.startsWith('puter:') ? '' : engine);
+        fd.append('lyrics', lyrics.value); fd.append('look', look.value); fd.append('action', action.value); fd.append('grok', g.cb.checked ? '1' : '0'); fd.append('motion', motion.value); fd.append('multiPass', mp.checked ? '1' : '0'); fd.append('imageEngine', engine.startsWith('puter:') ? '' : engine);
         if (song) fd.append('song', song);
         imgs.forEach((f) => fd.append('images', f));
         say('Laddar upp…');
@@ -1395,8 +1397,8 @@
         const j = await r.json(); cancelJob(j.jobId);
         try {
           const out = await poll(j.jobId, (m) => say(m));
-          st.results.music.unshift(out); grid.prepend(resultCard(out, 'music'));
-          say(`Låt: ${out.credits.song} · Bilder: ${out.credits.images} · Rörelse: ${out.credits.motion}`);
+          st.results.music.unshift(out); const card = resultCard(out, 'music'); grid.prepend(card); if (out.session) card.after(mvTakesPanel(out, card, grid));
+          say(`Låt: ${out.credits.song} · Bilder: ${out.credits.images} · Rörelse: ${out.credits.motion}${out.bpm ? ` · ${Math.round(out.bpm)} BPM` : ''}${out.plan && out.plan.passes && out.plan.passes.length ? ` · bildplan: ${out.plan.passes.length}/3 omgångar` : ''}`);
         } catch (e) { if (e.cancelled) throw e; say(e.message, true); }
       } });
     if (st.preset === 'stock' && st.lane === 'sfw' && [...motion.options].some((o) => o.value === 'stock')) {
@@ -1637,6 +1639,56 @@
   // ---- Script mode (storyboard): idea -> scene cards -> make scenes -> Edit timeline ----
   st.sc = st.sc || { scenes: [], song: null, section: null, ref: '', template: 'standard', seq: 0 };
   const BASE = API.replace(/\/api\/kino$/, '');
+  // Beat-info (BPM, sektioner) + tagningar per bild: ny tagning av en bild, välj bästa, klipp om utan ny generering
+  function mvTakesPanel(out, card, grid) {
+    let S = out.session;
+    const box = h('div', { class: 'card mv-takes' });
+    const msg = h('div', { class: 'meta' });
+    const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    const paint = () => {
+      box.textContent = '';
+      const b = S.beat || {};
+      box.append(h('div', { class: 'meta' }, h('b', {}, `${Math.round(b.bpm || 0)} BPM`), ` · ${S.scenes.length} klipp på takten · ${b.downbeats || 0} taktslag ett`));
+      const secs = h('div', { class: 'mv-secs' });
+      const w = S.window || { start: 0, end: b.duration || 1 };
+      for (const sc of b.sections || []) {
+        const a0 = Math.max(sc.start, w.start); const a1 = Math.min(sc.end, w.end); if (a1 <= a0) continue;
+        secs.append(h('span', { class: `mv-sec ${sc.level || ''}`, style: `flex:${(a1 - a0).toFixed(2)}`, title: `${sc.label} ${fmt(sc.start)}–${fmt(sc.end)}` }, sc.label || ''));
+      }
+      box.append(secs);
+      const row = h('div', { class: 'mv-shots' });
+      S.shots.forEach((sh) => {
+        const takes = h('div', { class: 'mv-tk' });
+        sh.takes.forEach((t) => takes.append(h('button', { type: 'button', class: `mv-take${t.id === sh.selected ? ' on' : ''}`, title: `Tagning ${t.id}`, 'aria-pressed': t.id === sh.selected ? 'true' : 'false', onclick: async () => {
+          const r = await fetch(`${API}/music/sessions/${S.id}/shots/${sh.index}/select`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ take: t.id }) });
+          if (!r.ok) { msg.textContent = await errMsg(r); return; }
+          S = (await r.json()).session; paint(); msg.textContent = `Bild ${sh.index + 1}: tagning ${t.id} vald. Tryck Klipp om för att se den i videon.`;
+        } }, h('img', { src: abs(t.url), alt: `Tagning ${t.id}` }))));
+        row.append(h('div', { class: 'mv-shot' }, h('small', {}, `Bild ${sh.index + 1} · ${sh.takes.length} tagning${sh.takes.length > 1 ? 'ar' : ''}`), takes,
+          h('button', { class: 'text', type: 'button', onclick: async (ev) => {
+            ev.target.disabled = true; msg.textContent = `Ny tagning av bild ${sh.index + 1}…`;
+            try {
+              const r = await fetch(`${API}/music/sessions/${S.id}/shots/${sh.index}/take`, { method: 'POST' });
+              if (!r.ok) { msg.textContent = await errMsg(r); return; }
+              const res = await poll((await r.json()).jobId, (m) => { msg.textContent = m; });
+              S = res.session; paint(); msg.textContent = `Ny tagning klar (bild ${sh.index + 1}). Välj den och klipp om.`;
+            } catch (e) { msg.textContent = e.message; } finally { ev.target.disabled = false; }
+          } }, 'Ny tagning')));
+      });
+      box.append(row, h('div', { class: 'acts' }, h('button', { class: 'text', type: 'button', onclick: async (ev) => {
+        ev.target.disabled = true; msg.textContent = 'Klipper om med valda tagningar…';
+        try {
+          const r = await fetch(`${API}/music/sessions/${S.id}/render`, { method: 'POST' });
+          if (!r.ok) { msg.textContent = await errMsg(r); return; }
+          const o = await poll((await r.json()).jobId, (m) => { msg.textContent = m; });
+          st.results.music.unshift(o); const c2 = resultCard(o, 'music'); card.before(c2); msg.textContent = 'Klar: ny version överst. Bara klippningen gjordes om.';
+        } catch (e) { msg.textContent = e.message; } finally { ev.target.disabled = false; }
+      } }, 'Klipp om med valda tagningar')), msg);
+    };
+    paint();
+    return box;
+  }
+
   const musicTabs = (on) => h('div', { class: 'tl-top' }, seg(on === 'mv' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Musikvideo') : h('a', { href: '#/music' }, 'Musikvideo'), on === 'script' ? h('span', { class: 'on', 'aria-current': 'page' }, 'Manus') : h('a', { href: '#/script' }, 'Manus')));
   async function pollScript(id, onMsg) {
     let stop = false;

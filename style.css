@@ -665,3 +665,15 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .fmtcard .quick{flex-wrap:wrap}
 .mprevwrap{display:flex;flex-direction:column;gap:4px;margin:6px 0}
 .mprevwrap audio,.drop audio{width:100%;max-width:520px}
+/* Musikvideo: sektioner + tagningar */
+.mv-takes { padding:12px; display:flex; flex-direction:column; gap:10px; }
+.mv-secs { display:flex; gap:2px; height:22px; border-radius:6px; overflow:hidden; font-size:11px; }
+.mv-sec { display:flex; align-items:center; justify-content:center; background:var(--line, #333); color:var(--fg); overflow:hidden; white-space:nowrap; min-width:0; }
+.mv-sec.mid { background:color-mix(in srgb, var(--accent, #7c5cff) 45%, transparent); }
+.mv-sec.high { background:var(--accent, #7c5cff); color:#fff; }
+.mv-shots { display:flex; flex-wrap:wrap; gap:10px; }
+.mv-shot { display:flex; flex-direction:column; gap:4px; max-width:100%; }
+.mv-tk { display:flex; gap:4px; flex-wrap:wrap; }
+.mv-take { padding:0; border:2px solid transparent; border-radius:6px; background:none; cursor:pointer; }
+.mv-take.on { border-color:var(--accent, #7c5cff); }
+.mv-take img { width:54px; height:72px; object-fit:cover; border-radius:4px; display:block; }
