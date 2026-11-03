@@ -2347,6 +2347,55 @@
       default: throw new Error('Okänt verktyg.');
     }
   }
+  // ---- Bilagor i agentchatten ("+"): uppladdning med förlopp, länkar, ifyllning av filfält på verktygssidorna ----
+  const ATT_ACCEPT = 'image/*,video/*,audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac,.pdf,.txt,.md,.csv,.json,.srt,.vtt';
+  const ATT_MAX = { image: 20, video: 100, audio: 20 }; // MB, resten 20
+  const attKind = (mime, name) => { const m = String(mime || ''); const e = String(name || '').toLowerCase().split('.').pop(); if (m.startsWith('image/')) return 'image'; if (m.startsWith('video/') || ['mp4', 'mov', 'webm', 'm4v'].includes(e)) return 'video'; if (m.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'opus'].includes(e)) return 'audio'; if (m === 'application/pdf' || e === 'pdf') return 'pdf'; return m.startsWith('text/') || ['txt', 'md', 'csv', 'json', 'srt', 'vtt'].includes(e) ? 'text' : 'file'; };
+  const ATT_ICON = { image: '🖼', video: '🎬', audio: '🎵', pdf: '📄', text: '📝', file: '📎', page: '🔗', 'video-link': '🔗' };
+  const URL_RE = /https?:\/\/[^\s<>"']+/gi;
+  function attUpload(file, onProg) {
+    return new Promise((ok, bad) => {
+      const fd = new FormData(); fd.append('files', file, file.name || 'fil');
+      const x = new XMLHttpRequest(); x.open('POST', `${API}/agent/upload`);
+      x.upload.onprogress = (e) => { if (e.lengthComputable) onProg(e.loaded / e.total); };
+      x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch { /* */ } if (x.status < 300 && j.ok && j.files && j.files[0]) ok(j.files[0]); else bad(new Error(j.error || (j.errors && j.errors[0]) || `Servern svarade ${x.status}`)); };
+      x.onerror = () => bad(new Error('Kunde inte nå servern.')); x.send(fd);
+    });
+  }
+  async function attLink(url) {
+    const r = await fetch(`${API}/agent/link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+    return j.file ? { ...j.file, source: url } : { kind: j.link.kind, name: j.link.title || url, link: j.link };
+  }
+  function attChip(a, onRemove) {
+    const big = a.kind === 'image' && (a.thumb || a.url);
+    const el = h('div', { class: `att-chip ${a.status || ''}`, title: a.error || a.name },
+      big ? h('img', { src: a.thumb || abs(a.url), alt: '', onerror: (e) => { e.target.replaceWith(h('span', { class: 'att-ico' }, ATT_ICON.image)); } }) : h('span', { class: 'att-ico' }, ATT_ICON[a.kind] || '📎'),
+      a.url && !a.status ? h('a', { class: 'att-name', href: abs(a.url), target: '_blank', rel: 'noopener' }, a.name) : a.link && a.link.url ? h('a', { class: 'att-name', href: a.link.url, target: '_blank', rel: 'noopener noreferrer' }, a.name) : h('span', { class: 'att-name' }, a.name));
+    if (a.status === 'up') el.append(h('span', { class: 'att-prog' }, h('i', { style: `width:${Math.round((a.p || 0) * 100)}%` })));
+    if (a.status === 'err') el.append(h('small', { class: 'status err' }, a.error));
+    if (a.link && a.link.note) el.append(h('small', { class: 'meta' }, a.link.note));
+    if (onRemove) el.append(h('button', { class: 'att-x', type: 'button', 'aria-label': `Ta bort ${a.name}`, onclick: onRemove }, '×'));
+    return el;
+  }
+  function agentPrefillFiles(v) {
+    const files = st.agentFiles; st.agentFiles = null; let tries = 0;
+    const accepts = (inp, f) => { const acc = (inp.accept || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean); if (!acc.length) return true; return acc.some((x) => (x.endsWith('/*') ? f.type.startsWith(x.slice(0, -1)) : x.startsWith('.') ? f.name.toLowerCase().endsWith(x) : f.type === x)); };
+    const go = async () => {
+      const inputs = [...v.querySelectorAll('input[type=file]')];
+      if (!inputs.length) { if (++tries < 10 && v.isConnected) setTimeout(go, 300); return; }
+      const blobs = (await Promise.all(files.map((a) => fetch(abs(a.url)).then((r) => (r.ok ? r.blob() : null)).then((b) => b && new File([b], a.name, { type: a.mime || b.type })).catch(() => null)))).filter(Boolean);
+      const used = new Set(); let n = 0;
+      for (const inp of inputs) {
+        const pick = blobs.filter((f) => !used.has(f) && accepts(inp, f)); if (!pick.length) continue;
+        const take = inp.multiple ? pick : pick.slice(0, 1); const dt = new DataTransfer(); take.forEach((f) => { dt.items.add(f); used.add(f); });
+        try { inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true })); inp.dispatchEvent(new Event('input', { bubbles: true })); n += take.length; } catch { /* äldre webbläsare */ }
+      }
+      const note = h('p', { class: 'status' + (n ? '' : ' err') }, n ? `📎 ${n} bifogad(e) fil(er) från agenten är ifyllda.` : 'Bifogade filer kunde inte fyllas i automatiskt – välj filen själv (den finns kvar i agentchatten).');
+      v.prepend(note); setTimeout(() => note.remove(), 8000);
+    };
+    setTimeout(go, 150);
+  }
   const AG = { msgs: null, live: new Map() };
   function agentView(v) {
     if (!AG.msgs) AG.msgs = agentLoad();
@@ -2355,14 +2404,48 @@
     const ta = h('textarea', { rows: 2, placeholder: 'Skriv ett önskemål, t.ex. "skapa en influencer-artist som gör neon-pop och gör 3 bilder av henne"' });
     const send = h('button', { class: 'text primary', type: 'button' }, 'Skicka');
     const clear = h('button', { class: 'text dim', type: 'button' }, 'Rensa');
+    let pend = []; // bilagor innan skick
+    const chips = h('div', { class: 'att-chips' });
+    const fileIn = h('input', { type: 'file', multiple: true, accept: ATT_ACCEPT, hidden: true });
+    const menu = h('div', { class: 'att-menu', hidden: true });
+    const plus = h('button', { class: 'att-plus', type: 'button', 'aria-label': 'Bifoga bilder, video, ljud, filer eller länk', title: 'Bifoga', 'aria-haspopup': 'true' }, '+');
+    const paintPend = () => { chips.innerHTML = ''; pend.forEach((a) => chips.append(attChip(a, () => { if (a.thumb) URL.revokeObjectURL(a.thumb); pend = pend.filter((x) => x !== a); paintPend(); }))); chips.hidden = !pend.length; };
+    function addFiles(list) {
+      for (const f of [...list].slice(0, 8)) {
+        if (pend.length >= 8) { alert('Max 8 bilagor per meddelande.'); break; }
+        const kind = attKind(f.type, f.name); const max = (ATT_MAX[kind] || 20) * 1024 * 1024;
+        const a = { name: f.name || 'fil', kind, mime: f.type, status: 'up', p: 0, thumb: kind === 'image' ? URL.createObjectURL(f) : null };
+        pend.push(a);
+        if (f.size > max) { a.status = 'err'; a.error = `För stor (max ${max / 1048576} MB).`; continue; }
+        a.job = attUpload(f, (p) => { a.p = p; const bar = chips.querySelectorAll('.att-chip')[pend.indexOf(a)]; const i = bar && bar.querySelector('.att-prog i'); if (i) i.style.width = `${Math.round(p * 100)}%`; })
+          .then((r) => { Object.assign(a, r, { status: 'ok' }); }).catch((e) => { a.status = 'err'; a.error = e.message; }).finally(paintPend);
+      }
+      paintPend();
+    }
+    function addLink(url) {
+      if (!/^https?:\/\//i.test(url) || pend.some((x) => x.src === url)) return;
+      const a = { name: url, kind: 'page', status: 'up', p: 0.3, src: url }; pend.push(a);
+      a.job = attLink(url).then((r) => Object.assign(a, r, { status: 'ok' })).catch((e) => { a.status = 'err'; a.error = e.message; }).finally(paintPend);
+      paintPend();
+    }
+    const pickBtn = (label, acc) => h('button', { class: 'text', type: 'button', onclick: () => { menu.hidden = true; fileIn.accept = acc; fileIn.click(); } }, label);
+    menu.append(pickBtn('🖼 Bilder', 'image/*'), pickBtn('🎬 Video', 'video/*'), pickBtn('🎵 Ljud / låt', 'audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac'), pickBtn('📎 Fil (PDF, text …)', ATT_ACCEPT),
+      h('button', { class: 'text', type: 'button', onclick: () => { menu.hidden = true; const u = prompt('Klistra in en länk (bild, video, ljud eller webbsida):'); if (u) addLink(u.trim()); } }, '🔗 Lägg till länk'));
+    plus.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+    document.addEventListener('click', (e) => { if (!menu.contains(e.target) && e.target !== plus) menu.hidden = true; });
+    fileIn.onchange = () => { addFiles(fileIn.files); fileIn.value = ''; };
+    ta.addEventListener('paste', (e) => { const fs2 = [...((e.clipboardData && e.clipboardData.files) || [])]; if (fs2.length) { e.preventDefault(); addFiles(fs2); } });
     const store = () => { msgs = AG.msgs = agentSave(msgs); document.dispatchEvent(new CustomEvent('kino-agent')); };
     const live = AG.live; // msg index -> { ac, cancel }
     const argText = (s) => Object.entries(s.args || {}).filter(([k, x]) => x !== '' && x != null && k !== 'from').map(([k, x]) => `${k}: ${String(x).slice(0, 80)}`).join(' · ') + (s.args && s.args.from != null ? ` · från steg ${s.args.from + 1}` : '');
     function paint() {
       list.innerHTML = '';
+      const findAtt = (id) => { for (const x of msgs) for (const a of x.atts || []) if (a.id === id) return a; return null; };
+      AG.findAtt = findAtt;
       if (!msgs.length) list.append(empty('Vad vill du skapa?', 'Agenten planerar och kör KINO:s verktyg steg för steg. Tunga jobb (video, GPU, många bilder) frågar först.'));
       msgs.forEach((m, mi) => {
         const box = h('div', { class: `agent-msg ${m.role}` }, h('p', {}, m.text || ''));
+        if (m.atts && m.atts.length) box.append(h('div', { class: 'att-chips' }, m.atts.map((a) => attChip(a))));
         if (m.question) box.append(h('p', { class: 'agent-q' }, m.question));
         if (m.steps && m.steps.length) {
           const ol = h('ol', { class: 'agent-steps' });
@@ -2400,9 +2483,12 @@
         s.status = 'run'; s.error = null; s.msg = ''; store(); paint();
         try {
           const outs = m.steps.map((x) => x.out || null);
+          const att = ((s.args && s.args.attachments) || []).map((id) => AG.findAtt && AG.findAtt(id)).filter((a) => a && a.url);
+          st.agentFiles = att.length ? att : null;
           s.out = await agentRunStep(s, outs, { signal: ac.signal, say: (t) => { s.msg = t; document.dispatchEvent(new CustomEvent('kino-agent')); }, setCancel: (fn) => { l.cancel = fn; } });
           s.status = 'done';
-        } catch (e) {
+          if (!(s.out && s.out.go)) st.agentFiles = null; else if (st.agentFiles) s.out.text = `${s.out.text}\nBifogad fil fylls i automatiskt: ${st.agentFiles.map((a) => a.name).join(', ')}.`;
+        } catch (e) { st.agentFiles = null;
           s.status = e.cancelled || ac.signal.aborted ? 'cancel' : 'err'; s.error = s.status === 'cancel' ? 'Avbrutet. Jobbet stoppades.' : e.message;
         } finally { untrack(); live.delete(mi); }
         store(); paint();
@@ -2412,14 +2498,20 @@
       }
     }
     async function ask() {
-      const wish = ta.value.trim(); if (!wish || send.disabled) return;
-      ta.value = ''; msgs.push({ role: 'user', text: wish, ts: Date.now() }); store(); paint();
+      const wish = ta.value.trim(); if ((!wish && !pend.length) || send.disabled) return;
+      for (const u of (wish.match(URL_RE) || []).slice(0, 4)) addLink(u.replace(/[).,!?]+$/, ''));
+      if (pend.some((a) => a.status === 'up')) { send.disabled = true; send.textContent = 'Laddar upp…'; await Promise.all(pend.map((a) => a.job).filter(Boolean)); send.disabled = false; send.textContent = 'Skicka'; }
+      const atts = pend.filter((a) => a.status === 'ok').map((a) => ({ id: a.id, kind: a.kind, name: a.name, mime: a.mime, url: a.url, link: a.link, source: a.source }));
+      const failed = pend.filter((a) => a.status === 'err');
+      if (failed.length && !confirm(`${failed.length} bilaga/bilagor misslyckades (${failed.map((a) => a.error).join('; ')}). Skicka ändå?`)) return;
+      pend.forEach((a) => a.thumb && URL.revokeObjectURL(a.thumb)); pend = []; paintPend();
+      ta.value = ''; msgs.push({ role: 'user', text: wish, ts: Date.now(), atts }); store(); paint();
       if (minorText(wish)) { msgs.push({ role: 'agent', text: REFUSE }); store(); return paint(); }
       send.disabled = true; const wait = { role: 'agent', text: 'Planerar…' }; msgs.push(wait); paint();
       try {
         const context = await agentContext();
         const history = msgs.slice(-8, -2).map((x) => ({ role: x.role, text: x.text }));
-        const r = await fetch(`${API}/agent/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wish, lane: st.lane, context, history }) });
+        const r = await fetch(`${API}/agent/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wish, lane: st.lane, context, history, attachments: atts.map((a) => (a.id ? { id: a.id } : { link: a.link })) }) });
         const j = await r.json().catch(() => ({}));
         msgs.pop();
         if (!r.ok || !j.ok) msgs.push({ role: 'agent', text: j.error || `Kunde inte planera (servern svarade ${r.status}).` });
@@ -2433,7 +2525,12 @@
     clear.onclick = () => { if (live.size) return alert('Stoppa pågående steg först.'); if (!msgs.length || confirm('Rensa hela chatten?')) { msgs = []; store(); paint(); } };
     v.append(pagehead('AI-agent', 'Skriv vad du vill göra på svenska. Agenten väljer verktyg, visar varje steg och frågar innan tunga jobb.'),
       h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW' : 'SFW'}. Samma säkerhetsregler som i resten av KINO: bara vuxna, inga verkliga eller kända personer i NSFW, röst- och ansiktsbyte bara ur dina samtyckta listor.`),
-      list, h('div', { class: 'agent-input' }, ta, h('div', { class: 'quick' }, send, clear)));
+      list, h('div', { class: 'agent-input' }, chips, h('div', { class: 'att-row' }, h('div', { class: 'att-wrap' }, plus, menu), ta), fileIn, h('div', { class: 'quick' }, send, clear)));
+    paintPend();
+    const drop = v.querySelector('.agent-input');
+    ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); drop.classList.add('drag'); } }));
+    ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, () => drop.classList.remove('drag')));
+    drop.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } else { const u = e.dataTransfer && e.dataTransfer.getData('text/uri-list'); if (u) { e.preventDefault(); addLink(u.split('\n')[0].trim()); } } });
     paint();
     const onAg = () => { if (!list.isConnected) return document.removeEventListener('kino-agent', onAg); msgs = AG.msgs; paint(); };
     document.addEventListener('kino-agent', onAg);
@@ -3055,6 +3152,7 @@
     if (LAST_NAMES[k]) localStorage.setItem('kino.last', k);
     const v = $('#view'); v.innerHTML = ''; v.className = ''; v.dataset.route = k; window.scrollTo(0, 0);
     (VIEWS[k] || home)(v, q);
+    if (st.agentFiles && st.agentFiles.length && k !== 'agent') agentPrefillFiles(v);
   }
   window.addEventListener('hashchange', route);
   // custom Swedish upload box for every visible file input (the input stays in place, so .files / onchange keep working)
