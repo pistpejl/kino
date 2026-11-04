@@ -706,3 +706,8 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .agent-live li.run > span { animation: spin 1s linear infinite; display:inline-block; }
 .agent-live li.done > span { color: var(--ok, #3c9); } .agent-live li.err > span { color: var(--err, #e55); }
 .seg button.on { outline:2px solid currentColor; }
+.agent-coach ol, .agent-coach ul { margin:6px 0; padding-left:20px; display:flex; flex-direction:column; gap:4px; }
+.agent-coach .scores { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:6px; }
+.agent-coach .bar { display:block; height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
+.agent-coach .bar i { display:block; height:100%; background:var(--accent, #7af); }
+.agent-coach .v-svag b { color: var(--err, #e55); } .agent-coach .v-stark b { color: var(--ok, #3c9); }

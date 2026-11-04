@@ -2199,7 +2199,7 @@
   // ---- AI-agent (#/agent): önskemål på svenska -> plan (server) -> stegen körs här med KINO:s vanliga routes/sidor ----
   const AGENT_KEY = 'kino.agent.chat';
   const AGENT_TOOLS = { persona: 'Influencer-artist', image: 'Bilder', script: 'Manus', viral_trends: 'Trender', viral_mashup: 'Viral-mix', save_template: 'Spara i Mina mallar',
-    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', video_to_prompt: 'Video → prompt', remake_clip: 'Gör om klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo', produce: 'Produktion (en mening)', edit: 'Ändring med ord', analyze_media: 'Titta/lyssna på bilaga' };
+    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', video_to_prompt: 'Video → prompt', remake_clip: 'Gör om klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo', produce: 'Produktion (en mening)', critique: 'Granskning', hooks: 'Hook-maskin', script_coach: 'Manuscoach', cta: 'CTA-strateg', series: 'Serieplan 3-2-1', edit: 'Ändring med ord', analyze_media: 'Titta/lyssna på bilaga' };
   const HANDOFF = { remake_clip: 1, video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, lip_sync: 1, klipp: 1 };
   const STATUS_SV = { wait: 'Väntar', confirm: 'Bekräfta', run: 'Kör…', done: 'Klar', err: 'Fel', cancel: 'Avbruten', skip: 'Hoppades över' };
   const agentLoad = () => { try { return JSON.parse(localStorage.getItem(AGENT_KEY) || '[]'); } catch { return []; } };
@@ -2462,6 +2462,7 @@
     const store = () => { msgs = AG.msgs = agentSave(msgs); document.dispatchEvent(new CustomEvent('kino-agent')); };
     const live = AG.live; // msg index -> { ac, cancel }
     const argText = (s) => Object.entries(s.args || {}).filter(([k, x]) => x !== '' && x != null && k !== 'from').map(([k, x]) => `${k}: ${String(x).slice(0, 80)}`).join(' · ') + (s.args && s.args.from != null ? ` · från steg ${s.args.from + 1}` : '');
+    const agentUI = { store: () => store(), paint: () => paint(), live, get msgs() { return msgs; }, ask: (t) => { ta.value = t; ask(); } };
     function paint() {
       list.innerHTML = '';
       const findAtt = (id) => { for (const x of msgs) for (const a of x.atts || []) if (a.id === id) return a; return null; };
@@ -2477,7 +2478,7 @@
             const res = h('div', { class: 'agent-res' });
             if (s.out && s.out.images) res.append(h('div', { class: 'agent-thumbs' }, s.out.images.map((u) => h('a', { href: u, target: '_blank', rel: 'noopener' }, h('img', { src: u, alt: 'Resultat', loading: 'lazy' })))));
             if (s.out && s.out.text) res.append(h('pre', {}, s.out.text));
-            if (window.KinoAgentX) res.append(agentX().extras(s, () => { store(); paint(); }));
+            if (window.KinoAgentX) res.append(agentX().extras(s, () => { store(); paint(); }, agentUI));
             if (s.out && s.out.go) res.append(h('a', { class: 'text', href: s.out.go }, 'Öppna igen ›'));
             if (s.out && s.out.link) res.append(h('a', { class: 'text dim', href: s.out.link, onclick: () => { if (s.out.mdId) st.mdOpen = s.out.mdId; } }, ({ '#/mikrodrama': 'Öppna Mikrodrama ›', '#/snabbvideo': 'Öppna Snabbvideo ›', '#/verk': 'Öppna Mina verk ›' })[s.out.link] || 'Öppna Manus ›'));
             if (s.error) res.append(h('p', { class: 'status err' }, s.error));
@@ -2532,7 +2533,7 @@
       pend.forEach((a) => a.thumb && URL.revokeObjectURL(a.thumb)); pend = []; paintPend();
       ta.value = ''; msgs.push({ role: 'user', text: wish, ts: Date.now(), atts }); store(); paint();
       if (minorText(wish)) { msgs.push({ role: 'agent', text: REFUSE }); store(); return paint(); }
-      if (window.KinoAgentX && await agentX().maybeEdit(wish, atts, msgs, { store, paint, live })) return; // ändring med ord på senaste resultatet
+      if (window.KinoAgentX && await agentX().maybeEdit(wish, atts, msgs, agentUI)) return; // ändring med ord på senaste resultatet
       send.disabled = true; const wait = { role: 'agent', text: 'Planerar…' }; msgs.push(wait); paint();
       try {
         for (const a of atts.filter((x) => x.id && ['video', 'audio'].includes(x.kind))) {
