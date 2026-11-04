@@ -2199,7 +2199,7 @@
   // ---- AI-agent (#/agent): önskemål på svenska -> plan (server) -> stegen körs här med KINO:s vanliga routes/sidor ----
   const AGENT_KEY = 'kino.agent.chat';
   const AGENT_TOOLS = { persona: 'Influencer-artist', image: 'Bilder', script: 'Manus', viral_trends: 'Trender', viral_mashup: 'Viral-mix', save_template: 'Spara i Mina mallar',
-    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', video_to_prompt: 'Video → prompt', remake_clip: 'Gör om klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo' };
+    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', video_to_prompt: 'Video → prompt', remake_clip: 'Gör om klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo', analyze_media: 'Titta/lyssna på bilaga' };
   const HANDOFF = { remake_clip: 1, video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, lip_sync: 1, klipp: 1 };
   const STATUS_SV = { wait: 'Väntar', confirm: 'Bekräfta', run: 'Kör…', done: 'Klar', err: 'Fel', cancel: 'Avbruten', skip: 'Hoppades över' };
   const agentLoad = () => { try { return JSON.parse(localStorage.getItem(AGENT_KEY) || '[]'); } catch { return []; } };
@@ -2242,6 +2242,21 @@
     return out;
   }
   const promptOf = (o) => (o && (o.prompt || o.idea)) || '';
+  // Agenten tittar/lyssnar på bifogad video/ljud: pollat jobb på servern (cache per fil-id)
+  async function agentAnalyze(att, signal, say) {
+    const lbl = att.kind === 'video' ? 'Tittar på klippet' : 'Lyssnar på ljudet';
+    const r = await fetch(`${API}/agent/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: att.id }), signal });
+    const j = await r.json().catch(() => ({})); if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+    if (j.cached) return j.result;
+    for (;;) {
+      await abortable(new Promise((ok) => setTimeout(ok, 2000)), signal);
+      const s = await fetch(`${API}/agent/analyze/jobs/${j.jobId}`, { signal }).then((x) => x.json()).catch(() => null);
+      if (!s) continue;
+      if (say) say(`${lbl}… ${Math.round((s.progress || 0) * 100)} %${s.message ? ` – ${s.message.replace(/^[^:]*:\s*/, '')}` : ''}`);
+      if (s.status === 'done') return s.result;
+      if (s.status === 'error') throw new Error(s.error || 'Analysen misslyckades.');
+    }
+  }
   async function agentRunStep(step, outs, ctl) {
     const a = step.args || {}; const prev = a.from != null ? outs[a.from] : null; const { signal, say, setCancel } = ctl;
     const json = async (path, body) => { const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) { const msg = j.error || j.message || `Servern svarade ${r.status}`; throw new Error(/^Refused/.test(msg) ? (/minor/.test(msg) ? REFUSE : 'Nekad av säkerhetsfiltret.') : msg); } return j; };
@@ -2343,6 +2358,13 @@
       case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
       case 'remake_clip': if (st.lane === 'nsfw') throw new Error('Gör om klipp finns bara i SFW-läget.'); st.agentPick = { ...(st.agentPick || {}), remake: { instructions: a.instructions || '', artist: a.artist || '' } }; if (a.format) st.fmtPick = { ...(st.fmtPick || {}), remake: a.format }; return { text: 'Gör om klipp öppnas. Ladda upp referensklippet (eget eller med tillstånd, max 60 s) och välj dina bilder.', go: '#/gor-om' };
       case 'formats': return { text: 'Formatgalleriet öppnas. Välj ett format och tryck Använd i Snabbvideo, Gör om klipp eller Mikrodrama.', go: `#/format${a.q ? `?q=${encodeURIComponent(a.q)}` : ''}` };
+      case 'analyze_media': {
+        const att = (st.agentFiles || []).filter((x) => ['video', 'audio'].includes(x.kind) && x.id);
+        if (!att.length) throw new Error('Bifoga en video- eller ljudfil med + först.');
+        const out = [];
+        for (const x of att) { const r = await agentAnalyze(x, signal, say); out.push(r.summary); }
+        return { text: `${out.join('\n\n')}\n\nFråga vidare, t.ex. "vad kan förbättras?" eller "varför är hooken svag?".` };
+      }
       case 'video_to_prompt': return { text: 'Video → prompt öppnas. Ladda upp klippet (max 5 min).', go: '#/video-prompt' };
       default: throw new Error('Okänt verktyg.');
     }
@@ -2509,6 +2531,11 @@
       if (minorText(wish)) { msgs.push({ role: 'agent', text: REFUSE }); store(); return paint(); }
       send.disabled = true; const wait = { role: 'agent', text: 'Planerar…' }; msgs.push(wait); paint();
       try {
+        for (const a of atts.filter((x) => x.id && ['video', 'audio'].includes(x.kind))) {
+          try { await agentAnalyze(a, undefined, (t) => { wait.text = `${t}`; paint(); }); }
+          catch (e) { wait.text = `Kunde inte analysera ${a.name}: ${e.message}. Planerar ändå…`; paint(); }
+        }
+        wait.text = 'Planerar…'; paint();
         const context = await agentContext();
         const history = msgs.slice(-8, -2).map((x) => ({ role: x.role, text: x.text }));
         const r = await fetch(`${API}/agent/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wish, lane: st.lane, context, history, attachments: atts.map((a) => (a.id ? { id: a.id } : { link: a.link })) }) });
