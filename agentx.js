@@ -1,8 +1,10 @@
 /* KINO AI-agent, tillägg: kör riktiga jobb från chatten (server /agent/run), förlopp, resultat inline.
    Laddas före app.js; app.js anropar KinoAgentX.init(deps) och använder små krokar. */
 (function () {
-  const RUNNABLE = { video: 1, music_video: 1, stock_clips: 1, lip_sync: 1, remake_clip: 1 };
+  const RUNNABLE = { produce: 1, video: 1, music_video: 1, stock_clips: 1, lip_sync: 1, remake_clip: 1 };
   const PAGE_SV = { '#/video': 'Öppna Video-sidan ›', '#/music': 'Öppna Musikvideo ›', '#/lappsynk': 'Öppna Läppsynk ›', '#/gor-om': 'Öppna Gör om klipp ›', '#/snabbvideo': 'Öppna Snabbvideo ›' };
+  const EDIT_RE = /^(korta|förläng|byt|ny hook|ändra|större text|mindre text|gul|vit|rosa|cyan|text(en)? (upptill|uppe|nere|i mitten)|ingen (text|musik)|ta bort (scen|sista|första|andra|tredje)|lägg till cta|snabbare|långsammare|gör den kortare|ord för ord)/i;
+  const STEP_ICON = { wait: '○', run: '◐', done: '●', err: '✕', skip: '–' };
   function init(d) {
     const { API, h, abs, st } = d;
     const sleep = (ms, signal) => d.abortable(new Promise((ok) => setTimeout(ok, ms)), signal);
@@ -19,6 +21,7 @@
         await sleep(2500, signal);
         const s = await fetch(`${API}/agent/run/jobs/${id}`, { signal }).then((x) => x.json()).catch(() => null);
         if (!s) continue;
+        if (s.steps && ctl.step) ctl.step.live = s.steps;
         say && say(`${Math.round((s.progress || 0) * 100)} % – ${s.message || 'kör'}`, s.progress);
         if (s.status === 'done') return s.result;
         if (s.status === 'cancelled') throw Object.assign(new Error('Avbrutet'), { cancelled: true });
@@ -51,10 +54,11 @@
         if (!a.text && !(files || []).some((f) => f.kind === 'audio')) return null;
       }
       ctl.say('Startar jobbet på servern…');
-      const r = await serverRun(tool, a, ids, ctl);
+      if (tool === 'produce' && d.profile) a.profile = d.profile();
+      const r = await serverRun(tool, a, ids, { ...ctl, step });
       if (!r) return null;
       for (const m of r.media || []) { const bucket = m.kind === 'image' ? 'image' : m.kind === 'audio' ? 'music' : 'video'; (st.results[bucket] || []).unshift({ name: m.url.split('/').pop(), url: m.url, engineName: `Agent: ${tool}` }); }
-      return { text: r.text || 'Klart.', media: (r.media || []).map((m) => ({ kind: m.kind, url: abs(m.url) })), page: r.page, job: { tool, args: a, attachments: ids, script: r.script, spec: r.spec, session: r.session } };
+      return { text: r.text || 'Klart.', media: (r.media || []).map((m) => ({ kind: m.kind, url: abs(m.url) })), page: r.page, job: { tool, args: a, attachments: ids, spec: r.spec, keyframes: r.keyframes, session: r.session }, steps: r.steps };
     }
     /** Resultat inline i chatten + länkar. */
     function mediaBox(out) {
@@ -66,7 +70,56 @@
       if (out.page) box.append(h('a', { class: 'text dim', href: out.page }, PAGE_SV[out.page] || 'Öppna sidan ›'));
       return box;
     }
-    return { RUNNABLE, serverRun, runStep, mediaBox };
+    function liveSteps(list) { return h('ol', { class: 'agent-live' }, list.map((x) => h('li', { class: x.status }, h('span', {}, STEP_ICON[x.status] || '○'), h('b', {}, x.name), x.note ? h('small', { class: 'meta' }, x.note) : null))); }
+    /** Extra UI per steg: live-steglista, media, rörelseval före Kör. */
+    function extras(s, repaint) {
+      const f = document.createDocumentFragment();
+      const list = (s.status === 'run' && s.live) || (s.out && s.out.steps);
+      if (list) f.append(liveSteps(list));
+      if (s.out && (s.out.media || s.out.page)) f.append(mediaBox(s.out));
+      if (s.status === 'confirm' && (s.tool === 'produce' || s.tool === 'music_video')) {
+        s.args = s.args || {}; const ai = s.tool === 'produce' ? s.args.motion === 'ai' : s.args.motion === 'hf-auto';
+        f.append(h('div', { class: 'seg', role: 'group' },
+          h('button', { type: 'button', class: ai ? '' : 'on', onclick: () => { s.args.motion = s.tool === 'produce' ? 'stills' : 'none'; repaint(); } }, 'Stillbilder + Ken Burns (gratis)'),
+          h('button', { type: 'button', class: ai ? 'on' : '', onclick: () => { s.args.motion = s.tool === 'produce' ? 'ai' : 'hf-auto'; repaint(); } }, 'AI-rörelse (kvot)')));
+      }
+      return f;
+    }
+    /** Senaste resultat med storyboard (för ändring med ord). */
+    function lastState(msgs) {
+      for (let i = msgs.length - 1; i >= 0; i--) for (const s of [...(msgs[i].steps || [])].reverse()) {
+        const j = s.out && s.out.job; if (!j) continue;
+        if (j.spec) return { spec: j.spec, keyframes: j.keyframes || [] };
+        if (j.script) return { spec: { title: j.script.title, sentences: j.script.sentences, lang: (j.args && j.args.lang) || 'sv', ratio: (j.args && j.args.ratio) || '9:16', subs: j.script.subs, transition: j.script.transition }, keyframes: [] };
+      }
+      return null;
+    }
+    /** "korta första scenen", "större text" … -> gör om bara den delen. true = hanterat. */
+    async function maybeEdit(wish, atts, msgs, ui) {
+      if (!EDIT_RE.test(wish.trim())) return false;
+      const state = lastState(msgs); if (!state) return false;
+      const step = { tool: 'edit', args: { command: wish }, status: 'run', heavy: false, why: 'Gör om bara den berörda delen med sparat storyboard.' };
+      const msg = { role: 'agent', text: 'Ändrar…', steps: [step] }; msgs.push(msg); ui.store(); ui.paint();
+      const ac = new AbortController(); const mi = msgs.length - 1; ui.live.set(mi, { ac, cancel: null });
+      try {
+        const r = await fetch(`${API}/agent/edit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: wish, state, attachments: atts.filter((x) => x.id).map((x) => x.id), lane: st.lane }), signal: ac.signal });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+        if (!j.jobId) { msg.text = j.question || 'Jag förstod inte ändringen.'; step.status = 'skip'; return true; }
+        ui.live.get(mi).cancel = () => fetch(`${API}/agent/run/jobs/${j.jobId}`, { method: 'DELETE' }).catch(() => null);
+        msg.text = 'Här är den ändrade versionen.';
+        for (;;) {
+          await sleep(2500, ac.signal);
+          const s = await fetch(`${API}/agent/run/jobs/${j.jobId}`, { signal: ac.signal }).then((x) => x.json()).catch(() => null); if (!s) continue;
+          step.live = s.steps; step.msg = `${Math.round((s.progress || 0) * 100)} % – ${s.message || ''}`; ui.paint();
+          if (s.status === 'done') { const o = s.result; step.out = { text: o.text, media: (o.media || []).map((m) => ({ kind: m.kind, url: abs(m.url) })), page: o.page, steps: o.steps, job: { tool: 'edit', spec: o.spec, keyframes: o.keyframes } }; step.status = 'done'; break; }
+          if (s.status === 'error' || s.status === 'cancelled') throw Object.assign(new Error(s.error || 'Ändringen misslyckades.'), { cancelled: s.status === 'cancelled' });
+        }
+      } catch (e) { step.status = e.cancelled || ac.signal.aborted ? 'cancel' : 'err'; step.error = step.status === 'cancel' ? 'Avbrutet.' : e.message; }
+      finally { ui.live.delete(mi); ui.store(); ui.paint(); }
+      return true;
+    }
+    return { RUNNABLE, serverRun, runStep, mediaBox, extras, maybeEdit, lastState };
   }
   window.KinoAgentX = { init };
 })();

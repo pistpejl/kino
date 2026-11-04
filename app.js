@@ -2199,7 +2199,7 @@
   // ---- AI-agent (#/agent): önskemål på svenska -> plan (server) -> stegen körs här med KINO:s vanliga routes/sidor ----
   const AGENT_KEY = 'kino.agent.chat';
   const AGENT_TOOLS = { persona: 'Influencer-artist', image: 'Bilder', script: 'Manus', viral_trends: 'Trender', viral_mashup: 'Viral-mix', save_template: 'Spara i Mina mallar',
-    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', video_to_prompt: 'Video → prompt', remake_clip: 'Gör om klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo', analyze_media: 'Titta/lyssna på bilaga' };
+    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', video_to_prompt: 'Video → prompt', remake_clip: 'Gör om klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo', produce: 'Produktion (en mening)', edit: 'Ändring med ord', analyze_media: 'Titta/lyssna på bilaga' };
   const HANDOFF = { remake_clip: 1, video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, lip_sync: 1, klipp: 1 };
   const STATUS_SV = { wait: 'Väntar', confirm: 'Bekräfta', run: 'Kör…', done: 'Klar', err: 'Fel', cancel: 'Avbruten', skip: 'Hoppades över' };
   const agentLoad = () => { try { return JSON.parse(localStorage.getItem(AGENT_KEY) || '[]'); } catch { return []; } };
@@ -2477,7 +2477,7 @@
             const res = h('div', { class: 'agent-res' });
             if (s.out && s.out.images) res.append(h('div', { class: 'agent-thumbs' }, s.out.images.map((u) => h('a', { href: u, target: '_blank', rel: 'noopener' }, h('img', { src: u, alt: 'Resultat', loading: 'lazy' })))));
             if (s.out && s.out.text) res.append(h('pre', {}, s.out.text));
-            if (s.out && (s.out.media || s.out.page) && window.KinoAgentX) res.append(agentX().mediaBox(s.out));
+            if (window.KinoAgentX) res.append(agentX().extras(s, () => { store(); paint(); }));
             if (s.out && s.out.go) res.append(h('a', { class: 'text', href: s.out.go }, 'Öppna igen ›'));
             if (s.out && s.out.link) res.append(h('a', { class: 'text dim', href: s.out.link, onclick: () => { if (s.out.mdId) st.mdOpen = s.out.mdId; } }, ({ '#/mikrodrama': 'Öppna Mikrodrama ›', '#/snabbvideo': 'Öppna Snabbvideo ›', '#/verk': 'Öppna Mina verk ›' })[s.out.link] || 'Öppna Manus ›'));
             if (s.error) res.append(h('p', { class: 'status err' }, s.error));
@@ -2532,6 +2532,7 @@
       pend.forEach((a) => a.thumb && URL.revokeObjectURL(a.thumb)); pend = []; paintPend();
       ta.value = ''; msgs.push({ role: 'user', text: wish, ts: Date.now(), atts }); store(); paint();
       if (minorText(wish)) { msgs.push({ role: 'agent', text: REFUSE }); store(); return paint(); }
+      if (window.KinoAgentX && await agentX().maybeEdit(wish, atts, msgs, { store, paint, live })) return; // ändring med ord på senaste resultatet
       send.disabled = true; const wait = { role: 'agent', text: 'Planerar…' }; msgs.push(wait); paint();
       try {
         for (const a of atts.filter((x) => x.id && ['video', 'audio'].includes(x.kind))) {
