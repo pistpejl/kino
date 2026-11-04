@@ -2257,8 +2257,10 @@
       if (s.status === 'error') throw new Error(s.error || 'Analysen misslyckades.');
     }
   }
+  let AGX = null; const agentX = () => (AGX = AGX || window.KinoAgentX.init({ API, h, abs, st, rosterLocal, attUpload, abortable }));
   async function agentRunStep(step, outs, ctl) {
     const a = step.args || {}; const prev = a.from != null ? outs[a.from] : null; const { signal, say, setCancel } = ctl;
+    if (window.KinoAgentX && agentX().RUNNABLE[step.tool]) { const r = await agentX().runStep(step, prev, ctl, st.agentFiles); if (r) return r; } // riktigt jobb i chatten; annars sidan
     const json = async (path, body) => { const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) { const msg = j.error || j.message || `Servern svarade ${r.status}`; throw new Error(/^Refused/.test(msg) ? (/minor/.test(msg) ? REFUSE : 'Nekad av säkerhetsfiltret.') : msg); } return j; };
     switch (step.tool) {
       case 'persona': {
@@ -2353,7 +2355,7 @@
         let id = null; setCancel && setCancel(() => { if (id) fetch(`${API}/snabbvideo/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
         const r = await svJob('render', { body: fd }, signal, (m) => say && say(m), (x) => { id = x; });
         st.results.video.unshift({ name: r.name, url: r.url, engineName: r.engineName || 'Snabbvideo', credits: r.credits });
-        return { text: `${text}\nVideon är klar (${Math.round(r.duration)} s) och sparad i Mina verk: ${abs(r.url)}`, link: '#/verk' };
+        return { text: `${text}\nVideon är klar (${Math.round(r.duration)} s) och sparad i Mina verk.`, link: '#/verk', media: [{ kind: 'video', url: abs(r.url) }], page: '#/snabbvideo', job: { tool: 'quick_video', args: a, script: { title: sc.title, sentences: sc.sentences, subs: sc.subs, transition: sc.transition } } };
       }
       case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
       case 'remake_clip': if (st.lane === 'nsfw') throw new Error('Gör om klipp finns bara i SFW-läget.'); st.agentPick = { ...(st.agentPick || {}), remake: { instructions: a.instructions || '', artist: a.artist || '' } }; if (a.format) st.fmtPick = { ...(st.fmtPick || {}), remake: a.format }; return { text: 'Gör om klipp öppnas. Ladda upp referensklippet (eget eller med tillstånd, max 60 s) och välj dina bilder.', go: '#/gor-om' };
@@ -2475,6 +2477,7 @@
             const res = h('div', { class: 'agent-res' });
             if (s.out && s.out.images) res.append(h('div', { class: 'agent-thumbs' }, s.out.images.map((u) => h('a', { href: u, target: '_blank', rel: 'noopener' }, h('img', { src: u, alt: 'Resultat', loading: 'lazy' })))));
             if (s.out && s.out.text) res.append(h('pre', {}, s.out.text));
+            if (s.out && (s.out.media || s.out.page) && window.KinoAgentX) res.append(agentX().mediaBox(s.out));
             if (s.out && s.out.go) res.append(h('a', { class: 'text', href: s.out.go }, 'Öppna igen ›'));
             if (s.out && s.out.link) res.append(h('a', { class: 'text dim', href: s.out.link, onclick: () => { if (s.out.mdId) st.mdOpen = s.out.mdId; } }, ({ '#/mikrodrama': 'Öppna Mikrodrama ›', '#/snabbvideo': 'Öppna Snabbvideo ›', '#/verk': 'Öppna Mina verk ›' })[s.out.link] || 'Öppna Manus ›'));
             if (s.error) res.append(h('p', { class: 'status err' }, s.error));

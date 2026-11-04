@@ -697,3 +697,7 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .att-prog i { display:block; height:100%; background:var(--acc, #7c5cff); transition:width .2s; }
 .att-x { min-height:0; min-width:0; box-sizing:border-box; position:absolute; top:-6px; right:-6px; width:24px; height:24px; border-radius:50%; border:none; background:#000c; color:#fff; cursor:pointer; font-size:16px; line-height:24px; padding:0; }
 .agent-input.drag { outline:2px dashed var(--acc, #7c5cff); }
+/* agent: resultat inline */
+.agent-media { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+.agent-media video, .agent-media img { max-width:min(100%, 360px); max-height:480px; border-radius:var(--r-sm); border:1px solid var(--line); background:#000; }
+.agent-media audio { width:min(100%, 360px); }
