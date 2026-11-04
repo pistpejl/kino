@@ -73,10 +73,10 @@ export function getModelName(
 }
 
 export const SFW_DEFAULT_PROMPT =
-  "Candid street photograph of an adult woman 21+, standing on a wet sidewalk at dusk, 85mm, natural light, real skin pores, shot on iPhone, Kodak Portra, raw photo, not illustration";
+  "Candid street photograph of an adult woman 18+, standing on a wet sidewalk at dusk, 85mm, natural light, real skin pores, shot on iPhone, Kodak Portra, raw photo, not illustration";
 
 export const NSFW_DEFAULT_PROMPT =
-  "Photoreal photograph of an adult woman 21+, nude, standing in a sunlit bedroom, 85mm, real skin pores, uncensored, not illustration";
+  "Photoreal photograph of an adult woman 18+, nude, standing in a sunlit bedroom, 85mm, real skin pores, uncensored, not illustration";
 
 export const RATIOS = ["1:1", "3:4", "4:3", "9:16", "16:9"] as const;
 export const RESOLUTIONS = ["512", "768", "1024"] as const;

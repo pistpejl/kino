@@ -13,7 +13,7 @@ export default function EditPage() {
   const { mode } = useStudio();
   const [refs, setRefs] = useState<(string | null)[]>(Array(6).fill(null));
   const [tool, setTool] = useState<EditTool>("restyle");
-  const [prompt, setPrompt] = useState("Restyle as golden-hour film still, adult 21+");
+  const [prompt, setPrompt] = useState("Restyle as golden-hour film still, adult 18+");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState<string | null>(null);

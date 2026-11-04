@@ -17,5 +17,5 @@ export function containsUnderageContent(text: string): boolean {
 }
 
 export function safetyRejectMessage(): string {
-  return "Blocked: content involving anyone under 18 is not allowed. KINO is for adults 21+ only.";
+  return "Blocked: content involving anyone under 18 is not allowed. KINO is for adults 18+ only.";
 }

@@ -1,4 +1,5 @@
-export const AGE_GATE_KEY = "kino-age-verified-21";
+export const AGE_GATE_KEY = "kino-age-verified-18";
+export const LEGACY_AGE_GATE_KEY = "kino-age-verified-21";
 export const MODE_KEY = "kino-content-mode";
 export const GALLERY_KEY = "kino-gallery";
 

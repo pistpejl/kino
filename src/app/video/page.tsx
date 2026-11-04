@@ -19,7 +19,7 @@ import { VIDEO_STILL_KEY } from "@/components/ImageLightbox";
 export default function VideoPage() {
   const { mode } = useStudio();
   const [prompt, setPrompt] = useState(
-    "Cinematic tracking shot of an adult woman 21+ walking through neon rain, shallow depth of field, 35mm film"
+    "Cinematic tracking shot of an adult woman 18+ walking through neon rain, shallow depth of field, 35mm film"
   );
   const [modelId, setModelId] = useState(DEFAULT_VIDEO_MODEL.sfw);
   const [duration, setDuration] = useState(10);

@@ -13,11 +13,11 @@ export default function AgeGate() {
           Age verification
         </p>
         <h1 className="font-serif text-3xl text-white mb-3 leading-tight">
-          Adults 21+ only
+          Adults 18+ only
         </h1>
         <p className="text-sm text-white/60 mb-6 leading-relaxed">
           KINO is an uncensored creative studio for adults. By continuing you
-          confirm you are at least 21 years old. Content involving anyone under
+          confirm you are at least 18 years old. Content involving anyone under
           18 is permanently blocked.
         </p>
         <div className="flex flex-col gap-3">
@@ -26,7 +26,7 @@ export default function AgeGate() {
             onClick={() => setAgeVerified(true)}
             className="w-full min-h-[48px] rounded-full bg-white text-black font-semibold text-base active:scale-[0.98] transition"
           >
-            I am 21 or older — Enter
+            I am 18 or older — Enter
           </button>
           <button
             type="button"

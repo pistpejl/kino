@@ -29,7 +29,7 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     try {
       const m = localStorage.getItem(MODE_KEY) as ContentMode | null;
       if (m === "sfw" || m === "nsfw") setModeState(m);
-      const age = localStorage.getItem("kino-age-verified-21");
+      const age = (localStorage.getItem("kino-age-verified-18") ?? localStorage.getItem("kino-age-verified-21"));
       setAgeVerified(age === "true");
     } catch {
       /* ignore */
@@ -54,7 +54,7 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
       setAgeVerified: (v: boolean) => {
         setAgeVerified(v);
         try {
-          localStorage.setItem("kino-age-verified-21", v ? "true" : "false");
+          localStorage.setItem("kino-age-verified-18", v ? "true" : "false");
         } catch {
           /* ignore */
         }

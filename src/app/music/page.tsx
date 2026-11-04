@@ -20,7 +20,7 @@ const BEDS = ["pop", "r&b", "rap", "rave", "score"] as const;
 export default function MusicPage() {
   const { mode } = useStudio();
   const [prompt, setPrompt] = useState(
-    "Adult performer 21+ lip-sync music video, cinematic lighting, locked face"
+    "Adult performer 18+ lip-sync music video, cinematic lighting, locked face"
   );
   const [modelId, setModelId] = useState(DEFAULT_VIDEO_MODEL.sfw);
   const [bed, setBed] = useState<(typeof BEDS)[number]>("pop");

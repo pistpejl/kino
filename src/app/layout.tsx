@@ -22,7 +22,7 @@ const figtree = Figtree({
 export const metadata: Metadata = {
   title: "KINO — Image, video and music videos",
   description:
-    "Cinematic AI studio. Image, video and music videos. No credits. Adults 21+.",
+    "Cinematic AI studio. Image, video and music videos. No credits. Adults 18+.",
   applicationName: "KINO",
   appleWebApp: {
     capable: true,

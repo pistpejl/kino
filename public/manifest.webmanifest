@@ -1,7 +1,7 @@
 {
   "name": "KINO — AI Studio",
   "short_name": "KINO",
-  "description": "Image, video and music videos. No credits. Adults 21+.",
+  "description": "Image, video and music videos. No credits. Adults 18+.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

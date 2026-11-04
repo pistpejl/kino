@@ -176,7 +176,7 @@ export default function ChatPage() {
             </button>
           </div>
           <p className="text-[10px] text-white/30 text-center mt-2">
-            Mock LLM · {mode.toUpperCase()} · 21+ only
+            Mock LLM · {mode.toUpperCase()} · 18+ only
           </p>
         </div>
       </main>

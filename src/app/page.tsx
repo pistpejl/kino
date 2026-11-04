@@ -24,7 +24,7 @@ const CARDS = [
   {
     href: "/chat",
     title: "Chat",
-    desc: "Adult character chat. Uncensored for 21+.",
+    desc: "Adult character chat. Uncensored for 18+.",
   },
 ];
 
@@ -55,7 +55,7 @@ export default function HomePage() {
           Image, video and music videos. No credits.
         </h1>
         <p className="text-sm text-white/50 mb-8 leading-relaxed">
-          Dark cinematic tools for adults 21+. Toggle{" "}
+          Dark cinematic tools for adults 18+. Toggle{" "}
           <span className="text-white/80">SFW</span> or{" "}
           <span className="text-white/80">NSFW</span> — your choice, never auto.
         </p>

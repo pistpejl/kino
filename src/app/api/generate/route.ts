@@ -36,16 +36,16 @@ function editPromptForTool(
   const base = prompt.trim();
   switch (tool) {
     case "faceswap":
-      return `${base}. faceswap edit: preserve identity from reference, seamless face blend, photoreal adult 21+`;
+      return `${base}. faceswap edit: preserve identity from reference, seamless face blend, photoreal adult 18+`;
     case "outfit":
-      return `${base}. outfit change edit guided by reference, keep same person adult 21+, new wardrobe`;
+      return `${base}. outfit change edit guided by reference, keep same person adult 18+, new wardrobe`;
     case "nude":
       return mode === "nsfw"
-        ? `${base}. tasteful uncensored nude restyle of adult 21+, photoreal, from reference`
+        ? `${base}. tasteful uncensored nude restyle of adult 18+, photoreal, from reference`
         : base;
     case "restyle":
     default:
-      return `${base}. restyle edit matching the reference subject, photoreal adult 21+`;
+      return `${base}. restyle edit matching the reference subject, photoreal adult 18+`;
   }
 }
 
@@ -97,8 +97,8 @@ export async function POST(req: NextRequest) {
 
     const safetyPrefix =
       mode === "nsfw"
-        ? "photoreal adult woman 21+ years old, "
-        : "photoreal adult person 21+ years old, ";
+        ? "photoreal adult woman 18+ years old, "
+        : "photoreal adult person 18+ years old, ";
 
     const preferred = catalogName(modelId, studio);
     const honestEngine = (approx: boolean, provider?: string) =>

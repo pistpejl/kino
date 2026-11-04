@@ -99,7 +99,7 @@ export const IMAGE_PROVIDER_MAP: Record<string, ProviderMapping> = {
       "NatViS",
     ],
     styleHint:
-      "kling nsfw photoreal adult, uncensored, sensual lighting, adults 21+ only",
+      "kling nsfw photoreal adult, uncensored, sensual lighting, adults 18+ only",
   },
   pony: {
     pollinations: "flux",

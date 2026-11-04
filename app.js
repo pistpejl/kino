@@ -1,3 +1,4 @@
+function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return true; if (localStorage.getItem('kino.21') === '1') { localStorage.setItem('kino.18', '1'); return true; } } catch (e) {} return false; }
 (() => {
   const API = (window.KINO_CONFIG && window.KINO_CONFIG.proxyUrl || '').replace(/\/$/, '') + '/api/kino';
   const $ = (s, r = document) => r.querySelector(s);
@@ -12,7 +13,7 @@
     return e;
   };
   const st = {
-    lane: localStorage.getItem('kino.lane') === 'nsfw' && localStorage.getItem('kino.21') === '1' ? 'nsfw' : 'sfw',
+    lane: localStorage.getItem('kino.lane') === 'nsfw' && ageOk() ? 'nsfw' : 'sfw',
     engines: {}, config: null, carry: null, results: { image: [], video: [], music: [], edit: [] },
   };
   // UI helpers (visual only): busy spinner on a status line, segmented tabs, empty state
@@ -151,9 +152,9 @@
     $('span', p).textContent = `Motor: ${gpuOn ? 'Egen GPU' : 'Auto'} · ${st.lane === 'nsfw' ? 'NSFW' : 'SFW'}`;
   }
   function setLane(l) {
-    if (l === 'nsfw' && localStorage.getItem('kino.21') !== '1') {
+    if (l === 'nsfw' && !ageOk()) {
       $('#gate').hidden = false;
-      $('#gateYes').onclick = () => { localStorage.setItem('kino.21', '1'); $('#gate').hidden = true; setLane('nsfw'); };
+      $('#gateYes').onclick = () => { localStorage.setItem('kino.18', '1'); $('#gate').hidden = true; setLane('nsfw'); };
       $('#gateNo').onclick = () => { $('#gate').hidden = true; };
       return;
     }
@@ -603,8 +604,8 @@
         nRes ? h('a', { class: 'contcard', href: '#/verk' }, h('b', {}, `Mina verk (${nRes})`), h('small', {}, 'Från den här sessionen')) : null)] : []),
       h('div', { class: 'quick' }, h('a', { class: 'text dim', href: '#/skapa' }, 'Allt du kan skapa'), h('a', { class: 'text dim', href: '#/verktyg' }, 'Verktyg')),
       h('p', { class: 'lanenote' + (nsfw ? ' nsfw' : '') }, nsfw
-        ? 'NSFW-läge är på: endast för vuxna 21+. Minderåriga blockeras alltid, inga foton på riktiga personer, modellnamn visas ärligt och det finns ingen tyst reservmodell. Byt läge under Inställningar (Motor-knappen uppe till höger).'
-        : 'Läge: SFW. Vuxenläget (21+) finns under Inställningar.'),
+        ? 'NSFW-läge är på: endast för vuxna 18+. Minderåriga blockeras alltid, inga foton på riktiga personer, modellnamn visas ärligt och det finns ingen tyst reservmodell. Byt läge under Inställningar (Motor-knappen uppe till höger).'
+        : 'Läge: SFW. Vuxenläget (18+) finns under Inställningar.'),
       models);
     const list = await getEngines(st.lane);
     const kinds = { image: 'Bild', video: 'Video', edit: 'Redigera', music: 'Låt' };
@@ -664,7 +665,7 @@
   }
   function settingsView(v, q) {
     const tool = new URLSearchParams(q || '').get('t');
-    const laneCard = h('section', { class: 'setcard' }, h('div', {}, h('b', {}, 'Läge'), h('small', {}, st.lane === 'nsfw' ? 'NSFW: bara för vuxna 21+. Minderåriga blockeras alltid.' : 'SFW. Vuxenläget (21+) kräver ålderskontroll.')), laneBtn);
+    const laneCard = h('section', { class: 'setcard' }, h('div', {}, h('b', {}, 'Läge'), h('small', {}, st.lane === 'nsfw' ? 'NSFW: bara för vuxna 18+. Minderåriga blockeras alltid.' : 'SFW. Vuxenläget (18+) kräver ålderskontroll.')), laneBtn);
     const panel = colabPanel((on) => paintPill(on));
     panel.open = true;
     v.append(pagehead(/^#\/motor/.test(location.hash) ? 'Egen GPU' : 'Inställningar', 'Motor och läge. Allt sparas bara i den här webbläsaren.'), laneCard, h('div', { class: 'stoprow' }, stopAllButton()), h('h2', { class: 'sect' }, 'Motor: Colab / Kaggle (egen GPU)'), panel);
@@ -2105,7 +2106,7 @@
       panel,
       h('div', { class: 'cta kcta' }, go),
       bar, status, how, out,
-      h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, st.lane === 'nsfw' ? 'NSFW-läge (21+): bilder i videon kontrolleras extra noga och minderåriga blockeras alltid. Går kontrollen inte att göra, avvisas videon.' : 'Minderåriga blockeras alltid, även i klippen. Transkribering och urval görs av AI-modeller på servern, och vilka som användes visas under varje körning.'));
+      h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, st.lane === 'nsfw' ? 'NSFW-läge (18+): bilder i videon kontrolleras extra noga och minderåriga blockeras alltid. Går kontrollen inte att göra, avvisas videon.' : 'Minderåriga blockeras alltid, även i klippen. Transkribering och urval görs av AI-modeller på servern, och vilka som användes visas under varje körning.'));
     if (K.job && K.status === 'done' && K.result) { paintHow(K.info); paintResult(); say('Dina senaste klipp (raderas efter ca en timme).'); }
     else if (K.job && K.status === 'error' && K.error) say(K.error, true);
     else if (K.job && K.following) { go.disabled = true; follow(K.job); }
@@ -2782,7 +2783,7 @@
       h('section', { class: 'step' }, tplNote, field('Premiss / idé', premise, true), h('div', { class: 'quick' }, sugBtn, saveTpl), sugBox, h('div', { class: 'row' }, field('Genre', genre), field('Avsnitt', eps), field('Längd per avsnitt', secs), field('Cinema-preset', cine)), mfp.el,
         h('div', { class: 'row md-modes' }, h('label', { class: 'chk' }, musicOn, ' 🎤 Musikartist i huvudrollen (performance-scener + låt)'), h('label', { class: 'chk' }, viralOn, ' 🔥 Viralt format (hook 1–2 s, 30–60 s, caption + hashtags)')), songBox,
         h('b', {}, 'Rollista (valfritt, ur artistlistan – första valda blir huvudroll)'), castBox,
-        h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW (vuxna 21+)' : 'SFW'}. Alla rollfigurer i romantik är vuxna; ansikten och röster bara ur dina samtyckta listor.`),
+        h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW (vuxna 18+)' : 'SFW'}. Alla rollfigurer i romantik är vuxna; ansikten och röster bara ur dina samtyckta listor.`),
         h('div', { class: 'quick' }, go), status),
       savedBox, out);
     if (st.mdOpen) { cur = mdLoad().find((x) => x.id === st.mdOpen) || null; st.mdOpen = null; }
