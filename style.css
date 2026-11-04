@@ -711,3 +711,11 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .agent-coach .bar { display:block; height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
 .agent-coach .bar i { display:block; height:100%; background:var(--accent, #7af); }
 .agent-coach .v-svag b { color: var(--err, #e55); } .agent-coach .v-stark b { color: var(--ok, #3c9); }
+.agent-project { margin:8px 0; padding:8px 10px; border:1px solid var(--line); border-radius:var(--r-sm); }
+.agent-project summary { cursor:pointer; font-weight:600; }
+.agent-project .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:6px; margin:8px 0; }
+.agent-project label { display:flex; flex-direction:column; gap:2px; }
+.agent-variants { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-top:6px; }
+.agent-variants .variant { display:flex; flex-direction:column; gap:4px; padding:6px; border:1px solid var(--line); border-radius:var(--r-sm); }
+.agent-variants video { max-width:100%; }
+.agent-plan li { margin-bottom:4px; }

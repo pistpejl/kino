@@ -2199,7 +2199,7 @@
   // ---- AI-agent (#/agent): önskemål på svenska -> plan (server) -> stegen körs här med KINO:s vanliga routes/sidor ----
   const AGENT_KEY = 'kino.agent.chat';
   const AGENT_TOOLS = { persona: 'Influencer-artist', image: 'Bilder', script: 'Manus', viral_trends: 'Trender', viral_mashup: 'Viral-mix', save_template: 'Spara i Mina mallar',
-    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', video_to_prompt: 'Video → prompt', remake_clip: 'Gör om klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo', produce: 'Produktion (en mening)', critique: 'Granskning', hooks: 'Hook-maskin', script_coach: 'Manuscoach', cta: 'CTA-strateg', series: 'Serieplan 3-2-1', edit: 'Ändring med ord', analyze_media: 'Titta/lyssna på bilaga' };
+    video: 'Video', music_video: 'Musikvideo', stock_clips: 'Stockklipp', voice_swap: 'Röstbyte', face_swap: 'Ansiktsbyte', openjutsu: 'Karaktärsbyte (Openjutsu)', lip_sync: 'Läppsynk', klipp: 'Klipp', video_to_prompt: 'Video → prompt', remake_clip: 'Gör om klipp', micro_drama: 'Mikrodrama', quick_video: 'Snabbvideo', produce: 'Produktion (en mening)', critique: 'Granskning', hooks: 'Hook-maskin', script_coach: 'Manuscoach', cta: 'CTA-strateg', series: 'Serieplan 3-2-1', content_plan: 'Innehållsplan', batch: 'Batch (3 hooks)', edit: 'Ändring med ord', analyze_media: 'Titta/lyssna på bilaga' };
   const HANDOFF = { remake_clip: 1, video: 1, music_video: 1, stock_clips: 1, voice_swap: 1, face_swap: 1, openjutsu: 1, lip_sync: 1, klipp: 1 };
   const STATUS_SV = { wait: 'Väntar', confirm: 'Bekräfta', run: 'Kör…', done: 'Klar', err: 'Fel', cancel: 'Avbruten', skip: 'Hoppades över' };
   const agentLoad = () => { try { return JSON.parse(localStorage.getItem(AGENT_KEY) || '[]'); } catch { return []; } };
@@ -2209,7 +2209,7 @@
     const g = await colabHealth(); const gpu = g.state === 'on'; let voices = [];
     if (gpu) voices = await fetch(`${colabCfg().url}/voices`, { headers: colabHdr(), signal: AbortSignal.timeout(8000) }).then((x) => (x.ok ? x.json() : [])).then((l) => l.filter((v) => v.status === 'ready').map((v) => v.name)).catch(() => []);
     const engines = (await getEngines(st.lane).catch(() => [])).filter((e) => e.status !== 'down').map((e) => `${e.kind}:${e.id}`);
-    return { gpu, voices, roster: rosterLocal().map((a) => a.name), engines };
+    return { gpu, voices, roster: rosterLocal().map((a) => a.name), engines, project: window.KinoAgentX ? agentX().profile() : null };
   }
   async function agentScript(args, signal) {
     const r = await fetch(`${API}/script`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...args, lane: st.lane }), signal });
@@ -2557,6 +2557,7 @@
     clear.onclick = () => { if (live.size) return alert('Stoppa pågående steg först.'); if (!msgs.length || confirm('Rensa hela chatten?')) { msgs = []; store(); paint(); } };
     v.append(pagehead('AI-agent', 'Skriv vad du vill göra på svenska. Agenten väljer verktyg, visar varje steg och frågar innan tunga jobb.'),
       h('p', { class: 'lanenote' + (st.lane === 'nsfw' ? ' nsfw' : '') }, `Läge: ${st.lane === 'nsfw' ? 'NSFW' : 'SFW'}. Samma säkerhetsregler som i resten av KINO: bara vuxna, inga verkliga eller kända personer i NSFW, röst- och ansiktsbyte bara ur dina samtyckta listor.`),
+      window.KinoAgentX ? agentX().projectPanel() : null,
       list, h('div', { class: 'agent-input' }, chips, h('div', { class: 'att-row' }, h('div', { class: 'att-wrap' }, plus, menu), ta), fileIn, h('div', { class: 'quick' }, send, clear)));
     paintPend();
     const drop = v.querySelector('.agent-input');
