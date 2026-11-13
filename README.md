@@ -9,3 +9,11 @@ Dark web studio for image, video and music video. Static site; API at the proxy 
 ## Gratismotorer i bildväljaren
 
 Bildväljaren visar riktiga modellnamn med små taggar: **AI Horde – <modell>** (`gratis`, `kö`, och `NSFW-läge` i NSFW-läget; köplats och beräknad väntetid visas med en Avbryt-knapp, timeout säger "upptagen/kö"), **Cloudflare FLUX.1 schnell / SDXL base / SDXL Lightning** (`gratis`, bara SFW, grå tills servern har nycklarna; "dagskvoten slut" när 10 000 neurons/dag är slut) och **Google Gemini (bild)** som är grå eftersom Google inte erbjuder gratis bildkvot (i stället finns "Förbättra med Gemini" för text när `GEMINI_API_KEY` är satt). Startsidans modelllista bygger på servern och visar samma taggar och ej aktiva motorer.
+
+## Gör om klipp
+
+`#/gor-om` (bara SFW): referensklipp (max 60 s) + upp till 5 egna bilder → ny video med samma klipp, tempo och ljud. Valfritt: en **kontrollvideo** i ReShot-stil (konturer, djupkarta eller skelett) som styr komposition och rörelse i nyckelbilderna.
+
+Konturerna tas ut med ffmpeg på gratisservern. Djup och skelett kräver GPU; på Render används konturer som reserv. Det officiella Hugging Face-utrymmet är en visningssida, inte ett API.
+
+Kontrollvideo inspirerad av [ReShot](https://github.com/maosika-ai/reshot) (Apache-2.0) av [Maosika 猫斯卡](https://www.maosika.com). KINO kopierar inte ReShots källkod.

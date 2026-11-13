@@ -578,7 +578,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       ['edit', 'Redigera', 'Ändra en bild med text', '#/edit'],
       ['timeline', 'Tidslinje', 'Klipp ihop och exportera mp4', '#/timeline'],
       ['klipp', 'Klipp ur lång video', 'Ladda upp en lång video, få de bästa korta klippen med text', '#/klipp', null, false, true],
-      ['video', 'Gör om klipp', 'Referensklipp + dina bilder → ny video med samma klipp och ljud', '#/gor-om', null, true, true],
+      ['video', 'Gör om klipp', 'Referensklipp + dina bilder → ny video med samma klipp, ljud och rörelse', '#/gor-om', null, true, true],
     ];
     const tile = ([ic, t, d, href, preset, sfwOnly, wide]) => {
       const off = Boolean(sfwOnly && nsfw);
@@ -648,7 +648,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       ['timeline', 'Tidslinje', 'Klipp ihop och exportera mp4', '#/timeline'],
       ['analyze', 'Analysera video', 'Ladda upp ett klipp, få scener', '#/script', 'analyze'],
       ['v2p', 'Video → prompt', 'Ladda upp ett klipp, få en text-till-video-prompt med scener', '#/video-prompt'],
-      ['video', 'Gör om klipp', 'Referensklipp + dina bilder blir en ny video med samma klipp och ljud', '#/gor-om', null, true],
+      ['video', 'Gör om klipp', 'Referensklipp + dina bilder blir en ny video med samma klipp, ljud och rörelse', '#/gor-om', null, true],
       ['lipsync', 'Läppsynk', 'Porträtt + låt eller text blir ett sjungande klipp', '#/lappsynk'],
       ['image', 'Tillgångsbibliotek', 'Uppladdningar och färdiga verk, sparade i webbläsaren', '#/bibliotek'],
       ['face', 'Ansiktsbyte', 'Egen GPU · bara samtyckta artister', '#/motor?t=faceswap'],
@@ -3040,7 +3040,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
   // ---- Gör om klipp (#/gor-om): referensklipp + egna bilder -> ny video med samma klippning, tempo och ljud ----
   function gorOmView(v) {
     v.classList.add('mdv');
-    v.append(pagehead('Gör om klipp', 'Ladda upp ett referensklipp (10–20 s är lagom, max 60 s) och upp till 5 egna bilder – artister ur artistlistan, produkter eller kläder. Du får en ny video med samma klipp, tempo och ljud, men med dina bilder.'));
+    v.append(pagehead('Gör om klipp', 'Ladda upp ett referensklipp (10–20 s är lagom, max 60 s) och upp till 5 egna bilder – artister ur artistlistan, produkter eller kläder. Du får en ny video med samma klipp, tempo och ljud, men med dina bilder. Valfritt: en ReShot-kontrollvideo (konturer, djup eller skelett) styr komposition och rörelse.'));
     if (st.lane === 'nsfw') return v.append(h('p', { class: 'lanenote nsfw' }, 'Gör om klipp finns bara i SFW-läget. Byt läge under Inställningar.'));
     const pick = st.agentPick && st.agentPick.remake ? st.agentPick.remake : null; if (pick) st.agentPick.remake = null;
     const mm = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
@@ -3091,7 +3091,35 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const song = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,.ogg,audio/*' }); const songStart = h('input', { type: 'number', min: 0, step: 0.5, value: 0 });
     const songBox = h('div', { class: 'grid2' }, field('Din låt', song, true), field('Börja låten vid (s)', songStart), audioPreview(song, null, songStart)); const paintAu = () => { songBox.hidden = audio.value !== 'song'; }; audio.onchange = paintAu; paintAu();
     const animate = select([['auto', 'Animera med videomotor (LTX-2.3 → Kandinsky 6.0 → MiniMax H3), Ken Burns när kvoten är slut'], ['kenburns', 'Bara Ken Burns (snabbt, sparar kvot)']], 'auto');
-    const vEngine = select([['', 'Automatiskt (LTX-2.3 först)'], ['ltx-2.3', 'LTX-2.3 först'], ['kandinsky-6', 'Kandinsky 6.0 först'], ['minimax-h3', 'MiniMax H3 först']], '');
+    const vEngine = select([['', 'Automatiskt (MiniMax H3 först om kontrollvideo används, annars LTX-2.3)'], ['ltx-2.3', 'LTX-2.3 först'], ['kandinsky-6', 'Kandinsky 6.0 först'], ['minimax-h3', 'MiniMax H3 först']], '');
+    const controlType = select([['', 'Ingen (bara klipp och tempo som idag)'], ['canny', 'Konturer (canny) – fungerar på gratisservern'], ['depth', 'Djupkarta – faller tillbaka på konturer (kräver GPU)'], ['pose', 'Skelett (OpenPose) – faller tillbaka på konturer (kräver GPU)']], 'canny');
+    const controlHint = h('p', { class: 'meta' }, '');
+    const paintCtrl = () => {
+      const t = controlType.value;
+      controlHint.textContent = t === 'canny' ? 'Vit linjeteckning av klippet (ReShot-stil). Tas ut med ffmpeg på servern. Konturer kan behålla ansikts- och klädlinjer.'
+        : t === 'depth' ? 'Grå djupkarta (nära = vitt). På gratisservern används konturer som reserv – djupmodellen är för tung, och ReShots officiella Hugging Face-sida är bara en demo, inte ett API.'
+        : t === 'pose' ? 'OpenPose-skelett. På gratisservern används konturer som reserv – DWPose kräver mer minne/GPU än servern har.'
+        : 'Ingen kontrollvideo. Nyckelbilderna styrs bara av dina bilder och storyboard-texterna.';
+    };
+    controlType.onchange = paintCtrl; paintCtrl();
+    const ctrlPrev = h('div', {});
+    const prevBtn = h('button', { class: 'text', type: 'button' }, 'Förhandsgranska kontrollvideo');
+    prevBtn.onclick = async () => {
+      if (!ana) return say('Analysera ett referensklipp först.', true);
+      if (!ana.remakeId || ana.method === 'format') return say('Kontrollvideo kräver ett uppladdat referensklipp (fungerar inte från en format-storyboard).', true);
+      if (!controlType.value) return say('Välj en kontrolltyp först (konturer, djup eller skelett).', true);
+      if (busy) return; busy = true; prevBtn.disabled = true; say('Skapar kontrollvideo…');
+      try {
+        const r = await fetch(`${API}/remake/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ remakeId: ana.remakeId, controlType: controlType.value, lane: st.lane }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+        const res = await pollRm(j.jobId, (s) => say(s.message || 'Skapar kontrollvideo…'));
+        ctrlPrev.innerHTML = '';
+        if (res && res.url) ctrlPrev.append(h('video', { src: abs(res.url), controls: true, playsinline: true, style: 'width:100%;max-width:360px;border-radius:8px;margin:8px 0' }));
+        say(res && res.note ? res.note : (res && res.type === 'canny' ? 'Konturvideon är klar. Den styrs in i nyckelbilderna när du trycker Gör om.' : 'Kontrollvideon är klar.'));
+      } catch (e) { say(net(e), true); } finally { busy = false; prevBtn.disabled = false; }
+    };
+    const controlCredit = h('p', { class: 'meta' }, 'Kontrollvideo inspirerad av ', h('a', { href: 'https://github.com/maosika-ai/reshot', target: '_blank', rel: 'noopener' }, 'ReShot'), ' (Apache-2.0) av Maosika 猫斯卡. KINO kör inte ReShots GPU-modeller på gratisservern.');
     // storyboard
     let ana = null; let shotRows = []; let lastResult = null; let busy = false; let ac = null; let jobId = null;
     const board = h('div', {}); const out = h('div', {});
@@ -3138,7 +3166,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       try {
         const shots = shotRows.map((r) => ({ start: +r.start.value, end: +r.end.value, framing: r.framing.value, camera: r.camera.value, subject: r.subject.value, action: r.action.value, setting: r.setting.value, asset: r.assetSel.value }));
         const fd = new FormData(); fd.append('remakeId', ana.remakeId); fd.append('lane', st.lane); fd.append('shots', JSON.stringify(shots));
-        fd.append('instructions', instr.value.trim()); fd.append('format', rfp.get()); fd.append('audio', audio.value); fd.append('songStart', songStart.value || '0'); fd.append('animate', animate.value); fd.append('videoEngine', vEngine.value); fd.append('consent', consent.checked ? 'true' : '');
+        fd.append('instructions', instr.value.trim()); fd.append('format', rfp.get()); fd.append('audio', audio.value); fd.append('songStart', songStart.value || '0'); fd.append('animate', animate.value); fd.append('videoEngine', vEngine.value); fd.append('consent', consent.checked ? 'true' : ''); if (controlType.value) fd.append('controlType', controlType.value);
         if (only) fd.append('only', JSON.stringify(only));
         if (!only || !lastResult) { fd.append('assetsMeta', JSON.stringify(assets.map((a) => ({ name: a.name, kind: a.kind, source: a.source })))); assets.forEach((a, k) => fd.append('assets', a.blob, `bild${k}.${/png/.test(a.blob.type) ? 'png' : 'jpg'}`)); }
         if (audio.value === 'song' && song.files[0]) fd.append('song', song.files[0]);
@@ -3156,9 +3184,11 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       const item = { name: res.name, url: res.url, engineName: res.engineName };
       st.results.video.unshift(item);
       out.innerHTML = '';
+      const ctrl = res.control;
       out.append(h('h3', {}, 'Resultat'), h('video', { src: abs(res.url), controls: true, playsinline: true, style: 'width:100%;max-width:720px;border-radius:8px' }),
         h('div', { class: 'quick' }, h('a', { class: 'text primary', href: abs(res.url), download: 'gor-om-klipp.mp4' }, 'Ladda ned mp4'), h('a', { class: 'text dim', href: '#/verk' }, 'Mina verk')),
         h('p', { class: 'meta' }, `${res.animated} av ${res.shots.length} klipp animerade med videomotor, ${res.kenBurns} med Ken Burns-rörelse (stillbild som zoomar/panorerar – inte riktig video). ${res.duration} s, ${res.ratio}.`),
+        ctrl && ctrl.url ? h('div', {}, h('h4', {}, 'Kontrollvideo'), h('video', { src: abs(ctrl.url), controls: true, playsinline: true, style: 'width:100%;max-width:360px;border-radius:8px' }), h('p', { class: 'meta' }, `${ctrl.type === 'canny' ? 'Konturer' : ctrl.type === 'depth' ? 'Djupkarta' : ctrl.type === 'pose' ? 'Skelett' : ctrl.type}${ctrl.requestedType && ctrl.requestedType !== ctrl.type ? ` (du valde ${ctrl.requestedType})` : ''} · ${ctrl.source === 'ffmpeg' ? 'ffmpeg på servern' : ctrl.source === 'fallback-canny' ? 'reserv: konturer via ffmpeg' : ctrl.source || ''}${ctrl.note ? ' · ' + ctrl.note : ''}${ctrl.credit ? ' · ' + ctrl.credit.name + ' (' + ctrl.credit.license + ')' : ''}`)) : (ctrl && ctrl.note ? h('p', { class: 'meta' }, ctrl.note) : null),
         h('ol', { class: 'meta' }, ...res.shots.map((x) => h('li', {}, `Bild: ${x.keyEngine} · Rörelse: ${x.videoEngine}${x.note ? ' – ' + x.note : ''}`))));
       say(`Klar på ${secs} s och sparad i Mina verk. Tryck "Gör om det här klippet" på ett klipp för att göra om bara det.`);
     }
@@ -3167,7 +3197,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       h('p', { class: 'lanenote' }, 'Använd bara klipp du själv äger eller har tillstånd att använda. Bilder: bara dina egna påhittade artister, produkter och kläder – inga kändisar eller verkliga personers ansikten utan samtycke.'),
       h('section', { class: 'step' }, h('b', {}, '1. Referensklipp'), vin, h('div', { class: 'quick' }, anaBtn, fromFmt)),
       h('section', { class: 'step' }, h('b', {}, '2. Dina bilder (max 5)'), h('small', { class: 'meta' }, 'Ur artistlistan:'), rosterChips, verkImgs.length ? h('small', { class: 'meta' }, 'Ur Mina verk:') : null, verkImgs.length ? verkChips : null, field('Ladda upp (produkt, kläder eller egen artist)', upIn, true), aList, consentRow),
-      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true), field('Videomotor', vEngine)),
+      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true), field('Videomotor', vEngine), field('Kontrollvideo (ReShot)', controlType, true), controlHint, h('div', { class: 'quick' }, prevBtn), ctrlPrev, controlCredit),
       status, board, h('div', { class: 'quick' }, go, cancelBtn), out);
   }
   const VIEWS = { snabbvideo: snabbvideoView, mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
