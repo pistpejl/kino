@@ -1351,7 +1351,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const g = await grokToggle();
     const mp = h('input', { type: 'checkbox', checked: true });
     const mpEl = h('label', { class: 'wide' }, mp, ' Planera i tre omgångar (bildplan → kontinuitet → polering)');
-    const motion = select([['none', 'ingen (klipp i takt med musiken)'], ...(st.lane === 'sfw' ? [['hf-auto', 'AI-video på de första bilderna (LTX-2.3 → Kandinsky 6.0 → MiniMax H3, gratis kvot)'], ['ltx-2.3', 'AI-video: LTX-2.3 först'], ['kandinsky-6', 'AI-video: Kandinsky 6.0 först (5 s-klipp, ca 1–2 min/klipp)'], ['minimax-h3', 'AI-video: MiniMax H3 först']] : []), ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (riktig rörelse, upp till 30 s, ca 1 klipp/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stockklipp (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – riktigt stockmaterial, inte AI`]] : [])], 'none');
+    const motion = select([['none', 'ingen (klipp i takt med musiken)'], ...(st.lane === 'sfw' ? [['hf-auto', 'AI-video på de första bilderna (LTX-2.5 → LTX-2.3 → Wan 2.2 → Cosmos3-Nano → Kandinsky 6.0 → MiniMax H3, gratis kvot)'], ['ltx-2.5', 'AI-video: LTX-2.5 först'], ['ltx-2.3', 'AI-video: LTX-2.3 först'], ['wan-2.2', 'AI-video: Wan 2.2 först (behöver startbild)'], ['cosmos3-nano', 'AI-video: Cosmos3-Nano först'], ['kandinsky-6', 'AI-video: Kandinsky 6.0 först (5 s-klipp, ca 1–2 min/klipp)'], ['minimax-h3', 'AI-video: MiniMax H3 först (licens undantar EU)']] : []), ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (riktig rörelse, upp till 30 s, ca 1 klipp/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stockklipp (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – riktigt stockmaterial, inte AI`]] : [])], 'none');
     // Stock source: 3-way toggle Riktiga / AI / Blanda (sent as source=real|ai|mix)
     let stockSrc = 'real';
     const srcBtns = [['real', 'Riktiga'], ['ai', 'AI'], ['mix', 'Blanda']].map(([v, t]) => h('button', { type: 'button', class: 'seg-b', 'data-v': v, onclick: () => { stockSrc = v; paintSrc(); } }, t));
@@ -1742,7 +1742,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       const list = (await getEngines(st.lane)).filter((e) => e.kind === laneSel.value && !e.puter && !e.needsFirstFrame);
       if (!list.length) engSel.append(h('option', { value: '' }, laneSel.value === 'video' ? 'Ingen AI-videomotor är redo' : 'Ingen bildmotor är redo'));
       const pref = laneSel.value === 'image' ? (st.lane === 'nsfw' ? 'pony' : 'flux-klein') : null;
-      list.sort((a, b) => (b.id === pref) - (a.id === pref)).forEach((e) => engSel.append(h('option', { value: e.id }, e.name)));
+      list.sort((a, b) => (b.id === pref) - (a.id === pref)).forEach((e) => engSel.append(h('option', { value: e.id, title: e.licenseNote || '' }, engineLabel(e))));
     }
     laneSel.onchange = () => { S.make = laneSel.value; paintEngines(); };
     paintEngines();
@@ -3090,8 +3090,8 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     };
     const song = h('input', { type: 'file', accept: '.mp3,.wav,.m4a,.ogg,audio/*' }); const songStart = h('input', { type: 'number', min: 0, step: 0.5, value: 0 });
     const songBox = h('div', { class: 'grid2' }, field('Din låt', song, true), field('Börja låten vid (s)', songStart), audioPreview(song, null, songStart)); const paintAu = () => { songBox.hidden = audio.value !== 'song'; }; audio.onchange = paintAu; paintAu();
-    const animate = select([['auto', 'Animera med videomotor (LTX-2.3 → Kandinsky 6.0 → MiniMax H3), Ken Burns när kvoten är slut'], ['kenburns', 'Bara Ken Burns (snabbt, sparar kvot)']], 'auto');
-    const vEngine = select([['', 'Automatiskt (MiniMax H3 först om kontrollvideo används, annars LTX-2.3)'], ['ltx-2.3', 'LTX-2.3 först'], ['kandinsky-6', 'Kandinsky 6.0 först'], ['minimax-h3', 'MiniMax H3 först']], '');
+    const animate = select([['auto', 'Animera med videomotor (LTX-2.5 → LTX-2.3 → Wan 2.2 → Cosmos3-Nano → Kandinsky 6.0 → MiniMax H3), Ken Burns när kvoten är slut'], ['kenburns', 'Bara Ken Burns (snabbt, sparar kvot)']], 'auto');
+    const vEngine = select([['', 'Automatiskt (Wan 2.2 först om kontrollvideo används, annars LTX-2.5)'], ['ltx-2.5', 'LTX-2.5 först'], ['ltx-2.3', 'LTX-2.3 först'], ['wan-2.2', 'Wan 2.2 först'], ['cosmos3-nano', 'Cosmos3-Nano först'], ['kandinsky-6', 'Kandinsky 6.0 först'], ['minimax-h3', 'MiniMax H3 först (licens undantar EU)']], '');
     const controlType = select([['', 'Ingen (bara klipp och tempo som idag)'], ['canny', 'Konturer (canny) – fungerar på gratisservern'], ['depth', 'Djupkarta – faller tillbaka på konturer (kräver GPU)'], ['pose', 'Skelett (OpenPose) – faller tillbaka på konturer (kräver GPU)']], 'canny');
     const controlHint = h('p', { class: 'meta' }, '');
     const paintCtrl = () => {
@@ -3197,7 +3197,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       h('p', { class: 'lanenote' }, 'Använd bara klipp du själv äger eller har tillstånd att använda. Bilder: bara dina egna påhittade artister, produkter och kläder – inga kändisar eller verkliga personers ansikten utan samtycke.'),
       h('section', { class: 'step' }, h('b', {}, '1. Referensklipp'), vin, h('div', { class: 'quick' }, anaBtn, fromFmt)),
       h('section', { class: 'step' }, h('b', {}, '2. Dina bilder (max 5)'), h('small', { class: 'meta' }, 'Ur artistlistan:'), rosterChips, verkImgs.length ? h('small', { class: 'meta' }, 'Ur Mina verk:') : null, verkImgs.length ? verkChips : null, field('Ladda upp (produkt, kläder eller egen artist)', upIn, true), aList, consentRow),
-      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true), field('Videomotor', vEngine), field('Kontrollvideo (ReShot)', controlType, true), controlHint, h('div', { class: 'quick' }, prevBtn), ctrlPrev, controlCredit),
+      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true), field('Videomotor', vEngine), h('p', { class: 'meta' }, 'MiniMax H3: community-licens undantar EU, Storbritannien, Sydkorea och USA. Föredra LTX, Wan, Cosmos eller Kandinsky.'), field('Kontrollvideo (ReShot)', controlType, true), controlHint, h('div', { class: 'quick' }, prevBtn), ctrlPrev, controlCredit),
       status, board, h('div', { class: 'quick' }, go, cancelBtn), out);
   }
   const VIEWS = { snabbvideo: snabbvideoView, mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,

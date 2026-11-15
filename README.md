@@ -17,3 +17,5 @@ Bildväljaren visar riktiga modellnamn med små taggar: **AI Horde – <modell>*
 Konturerna tas ut med ffmpeg på gratisservern. Djup och skelett kräver GPU; på Render används konturer som reserv. Det officiella Hugging Face-utrymmet är en visningssida, inte ett API.
 
 Kontrollvideo inspirerad av [ReShot](https://github.com/maosika-ai/reshot) (Apache-2.0) av [Maosika 猫斯卡](https://www.maosika.com). KINO kopierar inte ReShots källkod.
+
+Bild-till-video i automatiskt läge: **LTX-2.5 → LTX-2.3 → Wan 2.2 → Cosmos3-Nano → Kandinsky 6.0 → MiniMax H3**, sedan Ken Burns när kvoten är slut. Finns kontrollvideo väljs Wan 2.2 först (start- och slutruta). MiniMax H3:s community-licens undantar EU, Storbritannien, Sydkorea och USA.
