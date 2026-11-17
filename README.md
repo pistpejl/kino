@@ -14,6 +14,10 @@ Bildväljaren visar riktiga modellnamn med små taggar: **AI Horde – <modell>*
 
 `#/gor-om` (bara SFW): referensklipp (max 60 s) + upp till 5 egna bilder → ny video med samma klipp, tempo och ljud. Valfritt: en **kontrollvideo** i ReShot-stil (konturer, djupkarta eller skelett) som styr komposition och rörelse i nyckelbilderna.
 
+Efter analysen visas typ per klipp (filmad, AI-genererad eller motion graphics, med konfidens), musikdelar (intro/vers/refräng/drop/outro) och om klippen sitter på takten, en hook-poäng för de första 3 sekunderna med tips, en genereringsplan efter vald motors maxlängd, och mer detaljerade prompter (lins, ljus, färg, stämning, sluttillstånd, negativ prompt). Du kan ladda ned en VIDEO.md-nedbrytning.
+
+Nedbrytningen är inspirerad av [rea-video](https://github.com/JuneYaooo/rea-video) (Apache-2.0), [video-prompt-reverse-engineer](https://github.com/coolxxxx/video-prompt-reverse-engineer) (MIT), [video-breakdown](https://github.com/keng1304/video-breakdown) (MIT) och [video-teardown](https://github.com/RomanSlack/video-teardown) (MIT). KINO kör inte deras tunga modeller.
+
 Konturerna tas ut med ffmpeg på gratisservern. Djup och skelett kräver GPU; på Render används konturer som reserv. Det officiella Hugging Face-utrymmet är en visningssida, inte ett API.
 
 Kontrollvideo inspirerad av [ReShot](https://github.com/maosika-ai/reshot) (Apache-2.0) av [Maosika 猫斯卡](https://www.maosika.com). KINO kopierar inte ReShots källkod.

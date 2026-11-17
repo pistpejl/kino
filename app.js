@@ -3034,13 +3034,13 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
         h('h3', {}, 'Rutnät'), h('div', {}, ...r.gridUrls.map((u) => h('a', { href: abs(u), target: '_blank', rel: 'noopener' }, h('img', { src: abs(u), alt: 'Rutnät av bildrutor', style: 'width:100%;max-width:720px;display:block;margin:0 0 8px;border-radius:8px' })))));
     }
     v.append(h('h2', {}, 'Video → prompt'),
-      h('p', { class: 'meta' }, 'Ladda upp ett klipp (max 5 min). En bildruta per sekund läggs i numrerade 3×3-rutnät med tidsstämpel, och en AI-bildmodell skriver en text-till-video-prompt och en scenlista. Den beskriver bara videon – personer beskrivs generellt, aldrig vem de är. Inget ljud/tal transkriberas.'),
+      h('p', { class: 'meta' }, 'Ladda upp ett klipp (max 5 min). En bildruta per sekund läggs i numrerade 3×3-rutnät med tidsstämpel, och en AI-bildmodell skriver en text-till-video-prompt och en scenlista. Den beskriver bara videon – personer beskrivs generellt, aldrig vem de är. Inget ljud/tal transkriberas. För typ per klipp, musikdelar, hook och VIDEO.md: använd Gör om klipp.'),
       inp, h('div', { class: 'quick' }, go), status, out);
   }
   // ---- Gör om klipp (#/gor-om): referensklipp + egna bilder -> ny video med samma klippning, tempo och ljud ----
   function gorOmView(v) {
     v.classList.add('mdv');
-    v.append(pagehead('Gör om klipp', 'Ladda upp ett referensklipp (10–20 s är lagom, max 60 s) och upp till 5 egna bilder – artister ur artistlistan, produkter eller kläder. Du får en ny video med samma klipp, tempo och ljud, men med dina bilder. Valfritt: en ReShot-kontrollvideo (konturer, djup eller skelett) styr komposition och rörelse.'));
+    v.append(pagehead('Gör om klipp', 'Ladda upp ett referensklipp (10–20 s är lagom, max 60 s) och upp till 5 egna bilder – artister ur artistlistan, produkter eller kläder. Du får en ny video med samma klipp, tempo och ljud, men med dina bilder. Analysen visar typ per klipp (filmad/AI/motion graphics), musikdelar, hook i de första 3 sekunderna och en genereringsplan efter vald motors maxlängd. Valfritt: en ReShot-kontrollvideo (konturer, djup eller skelett) styr komposition och rörelse.'));
     if (st.lane === 'nsfw') return v.append(h('p', { class: 'lanenote nsfw' }, 'Gör om klipp finns bara i SFW-läget. Byt läge under Inställningar.'));
     const pick = st.agentPick && st.agentPick.remake ? st.agentPick.remake : null; if (pick) st.agentPick.remake = null;
     const mm = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
@@ -3092,6 +3092,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const songBox = h('div', { class: 'grid2' }, field('Din låt', song, true), field('Börja låten vid (s)', songStart), audioPreview(song, null, songStart)); const paintAu = () => { songBox.hidden = audio.value !== 'song'; }; audio.onchange = paintAu; paintAu();
     const animate = select([['auto', 'Animera med videomotor (LTX-2.5 → LTX-2.3 → Wan 2.2 → Cosmos3-Nano → Kandinsky 6.0 → MiniMax H3), Ken Burns när kvoten är slut'], ['kenburns', 'Bara Ken Burns (snabbt, sparar kvot)']], 'auto');
     const vEngine = select([['', 'Automatiskt (Wan 2.2 först om kontrollvideo används, annars LTX-2.5)'], ['ltx-2.5', 'LTX-2.5 först'], ['ltx-2.3', 'LTX-2.3 först'], ['wan-2.2', 'Wan 2.2 först'], ['cosmos3-nano', 'Cosmos3-Nano först'], ['kandinsky-6', 'Kandinsky 6.0 först'], ['minimax-h3', 'MiniMax H3 först (licens undantar EU)']], '');
+    vEngine.onchange = () => { if (ana) paintBatches(); };
     const controlType = select([['', 'Ingen (bara klipp och tempo som idag)'], ['canny', 'Konturer (canny) – fungerar på gratisservern'], ['depth', 'Djupkarta – faller tillbaka på konturer (kräver GPU)'], ['pose', 'Skelett (OpenPose) – faller tillbaka på konturer (kräver GPU)']], 'canny');
     const controlHint = h('p', { class: 'meta' }, '');
     const paintCtrl = () => {
@@ -3119,24 +3120,75 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
         say(res && res.note ? res.note : (res && res.type === 'canny' ? 'Konturvideon är klar. Den styrs in i nyckelbilderna när du trycker Gör om.' : 'Kontrollvideon är klar.'));
       } catch (e) { say(net(e), true); } finally { busy = false; prevBtn.disabled = false; }
     };
-    const controlCredit = h('p', { class: 'meta' }, 'Kontrollvideo inspirerad av ', h('a', { href: 'https://github.com/maosika-ai/reshot', target: '_blank', rel: 'noopener' }, 'ReShot'), ' (Apache-2.0) av Maosika 猫斯卡. KINO kör inte ReShots GPU-modeller på gratisservern.');
+    const controlCredit = h('p', { class: 'meta' }, 'Kontrollvideo inspirerad av ', h('a', { href: 'https://github.com/maosika-ai/reshot', target: '_blank', rel: 'noopener' }, 'ReShot'), ' (Apache-2.0) av Maosika 猫斯卡. KINO kör inte ReShots GPU-modeller på gratisservern. Nedbrytningen (typ, musikdelar, hook, VIDEO.md) är inspirerad av ', h('a', { href: 'https://github.com/JuneYaooo/rea-video', target: '_blank', rel: 'noopener' }, 'rea-video'), ' (Apache-2.0), ', h('a', { href: 'https://github.com/coolxxxx/video-prompt-reverse-engineer', target: '_blank', rel: 'noopener' }, 'video-prompt-reverse-engineer'), ' (MIT), ', h('a', { href: 'https://github.com/keng1304/video-breakdown', target: '_blank', rel: 'noopener' }, 'video-breakdown'), ' (MIT) och ', h('a', { href: 'https://github.com/RomanSlack/video-teardown', target: '_blank', rel: 'noopener' }, 'video-teardown'), ' (MIT).');
     // storyboard
     let ana = null; let shotRows = []; let lastResult = null; let busy = false; let ac = null; let jobId = null;
     const board = h('div', {}); const out = h('div', {});
     const inpT = (val, w) => { const i = h('input', { type: 'text', value: val || '' }); if (w) i.style.width = w; return i; };
+    const ORIGIN_SV = { filmed: 'Filmad', 'ai-generated': 'AI-genererad', 'motion-graphics': 'Motion graphics' };
+    const batchBox = h('div', {});
+    function currentEngine() { return (vEngine && vEngine.value) || 'auto'; }
+    function paintBatches() {
+      batchBox.innerHTML = '';
+      if (!ana || !ana.batches) return;
+      const key = currentEngine();
+      const plan = ana.batches[key] || ana.batches.auto;
+      if (!plan) return;
+      const note = plan.modelMax && plan.modelMax !== plan.maxSeconds
+        ? ` Max ${plan.maxSeconds} s på gratisspacen (modellen uppges klara ca ${plan.modelMax} s).`
+        : ` Max ${plan.maxSeconds} s per generation.`;
+      batchBox.append(
+        h('h3', {}, 'Genereringsplan'),
+        h('p', { class: 'meta' }, `${plan.engineName || (key === 'auto' ? 'Automatiskt (5 s)' : key)}: ${plan.batches.length} generationer.${note} Långa klipp delas, korta som ryms slås ihop.`),
+        h('ol', { class: 'meta' }, ...plan.batches.map((g) => h('li', {}, `${g.start}–${g.end} s (${g.duration} s) · klipp ${g.shots.map((n) => n + 1).join('+')}${g.split ? ' · delad' : ''}${g.merged ? ' · sammanslagen' : ''}`)))
+      );
+    }
+    function paintBreakdown() {
+      const box = h('div', { class: 'step' });
+      if (ana.hook) {
+        const hk = ana.hook;
+        box.append(h('h3', {}, 'Hook (första 3 s)'), h('p', { class: 'meta' }, `Poäng ${hk.score10}/10 · ${hk.cutCount} klipp i inledningen${hk.audioOnset != null ? ` · första ljudslag ${hk.audioOnset} s` : ''}.`), h('ul', { class: 'meta' }, ...((hk.tips || []).slice(0, 3).map((tip) => h('li', {}, tip)))));
+      }
+      if (ana.music) {
+        const m = ana.music; const cob = m.cutsOnBeat;
+        const cobTxt = cob && cob.score != null ? ` Klipp på takt: ${cob.onBeatCount}/${cob.total} inom ${cob.threshold} s (${Math.round(cob.score * 100)} %).` : (cob && cob.note ? ` Klipp på takt: ${cob.note}.` : '');
+        box.append(h('h3', {}, 'Musikdelar'), h('p', { class: 'meta' }, `${m.bpm ? m.bpm + ' BPM. ' : ''}${(m.sections || []).map((s) => `${s.label || s.type} ${s.start}–${s.end} s`).join(' · ') || 'Ingen tydlig struktur.'}${cobTxt}`));
+      }
+      box.append(batchBox);
+      if (ana.videoMd) {
+        const dl = h('button', { class: 'text', type: 'button' }, 'Ladda ned VIDEO.md');
+        dl.onclick = () => {
+          const blob = new Blob([ana.videoMd], { type: 'text/markdown;charset=utf-8' });
+          const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'VIDEO.md'; a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        };
+        box.append(h('div', { class: 'quick' }, dl), h('p', { class: 'meta' }, 'VIDEO.md är en nedbrytning av klippet (typ, tempo, hook, prompter per klipp) så att du kan göra om det med eget material.'));
+      }
+      if (ana.credits && ana.credits.length) {
+        const links = [];
+        ana.credits.forEach((c, i) => { if (i) links.push(', '); links.push(h('a', { href: c.url, target: '_blank', rel: 'noopener' }, c.name), ` (${c.license})`); });
+        box.append(h('p', { class: 'meta' }, 'Analysen är inspirerad av ', ...links, '. KINO kör inte deras tunga modeller; det här är en lätt omimplementation med ffmpeg och den bildmodell vi redan använder.'));
+      }
+      return box;
+    }
     function paintShots() {
       if (!ana) return; const keep = shotRows.map((r) => r.assetSel && r.assetSel.value);
       board.innerHTML = ''; shotRows = [];
-      board.append(h('h3', {}, `Storyboard · ${ana.shots.length} klipp · ${ana.ratio} · ${ana.duration} s`), h('p', { class: 'meta' }, `${ana.method.startsWith('fixed') ? 'Inga tydliga scenbyten hittades – klippet delades i jämna bitar.' : 'Klippen hittades med scenbytesdetektering.'} Klipp längre än 5 s delas. Ändra texterna och tiderna fritt.${ana.visionError ? ' Bildmodellen svarade inte, så beskrivningarna är tomma – fyll i dem själv.' : ana.model ? ` Beskrivet av ${ana.model}.` : ''}`));
+      board.append(h('h3', {}, `Storyboard · ${ana.shots.length} klipp · ${ana.ratio} · ${ana.duration} s`), h('p', { class: 'meta' }, `${ana.method.startsWith('fixed') ? 'Inga tydliga scenbyten hittades – klippet delades i jämna bitar.' : ana.method === 'format' ? 'Storyboard från valt format.' : 'Klippen hittades med scenbytesdetektering.'} Ändra texterna och tiderna fritt. Genereringsplanen anpassar delning och sammanslagning efter vald motors maxlängd.${ana.visionError ? ' Bildmodellen svarade inte, så beskrivningarna är tomma – fyll i dem själv.' : ana.model ? ` Beskrivet av ${ana.model}.` : ''}`));
+      board.append(paintBreakdown());
+      paintBatches();
       ana.shots.forEach((s, k) => {
-        const r = { start: h('input', { type: 'number', step: 0.1, min: 0, value: s.start }), end: h('input', { type: 'number', step: 0.1, min: 0, value: s.end }), framing: inpT(s.framing), camera: inpT(s.camera), subject: inpT(s.subject), action: inpT(s.action), setting: inpT(s.setting), st: h('span', { class: 'chip' }, 'Väntar'), eng: h('small', { class: 'meta' }) };
+        const r = { start: h('input', { type: 'number', step: 0.1, min: 0, value: s.start }), end: h('input', { type: 'number', step: 0.1, min: 0, value: s.end }), framing: inpT(s.framing), camera: inpT(s.camera), subject: inpT(s.subject), action: inpT(s.action), setting: inpT(s.setting), lens: inpT(s.lens), light: inpT(s.light), color: inpT(s.color), mood: inpT(s.mood), endState: inpT(s.endState), negative: inpT(s.negative), st: h('span', { class: 'chip' }, 'Väntar'), eng: h('small', { class: 'meta' }) };
         r.assetSel = select([['', 'Bild: alla'], ...assets.map((a, j) => [String(j), `Bild ${j + 1}: ${a.name}`])], keep[k] || '');
         r.redo = h('button', { class: 'text', type: 'button', hidden: !lastResult, onclick: () => render([k]) }, 'Gör om det här klippet');
         shotRows.push(r);
+        const origin = s.origin || {};
+        const originLabel = origin.label || ORIGIN_SV[origin.type] || '';
+        const originChip = originLabel ? h('span', { class: 'chip', title: (origin.reasons || []).join('; ') }, `${originLabel}${origin.confidence != null ? ' · ' + Math.round(origin.confidence * 100) + ' %' : ''}`) : null;
         board.append(h('div', { class: 'step', style: 'display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;margin:8px 0' },
           s.thumbUrl ? h('img', { src: abs(s.thumbUrl), alt: `Klipp ${k + 1}`, style: 'width:160px;border-radius:6px' }) : null,
-          h('div', { style: 'flex:1;min-width:240px' }, h('b', {}, `Klipp ${k + 1} `), r.st, ' ', r.eng,
-            h('div', { class: 'grid2' }, field('Från (s)', r.start), field('Till (s)', r.end), field('Utsnitt', r.framing), field('Kamera', r.camera), field('Motiv', r.subject, true), field('Handling', r.action, true), field('Miljö', r.setting, true), field('Bild till klippet', r.assetSel)),
+          h('div', { style: 'flex:1;min-width:240px' }, h('b', {}, `Klipp ${k + 1} `), originChip, ' ', r.st, ' ', r.eng,
+            h('div', { class: 'grid2' }, field('Från (s)', r.start), field('Till (s)', r.end), field('Utsnitt', r.framing), field('Kamera', r.camera), field('Lins', r.lens), field('Ljus', r.light), field('Färg', r.color), field('Stämning', r.mood), field('Motiv', r.subject, true), field('Handling', r.action, true), field('Miljö', r.setting, true), field('Sluttillstånd (för nästa klipp)', r.endState, true), field('Negativ prompt', r.negative, true), field('Bild till klippet', r.assetSel)),
             h('div', { class: 'quick' }, r.redo))));
       });
     }
@@ -3164,7 +3216,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       if (audio.value === 'song' && !song.files[0] && !lastResult) return say('Välj din låt (eller behåll originalljudet).', true);
       if (busy) return; busy = true; go.disabled = true; cancelBtn.hidden = false; ac = new AbortController(); const t0 = Date.now();
       try {
-        const shots = shotRows.map((r) => ({ start: +r.start.value, end: +r.end.value, framing: r.framing.value, camera: r.camera.value, subject: r.subject.value, action: r.action.value, setting: r.setting.value, asset: r.assetSel.value }));
+        const shots = shotRows.map((r) => ({ start: +r.start.value, end: +r.end.value, framing: r.framing.value, camera: r.camera.value, subject: r.subject.value, action: r.action.value, setting: r.setting.value, lens: r.lens && r.lens.value, light: r.light && r.light.value, color: r.color && r.color.value, mood: r.mood && r.mood.value, endState: r.endState && r.endState.value, negative: r.negative && r.negative.value, asset: r.assetSel.value }));
         const fd = new FormData(); fd.append('remakeId', ana.remakeId); fd.append('lane', st.lane); fd.append('shots', JSON.stringify(shots));
         fd.append('instructions', instr.value.trim()); fd.append('format', rfp.get()); fd.append('audio', audio.value); fd.append('songStart', songStart.value || '0'); fd.append('animate', animate.value); fd.append('videoEngine', vEngine.value); fd.append('consent', consent.checked ? 'true' : ''); if (controlType.value) fd.append('controlType', controlType.value);
         if (only) fd.append('only', JSON.stringify(only));
@@ -3197,7 +3249,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       h('p', { class: 'lanenote' }, 'Använd bara klipp du själv äger eller har tillstånd att använda. Bilder: bara dina egna påhittade artister, produkter och kläder – inga kändisar eller verkliga personers ansikten utan samtycke.'),
       h('section', { class: 'step' }, h('b', {}, '1. Referensklipp'), vin, h('div', { class: 'quick' }, anaBtn, fromFmt)),
       h('section', { class: 'step' }, h('b', {}, '2. Dina bilder (max 5)'), h('small', { class: 'meta' }, 'Ur artistlistan:'), rosterChips, verkImgs.length ? h('small', { class: 'meta' }, 'Ur Mina verk:') : null, verkImgs.length ? verkChips : null, field('Ladda upp (produkt, kläder eller egen artist)', upIn, true), aList, consentRow),
-      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true), field('Videomotor', vEngine), h('p', { class: 'meta' }, 'MiniMax H3: community-licens undantar EU, Storbritannien, Sydkorea och USA. Föredra LTX, Wan, Cosmos eller Kandinsky.'), field('Kontrollvideo (ReShot)', controlType, true), controlHint, h('div', { class: 'quick' }, prevBtn), ctrlPrev, controlCredit),
+      h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true), field('Videomotor', vEngine), h('p', { class: 'meta' }, 'Genereringsplanen följer motorns maxlängd: LTX-2.5 och LTX-2.3 5 s, Wan 2.2 5 s (vissa Spaces 10 s), Cosmos3-Nano ca 8 s, Kandinsky 5 s fast, MiniMax H3 5 s på gratisspacen (modellen uppges klara ca 14 s). MiniMax H3: community-licens undantar EU, Storbritannien, Sydkorea och USA. Föredra LTX, Wan, Cosmos eller Kandinsky.'), field('Kontrollvideo (ReShot)', controlType, true), controlHint, h('div', { class: 'quick' }, prevBtn), ctrlPrev, controlCredit),
       status, board, h('div', { class: 'quick' }, go, cancelBtn), out);
   }
   const VIEWS = { snabbvideo: snabbvideoView, mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
