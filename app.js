@@ -249,7 +249,9 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     job.append(status, h('div', { class: 'cancelrow' }, cancelBtn));
     const box = h('div', { class: 'compbox' }, extraTop || null, comp, hint, job, inact, h('div', { class: 'ctabar' }, cta));
     getEngines(st.lane).then((list) => {
-      const ok = list.filter((e) => e.kind === engineKind && !(kind === 'music' && e.noMusic));
+      let ok = list.filter((e) => e.kind === engineKind && !(kind === 'music' && e.noMusic));
+      const pref = engineKind === 'image' ? (st.lane === 'nsfw' ? 'chroma' : 'flux-klein') : (engineKind === 'video' && st.lane === 'nsfw' ? 'wan-2.2-nsfw' : null);
+      ok = ok.slice().sort((a, b) => (b.id === pref) - (a.id === pref));
       engList = ok;
       [...sel.options].forEach((o) => { if (!o.dataset.keep) o.remove(); }); // keep client-side engines (Colab)
       ok.forEach((e) => sel.append(h('option', { value: e.id, title: e.detail || '' }, `${plainName(e)} · ${engineLabel(e)}`)));
@@ -1741,7 +1743,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       if (laneSel.value === 'stock') { engSel.append(h('option', { value: 'stock' }, `Stock (${((await getConfig()).stock || {}).source || 'Wikimedia Commons'})`)); return; }
       const list = (await getEngines(st.lane)).filter((e) => e.kind === laneSel.value && !e.puter && !e.needsFirstFrame);
       if (!list.length) engSel.append(h('option', { value: '' }, laneSel.value === 'video' ? 'Ingen AI-videomotor är redo' : 'Ingen bildmotor är redo'));
-      const pref = laneSel.value === 'image' ? (st.lane === 'nsfw' ? 'pony' : 'flux-klein') : null;
+      const pref = laneSel.value === 'image' ? (st.lane === 'nsfw' ? 'chroma' : 'flux-klein') : null;
       list.sort((a, b) => (b.id === pref) - (a.id === pref)).forEach((e) => engSel.append(h('option', { value: e.id, title: e.licenseNote || '' }, engineLabel(e))));
     }
     laneSel.onchange = () => { S.make = laneSel.value; paintEngines(); };

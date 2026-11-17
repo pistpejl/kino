@@ -8,7 +8,7 @@ Dark web studio for image, video and music video. Static site; API at the proxy 
 
 ## Gratismotorer i bildväljaren
 
-Bildväljaren visar riktiga modellnamn med små taggar: **AI Horde – <modell>** (`gratis`, `kö`, och `NSFW-läge` i NSFW-läget; köplats och beräknad väntetid visas med en Avbryt-knapp, timeout säger "upptagen/kö"), **Cloudflare FLUX.1 schnell / SDXL base / SDXL Lightning** (`gratis`, bara SFW, grå tills servern har nycklarna; "dagskvoten slut" när 10 000 neurons/dag är slut) och **Google Gemini (bild)** som är grå eftersom Google inte erbjuder gratis bildkvot (i stället finns "Förbättra med Gemini" för text när `GEMINI_API_KEY` är satt). Startsidans modelllista bygger på servern och visar samma taggar och ej aktiva motorer.
+Bildväljaren visar riktiga modellnamn med små taggar: **AI Horde – <modell>** (`gratis`, `kö`, och `NSFW-läge` i NSFW-läget; köplats och beräknad väntetid visas med en Avbryt-knapp, timeout säger "upptagen/kö"), **Cloudflare FLUX.1 schnell / SDXL base / SDXL Lightning** (`gratis`, bara SFW, grå tills servern har nycklarna; "dagskvoten slut" när 10 000 neurons/dag är slut) och **Google Gemini (bild)** som är grå eftersom Google inte erbjuder gratis bildkvot (i stället finns "Förbättra med Gemini" för text när `GEMINI_API_KEY` är satt). I NSFW-läget (18+, bara fiktiva personer) föreslås **Chroma1-HD** först för fotorealistiska stillbilder (reserv: Chroma), **WAI-NSFW-Illustrious v17** för anime och **Wan 2.2 I2V (10 s)** för video. Startsidans modelllista bygger på servern och visar samma taggar och ej aktiva motorer.
 
 ## Gör om klipp
 
