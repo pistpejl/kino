@@ -23,3 +23,8 @@ Konturerna tas ut med ffmpeg på gratisservern. Djup och skelett kräver GPU; p�
 Kontrollvideo inspirerad av [ReShot](https://github.com/maosika-ai/reshot) (Apache-2.0) av [Maosika 猫斯卡](https://www.maosika.com). KINO kopierar inte ReShots källkod.
 
 Bild-till-video i automatiskt läge: **LTX-2.5 → LTX-2.3 → Wan 2.2 → Cosmos3-Nano → Kandinsky 6.0 → MiniMax H3**, sedan Ken Burns när kvoten är slut. Finns kontrollvideo väljs Wan 2.2 först (start- och slutruta). MiniMax H3:s community-licens undantar EU, Storbritannien, Sydkorea och USA.
+
+## Läppsynk
+
+`#/lappsynk` och en valfri ruta i Musikvideo (`#/music`): en egen artistbild plus en låtdel blir ett sjungande klipp. Gratis på Hugging Face: **LongCat-Video-Avatar 1.6** (MIT), med **Kandinsky S2V 1.0** (MIT) och LTX-2 som reserv. Kräver samtycke; bara egna artister, persona eller KINO:s AI-figurer — aldrig kändisar. Vimoo 1.0 utvärderades men hade ingen fungerande publik Space och ingår därför inte i videokedjan.
+

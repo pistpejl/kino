@@ -440,7 +440,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
 
   // ---- Läppsynk: porträtt + ljud -> talande/sjungande klipp ----
   async function lappsynkView(v) {
-    v.append(pagehead('Läppsynk', 'Välj ett porträtt ur din artistlista (eller egen AI-figur) och ett ljud – få ett klipp där munnen följer rösten. Bara era egna artister, aldrig kändisar.'));
+    v.append(pagehead('Läppsynk', 'Välj ett porträtt ur din artistlista (eller egen AI-figur) och ett ljud – få ett klipp där munnen följer rösten. Gratis: LongCat-Video-Avatar 1.6, med Kandinsky S2V 1.0 och LTX-2 som reserv. Bara era egna artister eller AI-figurer, aldrig kändisar.'));
     const roster = rosterLocal().filter((a) => a.photos && a.photos.length);
     let portrait = st.lipPortrait || null; st.lipPortrait = null;
     const pick = st.agentPick && st.agentPick.lipsync ? st.agentPick.lipsync : null; if (pick) st.agentPick.lipsync = null;
@@ -462,12 +462,13 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const paintA = () => { fileBox.hidden = amode.value !== 'file'; ttsBox.hidden = amode.value !== 'tts'; }; amode.onchange = paintA; paintA();
     const vocals = h('input', { type: 'checkbox' });
     // engine
-    const eng = select([['auto', 'Automatiskt (egen GPU om ansluten, annars Hugging Face)'], ['gpu', 'Egen GPU: LatentSync 1.5 (Kaggle / Colab)'], ['hf', 'Hugging Face LTX-2 (gratis, ca 1 klipp/dag)']], 'auto');
+    const eng = select([['auto', 'Automatiskt (egen GPU om ansluten, annars Hugging Face)'], ['gpu', 'Egen GPU: LatentSync 1.5 (Kaggle / Colab)'], ['hf', 'Hugging Face: LongCat-Video-Avatar 1.6 (reserv Kandinsky S2V / LTX-2)']], 'auto');
     const engInfo = h('div', { class: 'meta' }, 'Kollar motorer…');
     let gpuOk = false; let hfOk = false;
     Promise.all([colabHealth(), fetch(`${API}/lipsync/info`).then((r) => r.json()).catch(() => null)]).then(([c, i]) => {
       gpuOk = c.state === 'on' && (!c.info || !c.info.features || c.info.features.includes('lipsync')); hfOk = Boolean(i && i.hf && i.hf.available);
-      engInfo.textContent = `Egen GPU: ${c.state === 'on' ? (gpuOk ? 'ansluten, LatentSync redo' : 'ansluten men LatentSync är inte installerad (kör LatentSync-cellen i notebooken)') : 'inte ansluten'} · Hugging Face: ${hfOk ? 'tillgänglig' : 'inte aktiverad på servern'}`;
+      const chain = (i && i.engines) ? i.engines.map((e) => e.name).join(' → ') : 'LongCat-Video-Avatar 1.6 → Kandinsky S2V 1.0 → LTX-2';
+      engInfo.textContent = `Egen GPU: ${c.state === 'on' ? (gpuOk ? 'ansluten, LatentSync redo' : 'ansluten men LatentSync är inte installerad (kör LatentSync-cellen i notebooken)') : 'inte ansluten'} · Hugging Face: ${hfOk ? `tillgänglig (${chain})` : 'inte aktiverad på servern'}`;
     });
     const consent = h('input', { type: 'checkbox' });
     const consentTxt = h('span', {});
@@ -522,7 +523,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
           const fd = new FormData(); fd.append('lane', st.lane); fd.append('image', img); fd.append('consent', 'true'); fd.append('source', portrait.source); fd.append('name', portrait.name);
           if (amode.value === 'tts') { const t = tts.value.trim(); if (!t) throw new Error('Skriv texten som ska läsas upp.'); fd.append('ttsText', t); fd.append('lang', lang.value); }
           else { const f = aIn.files[0]; if (!f) throw new Error('Välj ett ljud eller en låt.'); fd.append('audio', f); fd.append('start', String(s0)); fd.append('end', String(s1)); }
-          say('Skickar till Hugging Face (gratis, kan köa)…');
+          say('Skickar till Hugging Face (LongCat-Video-Avatar 1.6, kan köa)…');
           const r = await fetch(`${API}/lipsync`, { method: 'POST', body: fd, signal: ac.signal });
           if (!r.ok) throw new Error(await errMsg(r));
           const j = await r.json(); serverJob = j.jobId;
@@ -1353,6 +1354,11 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const g = await grokToggle();
     const mp = h('input', { type: 'checkbox', checked: true });
     const mpEl = h('label', { class: 'wide' }, mp, ' Planera i tre omgångar (bildplan → kontinuitet → polering)');
+    const lip = h('input', { type: 'checkbox' });
+    const lipConsent = h('input', { type: 'checkbox' });
+    const lipConsentEl = h('label', { class: 'wide', hidden: true }, lipConsent, ' Jag intygar att porträttet är min egen artist, persona eller AI-figur och har gett samtycke (inga kändisar).');
+    const lipEl = st.lane === 'sfw' ? h('div', {}, h('label', { class: 'wide' }, lip, ' Läppsynk: en artistbild och låtdelen blir ett sjungande klipp (LongCat-Video-Avatar 1.6, reserv Kandinsky S2V 1.0). Bara egna eller samtyckta porträtt.'), lipConsentEl) : null;
+    if (lipEl) lip.onchange = () => { lipConsentEl.hidden = !lip.checked; if (!lip.checked) lipConsent.checked = false; };
     const motion = select([['none', 'ingen (klipp i takt med musiken)'], ...(st.lane === 'sfw' ? [['hf-auto', 'AI-video på de första bilderna (LTX-2.5 → LTX-2.3 → Wan 2.2 → Cosmos3-Nano → Kandinsky 6.0 → MiniMax H3, gratis kvot)'], ['ltx-2.5', 'AI-video: LTX-2.5 först'], ['ltx-2.3', 'AI-video: LTX-2.3 först'], ['wan-2.2', 'AI-video: Wan 2.2 först (behöver startbild)'], ['cosmos3-nano', 'AI-video: Cosmos3-Nano först'], ['kandinsky-6', 'AI-video: Kandinsky 6.0 först (5 s-klipp, ca 1–2 min/klipp)'], ['minimax-h3', 'AI-video: MiniMax H3 först (licens undantar EU)']] : []), ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (riktig rörelse, upp till 30 s, ca 1 klipp/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stockklipp (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – riktigt stockmaterial, inte AI`]] : [])], 'none');
     // Stock source: 3-way toggle Riktiga / AI / Blanda (sent as source=real|ai|mix)
     let stockSrc = 'real';
@@ -1366,7 +1372,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     paintSrc();
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'Vad handlar videon om?', noEngineText: 'Ingen bildmodell svarar (behövs utan egna bilder)',
-      settings: [field('Genre', genre), field('Format', ratio), field('Längd', len), field('Utseende', look), field('Handling', action), field('Rörelse', motion, true), field('Stockklipp', srcToggle, true), field('Text i bild', overlay), g.el, mpEl, field('Låttext', lyrics, true)],
+      settings: [field('Genre', genre), field('Format', ratio), field('Längd', len), field('Utseende', look), field('Handling', action), field('Rörelse', motion, true), field('Stockklipp', srcToggle, true), field('Text i bild', overlay), g.el, mpEl, ...(lipEl ? [lipEl] : []), field('Låttext', lyrics, true)],
       onGo: async ({ prompt, engine, say, setCancel, signal }) => {
         const cancelJob = (id) => setCancel(async () => { await fetch(`${API}/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
         if (motion.value === 'stock') {
@@ -1389,9 +1395,11 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
         }
         if (!imgs.length && !engine) return say('Ladda upp bilder: ingen bildmodell svarar just nu.', true);
         if (!imgs.length && engine.startsWith('puter:')) return say('Seedream körs i din webbläsare och kan inte göra stillbilder till musikvideo. Välj en annan modell eller ladda upp bilder.', true);
+        if (st.lane === 'sfw' && lip.checked && !lipConsent.checked) return say('Kryssa i samtycket för läppsynk: bara egna artister, persona eller AI-figurer, inga kändisar.', true);
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('prompt', prompt); fd.append('genre', genre.value); fd.append('ratio', ratio.value); fd.append('seconds', len.value);
         fd.append('lyrics', lyrics.value); fd.append('look', look.value); fd.append('action', action.value); fd.append('grok', g.cb.checked ? '1' : '0'); fd.append('motion', motion.value); fd.append('multiPass', mp.checked ? '1' : '0'); fd.append('imageEngine', engine.startsWith('puter:') ? '' : engine);
+        if (st.lane === 'sfw' && lip.checked) { fd.append('lipsync', '1'); fd.append('consent', 'true'); }
         if (song) fd.append('song', song);
         imgs.forEach((f) => fd.append('images', f));
         say('Laddar upp…');
