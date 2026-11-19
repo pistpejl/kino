@@ -745,3 +745,9 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 @keyframes kino-previs-tilt-up { from { background-position: 50% 80%; } to { background-position: 50% 20%; } }
 @keyframes kino-previs-tilt-down { from { background-position: 50% 20%; } to { background-position: 50% 80%; } }
 @keyframes kino-previs-handheld { 0% { transform: scale(1.06) translate(0,0) rotate(0); } 33% { transform: scale(1.07) translate(1.5%,-1%) rotate(-0.4deg); } 66% { transform: scale(1.05) translate(-1.2%,1%) rotate(0.4deg); } 100% { transform: scale(1.06) translate(0.6%,0) rotate(0); } }
+
+.sess-card { display:flex; flex-direction:column; gap:10px; }
+.sess-code { display:block; margin:4px 0; padding:14px 12px; background:var(--s1); border:1px dashed var(--line); border-radius:12px; text-align:center; font-size:1.35rem; font-weight:700; letter-spacing:.12em; user-select:all; }
+.sess-steps { margin:0; padding-left:1.2em; color:var(--dim); font-size:14px; line-height:1.45; }
+.sess-steps li { margin:4px 0; }
+.sess-status.on { color:#30d158; font-weight:600; }

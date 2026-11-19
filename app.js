@@ -145,12 +145,33 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
   }
   // header status pill: "● Motor: Auto · SFW" -> Inställningar
   let gpuOn = false;
+  let sessionInfo = { active: false, label: 'GPU-session: inaktiv' };
   function paintPill(on) {
     if (on != null) gpuOn = on;
     const p = $('#pill'); if (!p) return;
-    p.classList.toggle('gpu', gpuOn); p.classList.toggle('nsfw', st.lane === 'nsfw');
-    $('span', p).textContent = `Motor: ${gpuOn ? 'Egen GPU' : 'Auto'} · ${st.lane === 'nsfw' ? 'NSFW' : 'SFW'}`;
+    const lane = st.lane === 'nsfw' ? 'NSFW' : 'SFW';
+    const sessOn = Boolean(sessionInfo && sessionInfo.active);
+    p.classList.toggle('gpu', sessOn || gpuOn); p.classList.toggle('nsfw', st.lane === 'nsfw');
+    let text;
+    if (sessOn) text = `${sessionInfo.label || `GPU-session: ${sessionInfo.platform === 'kaggle' ? 'Kaggle' : 'Colab'} ${sessionInfo.gpu || 'T4'} aktiv`} · ${lane}`;
+    else if (gpuOn) text = `Motor: Egen GPU · ${lane}`;
+    else text = `GPU-session: inaktiv · ${lane}`;
+    $('span', p).textContent = text;
+    if (p.setAttribute) p.setAttribute('aria-label', `${text} – öppna Inställningar`);
   }
+  async function pollSession() {
+    try {
+      const r = await fetch(`${API}/worker/status`);
+      if (r.ok) {
+        const j = await r.json();
+        sessionInfo = j || { active: false, label: 'GPU-session: inaktiv' };
+        paintPill();
+        document.dispatchEvent(new CustomEvent('kino-session', { detail: sessionInfo }));
+      }
+    } catch { /* offline */ }
+  }
+  pollSession();
+  setInterval(pollSession, 15000);
   function setLane(l) {
     if (l === 'nsfw' && !ageOk()) {
       $('#gate').hidden = false;
@@ -743,12 +764,55 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     if (!n) return v.append(empty('Inget här än.', 'Det du skapar visas här.'), h('div', { class: 'quick' }, h('a', { class: 'text primary', href: '#/skapa' }, 'Skapa något')));
     kinds.forEach(([k, t]) => { if (st.results[k].length) v.append(h('h2', { class: 'sect' }, `${t} (${st.results[k].length})`), results(k)); });
   }
+  function sessionPanel() {
+    const stLine = h('div', { class: 'meta sess-status' }, sessionInfo.label || 'GPU-session: inaktiv');
+    const codeEl = h('code', { class: 'sess-code' }, '————');
+    const hint = h('p', { class: 'meta' }, 'Koden visas här när du startar en session. Den lagras bara på servern en kort stund — aldrig i Git.');
+    const refresh = () => {
+      stLine.textContent = (sessionInfo && sessionInfo.label) || 'GPU-session: inaktiv';
+      stLine.classList.toggle('on', Boolean(sessionInfo && sessionInfo.active));
+    };
+    document.addEventListener('kino-session', refresh);
+    pollSession().then(refresh);
+    const start = h('button', { type: 'button', class: 'btn', onclick: async () => {
+      start.disabled = true;
+      try {
+        const r = await fetch(`${API}/worker/pair`, { method: 'POST' });
+        const j = await r.json();
+        if (!j.ok || !j.code) throw new Error(j.message || 'Kunde inte skapa kod.');
+        codeEl.textContent = j.code;
+        const min = Math.max(1, Math.round((j.expiresIn || 900) / 60));
+        hint.textContent = `Koden gäller i cirka ${min} minuter och används en gång. Klistra in den i notebooken (PAIR_CODE).`;
+      } catch (e) {
+        hint.textContent = e.message || 'Kunde inte hämta parningskod.';
+      } finally { start.disabled = false; }
+    } }, 'Starta renderingssession');
+    const openColab = h('a', { class: 'btn', href: SESSION_COLAB_NB, target: '_blank', rel: 'noopener' }, 'Öppna i Colab');
+    const openKaggle = h('a', { class: 'btn', href: 'https://www.kaggle.com/code', target: '_blank', rel: 'noopener' }, 'Öppna Kaggle');
+    const copyK = h('button', { type: 'button', class: 'btn', onclick: () => { navigator.clipboard && navigator.clipboard.writeText(SESSION_KAGGLE_NB); copyK.textContent = 'Länk kopierad'; } }, 'Kopiera Kaggle-länk');
+    return h('section', { class: 'setcard sess-card' },
+      h('div', {}, h('b', {}, 'Renderingssession'), stLine),
+      h('p', { class: 'meta' }, 'När du vill rendera många klipp: starta en gratis T4 i Colab (eller T4/P100 på Kaggle). Notebooken hämtar jobb från KINO — ingen tunnel behövs. När den stannar används Hugging Face-kedjan som vanligt.'),
+      h('ol', { class: 'sess-steps' },
+        h('li', {}, 'Starta notebooken (Öppna i Colab, eller importera filen på Kaggle).'),
+        h('li', {}, 'Klistra in koden i cellen PAIR_CODE och kör alla celler.'),
+        h('li', {}, 'Rendera i KINO.')),
+      h('div', { class: 'under' }, start),
+      codeEl,
+      hint,
+      h('div', { class: 'under' }, openColab, openKaggle, copyK),
+      h('p', { class: 'meta' }, 'Sessionen slutar när du stänger notebooken, efter några timmars gratis-GPU, eller vid inaktivitet (efter ca 60 sekunder utan kontakt faller KINO tillbaka på Hugging Face).'),
+      h('p', { class: 'meta' }, 'Kaggle tillåter ett konto per person och är för ditt eget personliga bruk. På Kaggle: File → Import Notebook → klistra in GitHub-länken, Accelerator → GPU T4 (eller P100), Internet → On.'),
+      h('p', { class: 'meta' }, 'Workern kör bara SFW. På 16 GB T4 (sm75) används LTX-Video 2B och Wan 2.1 1.3B, ev. Wan 2.2 TI2V-5B med CPU-offload i 480p. Kandinsky S2V Lite får inte plats. Tiderna är uppskattningar, inte mätta här: LTX-Video ca 45–120 s, Wan 1.3B ca 1–3 min, Wan 5B med offload ca 3–8 min per 5 s-klipp.')
+    );
+  }
   function settingsView(v, q) {
     const tool = new URLSearchParams(q || '').get('t');
     const laneCard = h('section', { class: 'setcard' }, h('div', {}, h('b', {}, 'Läge'), h('small', {}, st.lane === 'nsfw' ? 'NSFW: bara för vuxna 18+. Minderåriga blockeras alltid.' : 'SFW. Vuxenläget (18+) kräver ålderskontroll.')), laneBtn);
+    const sess = sessionPanel();
     const panel = colabPanel((on) => paintPill(on));
     panel.open = true;
-    v.append(pagehead(/^#\/motor/.test(location.hash) ? 'Egen GPU' : 'Inställningar', 'Motor och läge. Allt sparas bara i den här webbläsaren.'), laneCard, h('div', { class: 'stoprow' }, stopAllButton()), h('h2', { class: 'sect' }, 'Motor: Colab / Kaggle (egen GPU)'), panel);
+    v.append(pagehead(/^#\/motor/.test(location.hash) ? 'Egen GPU' : 'Inställningar', 'Motor och läge. Allt sparas bara i den här webbläsaren.'), laneCard, h('div', { class: 'stoprow' }, stopAllButton()), sess, h('h2', { class: 'sect' }, 'Motor: Colab / Kaggle (egen GPU, med tunnel)'), panel);
     if (tool) setTimeout(() => { const el = document.getElementById(`tool-${tool}`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 300);
   }
 
@@ -827,6 +891,8 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
   // ---- Colab (egen GPU): user's own Colab notebook, called directly from the browser; URL + token in localStorage only ----
   const COLAB_NB = 'https://colab.research.google.com/github/pistpejl/kino/blob/main/colab/kino_colab_engine.ipynb';
   const KAGGLE_NB_GH = 'https://github.com/pistpejl/kino/blob/main/kaggle/kino_kaggle_engine.ipynb';
+  const SESSION_COLAB_NB = 'https://colab.research.google.com/github/pistpejl/kino/blob/main/notebooks/kino_worker_colab.ipynb';
+  const SESSION_KAGGLE_NB = 'https://github.com/pistpejl/kino/blob/main/notebooks/kino_worker_kaggle.ipynb';
   const colabCfg = () => ({ url: (localStorage.getItem('kino.colab.url') || '').trim().replace(/\/+$/, ''), token: localStorage.getItem('kino.colab.token') || '' });
   const colabHdr = () => ({ Authorization: `Bearer ${colabCfg().token}` });
   async function colabHealth() {

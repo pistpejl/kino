@@ -35,3 +35,12 @@ Bild-till-video i automatiskt läge: **LTX-2.5 → LTX-2.3 → Wan 2.2 → Cosmo
 
 `#/lappsynk` och en valfri ruta i Musikvideo (`#/music`): en egen artistbild plus en låtdel blir ett sjungande klipp. Gratis på Hugging Face: **LongCat-Video-Avatar 1.6** (MIT), med **Kandinsky S2V 1.0** (MIT) och LTX-2 som reserv. Kräver samtycke; bara egna artister, persona eller KINO:s AI-figurer — aldrig kändisar. Vimoo 1.0 utvärderades men hade ingen fungerande publik Space och ingår därför inte i videokedjan.
 
+## Renderingssession (Colab / Kaggle)
+
+När du vill rendera många klipp: under **Inställningar** trycker du på **Starta renderingssession** och får en engångskod. Starta notebooken [kino_worker_colab.ipynb](https://colab.research.google.com/github/pistpejl/kino/blob/main/notebooks/kino_worker_colab.ipynb) (Öppna i Colab) eller importera [kino_worker_kaggle.ipynb](https://github.com/pistpejl/kino/blob/main/notebooks/kino_worker_kaggle.ipynb) på Kaggle (ett konto per person, för personligt bruk; GPU T4 eller P100, Internet On). Klistra in koden i cellen `PAIR_CODE` och kör. Workern **hämtar jobb från KINO-servern** (ingen tunnel, ingen ngrok). Statuspilen visar t.ex. `GPU-session: Colab T4 aktiv`. När notebooken stannar — efter några timmars gratis-GPU, inaktivitet, eller ca 60 s utan kontakt — faller KINO tillbaka på den vanliga Hugging Face-kedjan.
+
+Modeller som får plats på 16 GB T4 (sm75): **LTX-Video 2B** (Lightricks, community license / AUP, bara SFW) och **Wan 2.1 1.3B** (Apache-2.0); **Wan 2.2 TI2V-5B** med CPU-offload i 480p kan gå. Workern använder fp16 och PyTorch SDPA — inte FlashAttention-2 eller FP8-kärnor. **Kandinsky S2V Lite** (läppsynk) körs inte på T4: dokumentationen anger ungefär 28 GB även med VAE-tiling. Workern tar bara SFW-jobb.
+
+Uppskattade tider per ca 5 s-klipp i 480p (inte mätta i den här miljön, utifrån modellstorlek och vanliga rapporter): LTX-Video 2B typiskt 45–120 s; Wan 2.1 1.3B typiskt 1–3 min; Wan 2.2 TI2V-5B med offload typiskt 3–8 min. Den äldre Colab/Kaggle-panelen med trycloudflare-tunnel finns kvar för verktyg som LatentSync.
+
+
