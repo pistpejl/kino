@@ -719,3 +719,29 @@ details.cinema > summary { cursor:pointer; min-height:var(--tap); display:flex; 
 .agent-variants .variant { display:flex; flex-direction:column; gap:4px; padding:6px; border:1px solid var(--line); border-radius:var(--r-sm); }
 .agent-variants video { max-width:100%; }
 .agent-plan li { margin-bottom:4px; }
+
+/* Filmbibel + kamerarörelse-förhandsvisning */
+.bible-bar { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; margin:8px 0; padding:8px 10px; border:1px solid var(--line); border-radius:var(--r-sm); }
+.bible-bar a { font-weight:600; }
+.char-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:6px; margin:6px 0; padding:6px 0; border-bottom:1px solid var(--line); }
+.crew-table { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+.crew-table th, .crew-table td { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
+.previs-box { width:160px; overflow:hidden; border-radius:6px; background:#111; position:relative; }
+.previs-box small { display:block; padding:2px 6px; }
+.previs-shot { width:100%; aspect-ratio:9/16; background-size:cover; background-position:center; background-color:#222; transform-origin:50% 50%; }
+.previs-dolly-in, .previs-push-in { animation: kino-previs-dolly-in 2.8s ease-in-out infinite alternate; }
+.previs-dolly-out, .previs-pull-out { animation: kino-previs-dolly-out 2.8s ease-in-out infinite alternate; }
+.previs-orbit { animation: kino-previs-orbit 2.8s linear infinite; }
+.previs-pan-left { animation: kino-previs-pan-left 2.8s ease-in-out infinite alternate; }
+.previs-pan-right, .previs-tracking { animation: kino-previs-pan-right 2.8s ease-in-out infinite alternate; }
+.previs-crane-up, .previs-tilt-up { animation: kino-previs-tilt-up 2.8s ease-in-out infinite alternate; }
+.previs-crane-down, .previs-tilt-down { animation: kino-previs-tilt-down 2.8s ease-in-out infinite alternate; }
+.previs-handheld { animation: kino-previs-handheld 2.8s ease-in-out infinite alternate; }
+@keyframes kino-previs-dolly-in { from { transform: scale(1); } to { transform: scale(1.18); } }
+@keyframes kino-previs-dolly-out { from { transform: scale(1.18); } to { transform: scale(1); } }
+@keyframes kino-previs-orbit { 0% { transform: scale(1.08) translateX(-6%); } 50% { transform: scale(1.08) translateX(6%); } 100% { transform: scale(1.08) translateX(-6%); } }
+@keyframes kino-previs-pan-left { from { background-position: 80% 50%; } to { background-position: 20% 50%; } }
+@keyframes kino-previs-pan-right { from { background-position: 20% 50%; } to { background-position: 80% 50%; } }
+@keyframes kino-previs-tilt-up { from { background-position: 50% 80%; } to { background-position: 50% 20%; } }
+@keyframes kino-previs-tilt-down { from { background-position: 50% 20%; } to { background-position: 50% 80%; } }
+@keyframes kino-previs-handheld { 0% { transform: scale(1.06) translate(0,0) rotate(0); } 33% { transform: scale(1.07) translate(1.5%,-1%) rotate(-0.4deg); } 66% { transform: scale(1.05) translate(-1.2%,1%) rotate(0.4deg); } 100% { transform: scale(1.06) translate(0.6%,0) rotate(0); } }

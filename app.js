@@ -338,6 +338,81 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
   }
   const EMPTY = { image: 'Dina bilder visas här.', video: 'Dina videoklipp visas här.', music: 'Din musikvideo visas här.', edit: 'Dina redigerade bilder visas här.' };
   const pagehead = (t, sub) => h('div', { class: 'pagehead' }, h('h2', {}, t), sub ? h('p', {}, sub) : null);
+
+  const BIBLE_ID_RE = /^(p|b)_[a-z0-9]{6,24}$/;
+  const DEFAULT_MOVES = [
+    { id: 'dolly-in', sv: 'Dolly in' }, { id: 'dolly-out', sv: 'Dolly ut' }, { id: 'push-in', sv: 'Push in' }, { id: 'pull-out', sv: 'Pull out' },
+    { id: 'orbit', sv: 'Orbit' }, { id: 'crane-up', sv: 'Crane upp' }, { id: 'crane-down', sv: 'Crane ned' },
+    { id: 'pan-left', sv: 'Pan vänster' }, { id: 'pan-right', sv: 'Pan höger' }, { id: 'tilt-up', sv: 'Tilt upp' }, { id: 'tilt-down', sv: 'Tilt ned' },
+    { id: 'tracking', sv: 'Tracking' }, { id: 'handheld', sv: 'Handhållen' }, { id: 'static', sv: 'Statisk' },
+  ];
+  function bibleId() {
+    let id = '';
+    try { id = localStorage.getItem('kino.bibleId') || ''; } catch { /* ignore */ }
+    if (!BIBLE_ID_RE.test(id)) {
+      id = 'b_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+      try { localStorage.setItem('kino.bibleId', id); } catch { /* ignore */ }
+    }
+    return id;
+  }
+  async function loadBible() {
+    const r = await fetch(`${API}/bible/${bibleId()}`).then((x) => x.json()).catch(() => null);
+    return r && r.ok ? (r.bible || {}) : { name: '', logline: '', characters: [], locations: [], style: {}, rules: [] };
+  }
+  async function ensureMoves() {
+    if (st.moves && st.moves.length) return st.moves;
+    const r = await fetch(`${API}/bible/moves`).then((x) => x.json()).catch(() => null);
+    st.moves = (r && r.moves && r.moves.length) ? r.moves : DEFAULT_MOVES;
+    return st.moves;
+  }
+  function guessMove(s) {
+    const raw = String(s || '').trim().toLowerCase().replace(/_/g, ' ');
+    const list = st.moves || DEFAULT_MOVES;
+    const hit = list.find((m) => m.id === raw || m.id === raw.replace(/\s+/g, '-') || (m.sv && m.sv.toLowerCase() === raw));
+    if (hit) return hit.id;
+    const alias = { 'dolly in': 'dolly-in', 'dolly out': 'dolly-out', 'zoom in': 'push-in', 'zoom out': 'pull-out', orbit: 'orbit', handheld: 'handheld', 'handhållen': 'handheld', static: 'static', tracking: 'tracking' };
+    return alias[raw] || list.find((m) => raw.includes(m.id.replace(/-/g, ' ')))?.id || 'static';
+  }
+  function moveSelect(value, onChange) {
+    const list = st.moves || DEFAULT_MOVES;
+    const sel = select(list.map((m) => [m.id, m.sv || m.id]), guessMove(value));
+    sel.classList.add('move-sel');
+    sel.onchange = () => onChange && onChange(sel.value);
+    return sel;
+  }
+  function previsBox(imgUrl, move) {
+    const img = h('div', { class: 'previs-shot' });
+    if (imgUrl) img.style.backgroundImage = `url(${imgUrl})`;
+    const lab = h('small', { class: 'dim' }, '');
+    const apply = (mv) => {
+      const id = guessMove(mv);
+      img.className = 'previs-shot previs-' + id;
+      const m = (st.moves || DEFAULT_MOVES).find((x) => x.id === id);
+      lab.textContent = (m && m.sv) || id;
+    };
+    apply(move);
+    const wrap = h('div', { class: 'previs-box', title: 'Kamerarörelse-förhandsvisning (ingen AI-rendering)' }, img, lab);
+    wrap.setMove = apply;
+    wrap.setImage = (u) => { img.style.backgroundImage = u ? `url(${u})` : ''; };
+    return wrap;
+  }
+  function bibleBar() {
+    const sum = h('span', { class: 'bible-sum dim' }, 'Laddar filmbibel…');
+    const box = h('div', { class: 'bible-bar' }, h('a', { href: '#/filmbibel' }, 'Filmbibel'), sum);
+    loadBible().then((b) => {
+      const n = (b.characters || []).length; const loc = (b.locations || []).length;
+      const title = b.name || 'Ingen titel än';
+      sum.textContent = n || loc || (b.style && b.style.palette)
+        ? `${title} · ${n} figurer · ${loc} platser — följer med i varje tagning`
+        : `${title} — lägg till figurer så att looken hålls lika i alla scener`;
+    }).catch(() => { sum.textContent = 'Ingen filmbibel ännu — öppna och fyll i figurer.'; });
+    ensureMoves();
+    return box;
+  }
+  function bibleCredit() {
+    return h('p', { class: 'credit dim' }, 'Filmbibel, filmteam-planering och kamerarörelse-förhandsvisning är en lätt omtolkning av idéer från ', h('a', { href: 'https://github.com/Keys-Wasserman/Imagination-Studio-by-keys-Wasserman', target: '_blank', rel: 'noopener' }, 'Imagination Studio by keys+Wasserman'), ' (Apache-2.0) och Sam Wassermans Slate- och Motion Previs-flöden. Ingen studio-kod eller tunga modeller är inbakade.');
+  }
+
   function results(kind) { const g = h('div', { class: 'results', 'data-empty': EMPTY[kind] || 'Inget här än.' }); st.results[kind].forEach((i) => g.append(resultCard(i, kind))); return g; }
 
   // ---- Tillgångsbibliotek (IndexedDB, bara i den här webbläsaren) ----
@@ -573,6 +648,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       ['video', 'Video', 'Text eller bild blir ett videoklipp', '#/video'],
       ['music', 'Musikvideo', 'Låt och bilder blir en klippt video', '#/music'],
       ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
+      ['script', 'Filmbibel', 'Figurer, platser och stil som följer med i varje tagning', '#/filmbibel'],
       ['snabbvideo', 'Snabbvideo', 'Ämne till färdig kort video med röst, stockklipp och textning', '#/snabbvideo'],
       ['mikrodrama', 'Mikrodrama', 'Kort vertikal serie med hook, repliker och cliffhanger', '#/mikrodrama'],
       ['snabbvideo', 'Format', 'Välj ett beprövat kortvideoformat och använd det direkt', '#/format'],
@@ -622,7 +698,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     models.append(ul);
   }
 
-  const LAST_NAMES = { snabbvideo: 'Snabbvideo', mikrodrama: 'Mikrodrama', image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk', 'video-prompt': 'Video → prompt', 'gor-om': 'Gör om klipp', format: 'Format' };
+  const LAST_NAMES = { snabbvideo: 'Snabbvideo', mikrodrama: 'Mikrodrama', image: 'Bild', video: 'Video', music: 'Musikvideo', script: 'Manus', edit: 'Redigera bild', timeline: 'Tidslinje', klipp: 'Klipp ur lång video', lappsynk: 'Läppsynk', 'video-prompt': 'Video → prompt', 'gor-om': 'Gör om klipp', format: 'Format', filmbibel: 'Filmbibel' };
   const hub = (v, title, sub, items) => {
     const nsfw = st.lane === 'nsfw';
     v.append(pagehead(title, sub), h('div', { class: 'hub' }, items.map(([ic, t, d, href, preset, sfwOnly]) => {
@@ -638,6 +714,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       ['lipsync', 'Läppsynk', 'Din artist sjunger eller pratar', '#/lappsynk'],
       ['image', 'Bild', 'Skriv en text, få en bild', '#/image'],
       ['script', 'Manus', 'En idé blir scenkort att ändra', '#/script'],
+      ['script', 'Filmbibel', 'Figurer, platser, stil och filmteam-planering', '#/filmbibel'],
       ['viral', 'Viral-mixer', 'TikTok-trender (video + musik) blir en prompt', '#/viral'],
       ['snabbvideo', 'Format', 'Galleri med kortvideoformat – hooks, klippstilar, serier, musik', '#/format'],
       ['face', 'Skapa influencer-artist', 'Hitta på en AI-artist, få 4 ansikten, spara i artistlistan', '#/persona'],
@@ -1354,6 +1431,8 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const g = await grokToggle();
     const mp = h('input', { type: 'checkbox', checked: true });
     const mpEl = h('label', { class: 'wide' }, mp, ' Planera i tre omgångar (bildplan → kontinuitet → polering)');
+    const crew = h('input', { type: 'checkbox', checked: true });
+    const crewEl = h('label', { class: 'wide' }, crew, ' Filmteam-planering (regi, foto, scenografi, kontinuitet)');
     const lip = h('input', { type: 'checkbox' });
     const lipConsent = h('input', { type: 'checkbox' });
     const lipConsentEl = h('label', { class: 'wide', hidden: true }, lipConsent, ' Jag intygar att porträttet är min egen artist, persona eller AI-figur och har gett samtycke (inga kändisar).');
@@ -1372,7 +1451,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     paintSrc();
     const grid = results('music');
     const c = composer({ kind: 'music', engineKind: 'image', placeholder: 'Vad handlar videon om?', noEngineText: 'Ingen bildmodell svarar (behövs utan egna bilder)',
-      settings: [field('Genre', genre), field('Format', ratio), field('Längd', len), field('Utseende', look), field('Handling', action), field('Rörelse', motion, true), field('Stockklipp', srcToggle, true), field('Text i bild', overlay), g.el, mpEl, ...(lipEl ? [lipEl] : []), field('Låttext', lyrics, true)],
+      settings: [field('Genre', genre), field('Format', ratio), field('Längd', len), field('Utseende', look), field('Handling', action), field('Rörelse', motion, true), field('Stockklipp', srcToggle, true), field('Text i bild', overlay), g.el, mpEl, crewEl, ...(lipEl ? [lipEl] : []), field('Låttext', lyrics, true)],
       onGo: async ({ prompt, engine, say, setCancel, signal }) => {
         const cancelJob = (id) => setCancel(async () => { await fetch(`${API}/jobs/${id}`, { method: 'DELETE' }).catch(() => null); });
         if (motion.value === 'stock') {
@@ -1398,7 +1477,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
         if (st.lane === 'sfw' && lip.checked && !lipConsent.checked) return say('Kryssa i samtycket för läppsynk: bara egna artister, persona eller AI-figurer, inga kändisar.', true);
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('prompt', prompt); fd.append('genre', genre.value); fd.append('ratio', ratio.value); fd.append('seconds', len.value);
-        fd.append('lyrics', lyrics.value); fd.append('look', look.value); fd.append('action', action.value); fd.append('grok', g.cb.checked ? '1' : '0'); fd.append('motion', motion.value); fd.append('multiPass', mp.checked ? '1' : '0'); fd.append('imageEngine', engine.startsWith('puter:') ? '' : engine);
+        fd.append('lyrics', lyrics.value); fd.append('look', look.value); fd.append('action', action.value); fd.append('grok', g.cb.checked ? '1' : '0'); fd.append('motion', motion.value); fd.append('multiPass', mp.checked ? '1' : '0'); fd.append('crew', crew.checked ? '1' : '0'); fd.append('bibleId', bibleId()); fd.append('imageEngine', engine.startsWith('puter:') ? '' : engine);
         if (st.lane === 'sfw' && lip.checked) { fd.append('lipsync', '1'); fd.append('consent', 'true'); }
         if (song) fd.append('song', song);
         imgs.forEach((f) => fd.append('images', f));
@@ -1427,7 +1506,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const syncSteps = () => { const done = [Boolean(song), Boolean(c.ta.value.trim()), imgs.length > 0]; [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('done', done[i])); const cur = done.indexOf(false); [step1, step2, step3].forEach((s2, i) => s2.classList.toggle('cur', i === (cur < 0 ? 2 : cur))); [...bars.children].forEach((b, i) => b.classList.toggle('on', done[i])); };
     stepSync.fn = syncSteps; c.ta.addEventListener('input', syncSteps); syncSteps();
     v.classList.add('two');
-    v.append(musicTabs('mv'), pagehead('Ny musikvideo', '3 steg. Stockklipp och fler val finns under Inställningar i steg 2.'), bars, top, step2, step3, grid);
+    v.append(musicTabs('mv'), pagehead('Ny musikvideo', '3 steg. Stockklipp och fler val finns under Inställningar i steg 2.'), bibleBar(), bars, top, step2, step3, grid);
   }
 
   async function editView(v) {
@@ -2369,6 +2448,8 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
         return { text: `${text}\nVideon är klar (${Math.round(r.duration)} s) och sparad i Mina verk.`, link: '#/verk', media: [{ kind: 'video', url: abs(r.url) }], page: '#/snabbvideo', job: { tool: 'quick_video', args: a, script: { title: sc.title, sentences: sc.sentences, subs: sc.subs, transition: sc.transition } } };
       }
       case 'klipp': return { text: 'Klipp öppnas. Ladda upp den långa videon.', go: '#/klipp' };
+      case 'film_bible': return { text: 'Filmbibeln öppnas. Lägg in figurer, platser, stil och regler – de följer med i varje tagning.', go: '#/filmbibel' };
+      case 'crew_plan': st.agentPick = { ...(st.agentPick || {}), crewIdea: a.idea || '' }; return { text: 'Filmteam-planering öppnas. Du kan göra en shotlista från idén.', go: '#/filmbibel?plan=1' };
       case 'remake_clip': if (st.lane === 'nsfw') throw new Error('Gör om klipp finns bara i SFW-läget.'); st.agentPick = { ...(st.agentPick || {}), remake: { instructions: a.instructions || '', artist: a.artist || '' } }; if (a.format) st.fmtPick = { ...(st.fmtPick || {}), remake: a.format }; return { text: 'Gör om klipp öppnas. Ladda upp referensklippet (eget eller med tillstånd, max 60 s) och välj dina bilder.', go: '#/gor-om' };
       case 'formats': return { text: 'Formatgalleriet öppnas. Välj ett format och tryck Använd i Snabbvideo, Gör om klipp eller Mikrodrama.', go: `#/format${a.q ? `?q=${encodeURIComponent(a.q)}` : ''}` };
       case 'analyze_media': {
@@ -2592,7 +2673,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
   const mdSave = (l) => { const x = l.slice(0, 30); try { localStorage.setItem(MD_KEY, JSON.stringify(x)); } catch { localStorage.setItem(MD_KEY, JSON.stringify(x.slice(0, 10))); } return x; };
   const mdUpsert = (s) => { const l = mdLoad().filter((x) => x.id !== s.id); l.unshift(s); mdSave(l); };
   async function mdPlan(body, signal, say) {
-    const r = await fetch(`${API}/microdrama/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane, async: true }), signal });
+    const r = await fetch(`${API}/microdrama/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane, async: true, bibleId: bibleId() }), signal });
     const j = await r.json().catch(() => ({})); if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
     for (;;) {
       await abortable(new Promise((ok) => setTimeout(ok, 2500)), signal);
@@ -2788,7 +2869,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       } catch (err) { say(err.name === 'AbortError' ? 'Avbrutet.' : err.message, true); }
       finally { untrack(); ac = null; go.textContent = 'Skriv serien'; }
     };
-    v.append(pagehead('Mikrodrama', 'Korta vertikala serier i ReelShort-stil: en premiss blir avsnitt med hook, scener, repliker och cliffhanger. Ändra fritt och skicka scener vidare till Bild, Video och Läppsynk.'),
+    v.append(pagehead('Mikrodrama', 'Korta vertikala serier i ReelShort-stil: en premiss blir avsnitt med hook, scener, repliker och cliffhanger. Ändra fritt och skicka scener vidare till Bild, Video och Läppsynk.'), bibleBar(),
       gal,
       h('section', { class: 'step' }, tplNote, field('Premiss / idé', premise, true), h('div', { class: 'quick' }, sugBtn, saveTpl), sugBox, h('div', { class: 'row' }, field('Genre', genre), field('Avsnitt', eps), field('Längd per avsnitt', secs), field('Cinema-preset', cine)), mfp.el,
         h('div', { class: 'row md-modes' }, h('label', { class: 'chk' }, musicOn, ' 🎤 Musikartist i huvudrollen (performance-scener + låt)'), h('label', { class: 'chk' }, viralOn, ' 🔥 Viralt format (hook 1–2 s, 30–60 s, caption + hashtags)')), songBox,
@@ -2871,7 +2952,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     };
     search.oninput = paint; paint();
   }
-  const svScript = (body, signal, say) => svJob('script', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane }) }, signal, say);
+  const svScript = (body, signal, say) => svJob('script', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane, bibleId: bibleId() }) }, signal, say);
   function snabbvideoView(v) {
     v.classList.add('mdv', 'svv');
     const topic = h('textarea', { rows: 2, placeholder: 'Ämne, t.ex. "Varför Stockholm byggdes på fjorton öar"' });
@@ -2898,7 +2979,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     let cur = st.svPrefill || null; st.svPrefill = null; let ac = null; let jobId = null;
     const bBoard = h('button', { class: 'text', type: 'button', disabled: true }, 'Visa storyboard');
     // ---- Live storyboard: scene cards (thumbnail, line, duration) – swap clip, edit, reorder, delete, then Rendera. Only stock searches here. ----
-    const sbPost = async (path, body) => { const r = await fetch(`${API}/snabbvideo/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane }) }); const j = await r.json().catch(() => ({})); if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`); return j; };
+    const sbPost = async (path, body) => { const r = await fetch(`${API}/snabbvideo/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, lane: st.lane, bibleId: bibleId() }) }); const j = await r.json().catch(() => ({})); if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`); return j; };
     const media = (c, alt) => { if (!c) return h('div', { class: 'sb-none' }, 'Inget klipp'); if (c.kind === 'image' || c.thumb) return h('img', { src: abs(c.kind === 'image' ? c.url : c.thumb), alt, loading: 'lazy' }); return h('video', { src: `${c.url}#t=1`, muted: true, playsinline: true, preload: 'metadata' }); };
     function paintBoard() {
       board.innerHTML = ''; if (!cur || !cur.board) return;
@@ -2988,7 +3069,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       } catch (e) { const c = e.cancelled || e.name === 'AbortError'; say(c ? 'Avbrutet.' : e.message, !c); }
       finally { untrack(); ac = null; jobId = null; stopBtn(bRender, 'Rendera'); bScript.disabled = false; }
     };
-    v.append(pagehead('Snabbvideo', 'Ett ämne blir en färdig kort video: AI-manus, gratis röst, stockklipp per mening, inbränd textning och valfri musik. Skriv manus, ändra, rendera.'),
+    v.append(pagehead('Snabbvideo', 'Ett ämne blir en färdig kort video: AI-manus, gratis röst, stockklipp per mening, inbränd textning och valfri musik. Skriv manus, ändra, rendera.'), bibleBar(),
       h('section', { class: 'step' }, h('h3', {}, '1. Ämne'), field('Ämne', topic, true), h('div', { class: 'row' }, field('Språk', lang), field('Längd', secs), field('Ton', tone)), fp.el, h('div', { class: 'quick' }, bScript)),
       h('section', { class: 'step' }, edit, board, h('div', { class: 'quick' }, bBoard),
         h('h3', {}, '2. Utseende och ljud'), h('div', { class: 'row' }, field('Format', ratio), field('Röst', gender), field('Tempo', speed), field('Övergång', trans)),
@@ -3050,7 +3131,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
   // ---- Gör om klipp (#/gor-om): referensklipp + egna bilder -> ny video med samma klippning, tempo och ljud ----
   function gorOmView(v) {
     v.classList.add('mdv');
-    v.append(pagehead('Gör om klipp', 'Ladda upp ett referensklipp (10–20 s är lagom, max 60 s) och upp till 5 egna bilder – artister ur artistlistan, produkter eller kläder. Du får en ny video med samma klipp, tempo och ljud, men med dina bilder. Analysen visar typ per klipp (filmad/AI/motion graphics), musikdelar, hook i de första 3 sekunderna och en genereringsplan efter vald motors maxlängd. Valfritt: en ReShot-kontrollvideo (konturer, djup eller skelett) styr komposition och rörelse.'));
+    v.append(pagehead('Gör om klipp', 'Ladda upp ett referensklipp (10–20 s är lagom, max 60 s) och upp till 5 egna bilder – artister ur artistlistan, produkter eller kläder. Du får en ny video med samma klipp, tempo och ljud, men med dina bilder. Analysen visar typ per klipp (filmad/AI/motion graphics), musikdelar, hook i de första 3 sekunderna och en genereringsplan efter vald motors maxlängd. Valfritt: en ReShot-kontrollvideo (konturer, djup eller skelett) styr komposition och rörelse.'), bibleBar(), bibleCredit());
     if (st.lane === 'nsfw') return v.append(h('p', { class: 'lanenote nsfw' }, 'Gör om klipp finns bara i SFW-läget. Byt läge under Inställningar.'));
     const pick = st.agentPick && st.agentPick.remake ? st.agentPick.remake : null; if (pick) st.agentPick.remake = null;
     const mm = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
@@ -3191,12 +3272,14 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
         const r = { start: h('input', { type: 'number', step: 0.1, min: 0, value: s.start }), end: h('input', { type: 'number', step: 0.1, min: 0, value: s.end }), framing: inpT(s.framing), camera: inpT(s.camera), subject: inpT(s.subject), action: inpT(s.action), setting: inpT(s.setting), lens: inpT(s.lens), light: inpT(s.light), color: inpT(s.color), mood: inpT(s.mood), endState: inpT(s.endState), negative: inpT(s.negative), st: h('span', { class: 'chip' }, 'Väntar'), eng: h('small', { class: 'meta' }) };
         r.assetSel = select([['', 'Bild: alla'], ...assets.map((a, j) => [String(j), `Bild ${j + 1}: ${a.name}`])], keep[k] || '');
         r.redo = h('button', { class: 'text', type: 'button', hidden: !lastResult, onclick: () => render([k]) }, 'Gör om det här klippet');
+        r.moveSel = moveSelect(s.camera, (id) => { r.camera.value = id; if (r.previs) r.previs.setMove(id); });
+        r.previs = previsBox(s.thumbUrl ? abs(s.thumbUrl) : '', s.camera);
         shotRows.push(r);
         const origin = s.origin || {};
         const originLabel = origin.label || ORIGIN_SV[origin.type] || '';
         const originChip = originLabel ? h('span', { class: 'chip', title: (origin.reasons || []).join('; ') }, `${originLabel}${origin.confidence != null ? ' · ' + Math.round(origin.confidence * 100) + ' %' : ''}`) : null;
         board.append(h('div', { class: 'step', style: 'display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;margin:8px 0' },
-          s.thumbUrl ? h('img', { src: abs(s.thumbUrl), alt: `Klipp ${k + 1}`, style: 'width:160px;border-radius:6px' }) : null,
+          h('div', {}, r.previs, field('Kamerarörelse', r.moveSel)),
           h('div', { style: 'flex:1;min-width:240px' }, h('b', {}, `Klipp ${k + 1} `), originChip, ' ', r.st, ' ', r.eng,
             h('div', { class: 'grid2' }, field('Från (s)', r.start), field('Till (s)', r.end), field('Utsnitt', r.framing), field('Kamera', r.camera), field('Lins', r.lens), field('Ljus', r.light), field('Färg', r.color), field('Stämning', r.mood), field('Motiv', r.subject, true), field('Handling', r.action, true), field('Miljö', r.setting, true), field('Sluttillstånd (för nästa klipp)', r.endState, true), field('Negativ prompt', r.negative, true), field('Bild till klippet', r.assetSel)),
             h('div', { class: 'quick' }, r.redo))));
@@ -3209,7 +3292,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       if (f.size > 100 * 1048576) return say('Filen är för stor (max 100 MB).', true);
       busy = true; anaBtn.disabled = true; say('Laddar upp…'); ana = null; lastResult = null; board.innerHTML = ''; out.innerHTML = '';
       try {
-        const fd = new FormData(); fd.append('video', f); fd.append('lane', st.lane); if (rfp.get()) fd.append('format', rfp.get());
+        const fd = new FormData(); fd.append('video', f); fd.append('lane', st.lane); fd.append('bibleId', bibleId()); if (rfp.get()) fd.append('format', rfp.get());
         const r = await fetch(`${API}/remake/analyze`, { method: 'POST', body: fd }); const j = await r.json().catch(() => ({}));
         if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
         ana = await pollRm(j.jobId, (s) => say(s.message || 'Analyserar…'));
@@ -3227,7 +3310,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       if (busy) return; busy = true; go.disabled = true; cancelBtn.hidden = false; ac = new AbortController(); const t0 = Date.now();
       try {
         const shots = shotRows.map((r) => ({ start: +r.start.value, end: +r.end.value, framing: r.framing.value, camera: r.camera.value, subject: r.subject.value, action: r.action.value, setting: r.setting.value, lens: r.lens && r.lens.value, light: r.light && r.light.value, color: r.color && r.color.value, mood: r.mood && r.mood.value, endState: r.endState && r.endState.value, negative: r.negative && r.negative.value, asset: r.assetSel.value }));
-        const fd = new FormData(); fd.append('remakeId', ana.remakeId); fd.append('lane', st.lane); fd.append('shots', JSON.stringify(shots));
+        const fd = new FormData(); fd.append('remakeId', ana.remakeId); fd.append('lane', st.lane); fd.append('bibleId', bibleId()); fd.append('shots', JSON.stringify(shots));
         fd.append('instructions', instr.value.trim()); fd.append('format', rfp.get()); fd.append('audio', audio.value); fd.append('songStart', songStart.value || '0'); fd.append('animate', animate.value); fd.append('videoEngine', vEngine.value); fd.append('consent', consent.checked ? 'true' : ''); if (controlType.value) fd.append('controlType', controlType.value);
         if (only) fd.append('only', JSON.stringify(only));
         if (!only || !lastResult) { fd.append('assetsMeta', JSON.stringify(assets.map((a) => ({ name: a.name, kind: a.kind, source: a.source })))); assets.forEach((a, k) => fd.append('assets', a.blob, `bild${k}.${/png/.test(a.blob.type) ? 'png' : 'jpg'}`)); }
@@ -3262,10 +3345,145 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       h('section', { class: 'step' }, h('b', {}, '3. Inställningar'), field('Instruktioner', instr, true), rfp.el, field('Ljud', audio), songBox, field('Rörelse', animate, true), field('Videomotor', vEngine), h('p', { class: 'meta' }, 'Genereringsplanen följer motorns maxlängd: LTX-2.5 och LTX-2.3 5 s, Wan 2.2 5 s (vissa Spaces 10 s), Cosmos3-Nano ca 8 s, Kandinsky 5 s fast, MiniMax H3 5 s på gratisspacen (modellen uppges klara ca 14 s). MiniMax H3: community-licens undantar EU, Storbritannien, Sydkorea och USA. Föredra LTX, Wan, Cosmos eller Kandinsky.'), field('Kontrollvideo (ReShot)', controlType, true), controlHint, h('div', { class: 'quick' }, prevBtn), ctrlPrev, controlCredit),
       status, board, h('div', { class: 'quick' }, go, cancelBtn), out);
   }
+
+  function filmbibleView(v, q) {
+    v.classList.add('filmbibel');
+    const status = h('p', { class: 'status', 'aria-live': 'polite' });
+    const say = (t, err) => { status.textContent = t || ''; status.classList.toggle('err', Boolean(err)); };
+    const name = h('input', { type: 'text', placeholder: 'Projektnamn, t.ex. Neon Harbor' });
+    const logline = h('textarea', { rows: 2, placeholder: 'Logline: en mening om världen och konflikten' });
+    const palette = h('input', { type: 'text', placeholder: 't.ex. teal, rust, sodium orange' });
+    const lens = h('input', { type: 'text', placeholder: 't.ex. anamorphic 40mm' });
+    const lighting = h('input', { type: 'text', placeholder: 't.ex. wet-down night practicals' });
+    const mood = h('input', { type: 'text', placeholder: 't.ex. neo-noir' });
+    const rules = h('textarea', { rows: 3, placeholder: 'En regel per rad, t.ex. aldrig byta Miras jackfärg' });
+    const charBox = h('div', { class: 'bible-list' });
+    const locBox = h('div', { class: 'bible-list' });
+    let characters = []; let locations = [];
+    const rowChar = (c = {}) => {
+      const o = { name: h('input', { type: 'text', placeholder: 'Namn', value: c.name || '' }), look: h('input', { type: 'text', placeholder: 'Utseende', value: c.look || '' }), wardrobe: h('input', { type: 'text', placeholder: 'Kläder', value: c.wardrobe || '' }), refUrl: h('input', { type: 'url', placeholder: 'Referensbild-URL (valfri)', value: c.refUrl || '' }) };
+      o.el = h('div', { class: 'char-row' }, field('Namn', o.name), field('Utseende', o.look, true), field('Kläder', o.wardrobe, true), field('Referens', o.refUrl, true), h('button', { class: 'text dim', type: 'button', onclick: () => { characters = characters.filter((x) => x !== o); o.el.remove(); } }, 'Ta bort'));
+      return o;
+    };
+    const rowLoc = (l = {}) => {
+      const o = { name: h('input', { type: 'text', placeholder: 'Plats', value: l.name || '' }), look: h('input', { type: 'text', placeholder: 'Utseende', value: l.look || '' }) };
+      o.el = h('div', { class: 'char-row' }, field('Plats', o.name), field('Utseende', o.look, true), h('button', { class: 'text dim', type: 'button', onclick: () => { locations = locations.filter((x) => x !== o); o.el.remove(); } }, 'Ta bort'));
+      return o;
+    };
+    const paintLists = () => { charBox.innerHTML = ''; locBox.innerHTML = ''; characters.forEach((r) => charBox.append(r.el)); locations.forEach((r) => locBox.append(r.el)); };
+    const addChar = (c) => { const r = rowChar(c); characters.push(r); charBox.append(r.el); };
+    const addLoc = (l) => { const r = rowLoc(l); locations.push(r); locBox.append(r.el); };
+    const collect = () => ({
+      name: name.value.trim(), logline: logline.value.trim(),
+      characters: characters.map((r) => ({ name: r.name.value.trim(), look: r.look.value.trim(), wardrobe: r.wardrobe.value.trim(), refUrl: r.refUrl.value.trim() })).filter((c) => c.name),
+      locations: locations.map((r) => ({ name: r.name.value.trim(), look: r.look.value.trim() })).filter((l) => l.name),
+      style: { palette: palette.value.trim(), lens: lens.value.trim(), lighting: lighting.value.trim(), mood: mood.value.trim() },
+      rules: rules.value.split(/\n+/).map((x) => x.trim()).filter(Boolean),
+    });
+    const fill = (b) => {
+      name.value = (b && b.name) || ''; logline.value = (b && b.logline) || '';
+      const stl = (b && b.style) || {};
+      palette.value = stl.palette || ''; lens.value = stl.lens || ''; lighting.value = stl.lighting || ''; mood.value = stl.mood || '';
+      rules.value = ((b && b.rules) || []).join('\n');
+      characters = []; locations = [];
+      ((b && b.characters) || []).forEach((c) => addChar(c));
+      ((b && b.locations) || []).forEach((l) => addLoc(l));
+      if (!characters.length) addChar();
+      if (!locations.length) addLoc();
+    };
+    const save = async () => {
+      const bible = collect();
+      const r = await fetch(`${API}/bible/${bibleId()}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bible, lane: st.lane }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+      say('Filmbibeln är sparad och följer med i Musikvideo, Mikrodrama, Gör om klipp och Snabbvideo.');
+      return j.bible;
+    };
+    const load = async () => {
+      try { fill(await loadBible()); say('Filmbibel ' + bibleId()); }
+      catch (e) { fill({}); say(e.message || 'Kunde inte läsa bibeln.', true); }
+    };
+
+    const idea = h('textarea', { rows: 3, placeholder: 'Manus, låtidé eller premiss för filmteam-planering' });
+    const params = new URLSearchParams(q || location.hash.split('?')[1] || '');
+    if (st.agentPick && st.agentPick.crewIdea) { idea.value = st.agentPick.crewIdea; st.agentPick.crewIdea = ''; }
+    const crewOut = h('div', { class: 'crew-out' });
+    const planBtn = h('button', { class: 'text primary', type: 'button' }, 'Planera med filmteam');
+    planBtn.onclick = async () => {
+      if (!idea.value.trim()) return say('Skriv ett manus, en låtidé eller en premiss.', true);
+      planBtn.disabled = true; say('Planerar (regissör → foto → scenografi → kontinuitet)…');
+      try {
+        await save().catch(() => null);
+        const r = await fetch(`${API}/crew/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idea: idea.value.trim(), bibleId: bibleId(), lane: st.lane }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+        crewOut.innerHTML = '';
+        const rows = (j.shots || []).map((s) => {
+          const sel = moveSelect(s.move, (id) => { s.move = id; prev.setMove(id); });
+          const prev = previsBox('', s.move);
+          return h('tr', {}, h('td', {}, String((s.i ?? 0) + 1)), h('td', {}, s.intent || ''), h('td', {}, s.size || ''), h('td', {}, s.lens || ''), h('td', {}, sel, prev), h('td', {}, s.lighting || ''), h('td', {}, s.prompt || ''));
+        });
+        crewOut.append(
+          h('p', { class: 'meta' }, `Källa: ${j.source}${j.passes && j.passes.length ? ' · pass: ' + j.passes.join(', ') : ''}`),
+          h('table', { class: 'crew-table' }, h('thead', {}, h('tr', {}, ...['#', 'Avsikt', 'Utsnitt', 'Lins', 'Rörelse', 'Ljus', 'Prompt'].map((x) => h('th', {}, x)))), h('tbody', {}, ...rows))
+        );
+        say(`${(j.shots || []).length} tagningar. Byt kamerarörelse i tabellen (förhandsvisning) och använd samma bibel när du renderar.`);
+      } catch (e) { say(e.message, true); }
+      finally { planBtn.disabled = false; }
+    };
+
+    const still = h('input', { type: 'file', accept: 'image/*' });
+    const move = moveSelect('dolly-in');
+    const prevLive = previsBox('', 'dolly-in');
+    move.onchange = () => prevLive.setMove(move.value);
+    still.onchange = () => {
+      const f = still.files && still.files[0];
+      if (!f) return;
+      const u = URL.createObjectURL(f);
+      prevLive.setImage(u);
+      prevLive.setMove(move.value);
+    };
+    const prevBtn = h('button', { class: 'text', type: 'button' }, 'Gör kort förhandsfilm (valfritt)');
+    const prevOut = h('div', {});
+    prevBtn.onclick = async () => {
+      const f = still.files && still.files[0]; if (!f) return say('Välj en stillbild först.', true);
+      prevBtn.disabled = true; say('Gör en kort Ken Burns-förhandsvisning…');
+      try {
+        const fd = new FormData(); fd.append('image', f); fd.append('move', move.value); fd.append('seconds', '2.5'); fd.append('ratio', '9:16');
+        const r = await fetch(`${API}/previs`, { method: 'POST', body: fd });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error || `Servern svarade ${r.status}`);
+        prevOut.innerHTML = '';
+        prevOut.append(h('video', { src: abs(j.url), controls: true, playsinline: true, style: 'width:180px;border-radius:8px' }), h('p', { class: 'meta' }, `${j.moveLabel || j.move} · ${j.file || j.url}`));
+        say(`Förhandsvisning klar (${j.moveLabel || j.move}). Sökvägen är ${j.file || j.url}.`);
+      } catch (e) { say(e.message, true); }
+      finally { prevBtn.disabled = false; }
+    };
+
+    const saveBtn = h('button', { class: 'text primary', type: 'button' }, 'Spara filmbibel');
+    saveBtn.onclick = async () => { saveBtn.disabled = true; try { await save(); } catch (e) { say(e.message, true); } finally { saveBtn.disabled = false; } };
+
+    v.append(
+      pagehead('Filmbibel', 'Figurer, platser, stil och regler för projektet. De injiceras automatiskt i varje tagning i Musikvideo, Mikrodrama, Gör om klipp och Snabbvideo, så att looken hålls lika mellan scener.'),
+      h('p', { class: 'meta' }, 'Id: ', bibleId()),
+      h('div', { class: 'step' }, h('h3', {}, 'Projekt'), field('Namn', name, true), field('Logline', logline, true)),
+      h('div', { class: 'step' }, h('h3', {}, 'Figurer'), charBox, h('button', { class: 'text', type: 'button', onclick: () => addChar() }, 'Lägg till figur')),
+      h('div', { class: 'step' }, h('h3', {}, 'Platser'), locBox, h('button', { class: 'text', type: 'button', onclick: () => addLoc() }, 'Lägg till plats')),
+      h('div', { class: 'step' }, h('h3', {}, 'Stil'), h('div', { class: 'grid2' }, field('Palett', palette), field('Lins', lens), field('Ljus', lighting), field('Stämning', mood)), field('Regler (en per rad)', rules, true)),
+      h('div', { class: 'quick' }, saveBtn),
+      h('div', { class: 'step' }, h('h3', {}, 'Filmteam-planering'), h('p', { class: 'meta' }, 'Regissör (beats) → fotograf (utsnitt, lins, rörelse, ljus) → scenografi → kontinuitet. Använder samma textmodeller som den vanliga tre-pass-planeringen, med en deterministisk reservplan.'), field('Manus eller idé', idea, true), planBtn, crewOut),
+      h('div', { class: 'step' }, h('h3', {}, 'Kamerarörelse-förhandsvisning'), h('p', { class: 'meta' }, 'Billig förhandsvisning i webbläsaren (Ken Burns/parallax) innan någon AI-rendering. Rörelsen går sedan med i motorprompten.'), field('Stillbild (valfri)', still), field('Rörelse', move), prevLive, prevBtn, prevOut),
+      status, bibleCredit()
+    );
+    load();
+    ensureMoves().then(() => { /* refresh labels if moves arrived */ });
+    if (params.get('plan') === '1') idea.focus();
+  }
+
   const VIEWS = { snabbvideo: snabbvideoView, mikrodrama: mikrodramaView, agent: agentView, persona: personaView, klipp: klippView, script: scriptView, '': home, image: imageView, video: videoView, music: musicView, edit: editView, timeline: timelineView,
-    skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, 'video-prompt': videoPromptView, 'gor-om': gorOmView, format: formatView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
-  const ALIAS = { formats: 'format', formater: 'format', 'format-galleri': 'format', remake: 'gor-om', 'gör-om': 'gor-om', gorom: 'gor-om', video2prompt: 'video-prompt', videoprompt: 'video-prompt', quickvideo: 'snabbvideo', 'quick-video': 'snabbvideo', microdrama: 'mikrodrama', 'micro-drama': 'mikrodrama', lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '' };
-  const SECTION = { '': '', snabbvideo: 'snabbvideo', mikrodrama: 'mikrodrama', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', 'video-prompt': 'verktyg', 'gor-om': 'verktyg', format: 'skapa', verk: 'verk', bibliotek: 'verk' };
+    skapa: skapaView, viral: viralView, verktyg: verktygView, verk: verkView, lappsynk: lappsynkView, 'video-prompt': videoPromptView, 'gor-om': gorOmView, format: formatView, filmbibel: filmbibleView, bibliotek: bibliotekView, installningar: settingsView, motor: settingsView };
+  const ALIAS = { formats: 'format', formater: 'format', 'format-galleri': 'format', remake: 'gor-om', 'gör-om': 'gor-om', gorom: 'gor-om', video2prompt: 'video-prompt', videoprompt: 'video-prompt', quickvideo: 'snabbvideo', 'quick-video': 'snabbvideo', microdrama: 'mikrodrama', 'micro-drama': 'mikrodrama', lipsync: 'lappsynk', 'läppsynk': 'lappsynk', library: 'bibliotek', create: 'skapa', tools: 'verktyg', settings: 'installningar', 'inställningar': 'installningar', results: 'verk', home: '', bible: 'filmbibel', filmbible: 'filmbibel', 'film-bible': 'filmbibel', slate: 'filmbibel' };
+  const SECTION = { '': '', snabbvideo: 'snabbvideo', mikrodrama: 'mikrodrama', agent: 'skapa', persona: 'skapa', skapa: 'skapa', image: 'skapa', video: 'skapa', music: 'skapa', script: 'skapa', viral: 'skapa', verktyg: 'verktyg', edit: 'verktyg', timeline: 'verktyg', klipp: 'verktyg', motor: 'verktyg', lappsynk: 'verktyg', 'video-prompt': 'verktyg', 'gor-om': 'verktyg', format: 'skapa', filmbibel: 'skapa', verk: 'verk', bibliotek: 'verk' };
   function route() {
     let raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
     let [k, q] = raw.split('?'); k = k || '';

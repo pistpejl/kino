@@ -22,6 +22,13 @@ Konturerna tas ut med ffmpeg på gratisservern. Djup och skelett kräver GPU; p�
 
 Kontrollvideo inspirerad av [ReShot](https://github.com/maosika-ai/reshot) (Apache-2.0) av [Maosika 猫斯卡](https://www.maosika.com). KINO kopierar inte ReShots källkod.
 
+## Filmbibel, filmteam och kamerarörelse
+
+`#/filmbibel` – en filmbibel per projekt (figurer med utseende/kläder, platser, palett/lins/ljus och regler) injiceras i varje tagning i Musikvideo, Mikrodrama, Gör om klipp och Snabbvideo. Filmteam-planering (regi → foto → scenografi → kontinuitet) bygger en shotlista ovanpå den vanliga tre-pass-planeringen. Kamerarörelse-förhandsvisning är en billig Ken Burns/CSS-animation i webbläsaren innan någon AI-rendering; rörelsen följer med i motorprompten.
+
+Idéer (ingen kod kopierad, inga tunga pose/djup-modeller) från [Imagination Studio by keys+Wasserman](https://github.com/Keys-Wasserman/Imagination-Studio-by-keys-Wasserman) (Apache-2.0) och Sam Wassermans [Slate](https://github.com/wassermanproductions/slate)- och [Motion Previs Studio](https://github.com/wassermanproductions/motion-previs-studio)-flöden.
+
+
 Bild-till-video i automatiskt läge: **LTX-2.5 → LTX-2.3 → Wan 2.2 → Cosmos3-Nano → Kandinsky 6.0 → MiniMax H3**, sedan Ken Burns när kvoten är slut. Finns kontrollvideo väljs Wan 2.2 först (start- och slutruta). MiniMax H3:s community-licens undantar EU, Storbritannien, Sydkorea och USA.
 
 ## Läppsynk
