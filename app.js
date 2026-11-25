@@ -2,6 +2,20 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
 (() => {
   const API = (window.KINO_CONFIG && window.KINO_CONFIG.proxyUrl || '').replace(/\/$/, '') + '/api/kino';
   const $ = (s, r = document) => r.querySelector(s);
+  // Inställningar → Textmodell: every call to the KINO API carries the choice (server: musicvideo/textpref.js)
+  const textModel = () => { try { return localStorage.getItem('kino.textModel') || 'auto'; } catch (e) { return 'auto'; } };
+  if (!window.__kinoTextModelFetch) {
+    window.__kinoTextModelFetch = true;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      const tm = textModel();
+      if (tm === 'auto' || !url.startsWith(API)) return nativeFetch(input, init);
+      const headers = new Headers((init && init.headers) || (typeof input !== 'string' && input.headers) || {});
+      headers.set('X-Kino-Text-Model', tm);
+      return nativeFetch(input, { ...(init || {}), headers });
+    };
+  }
   const h = (tag, attrs = {}, ...kids) => {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -828,10 +842,20 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
   function settingsView(v, q) {
     const tool = new URLSearchParams(q || '').get('t');
     const laneCard = h('section', { class: 'setcard' }, h('div', {}, h('b', {}, 'Läge'), h('small', {}, st.lane === 'nsfw' ? 'NSFW: bara för vuxna 18+. Minderåriga blockeras alltid.' : 'SFW. Vuxenläget (18+) kräver ålderskontroll.')), laneBtn);
+    const tmSel = select([['auto', 'Auto (standard)'], ['huihui', 'Huihui Qwen3.8 27B (ocensurerad)']], textModel());
+    const tmNote = h('small', {}, 'Används för manus, agenten, Mikrodrama, Snabbvideo och filmbibeln.');
+    const paintTm = (opts) => {
+      const o = (opts || []).find((x) => x.id === tmSel.value);
+      tmNote.textContent = o ? `${o.note}${o.available === false ? ` Just nu inte tillgänglig (${o.reason}), KINO använder vanliga kedjan.` : ''}` : 'Används för manus, agenten, Mikrodrama, Snabbvideo och filmbibeln.';
+    };
+    let tmOpts = null;
+    tmSel.onchange = () => { try { localStorage.setItem('kino.textModel', tmSel.value); } catch (e) {} paintTm(tmOpts); };
+    fetch(`${API}/textmodels`).then((r) => r.json()).then((j) => { tmOpts = j.options; paintTm(tmOpts); }).catch(() => null);
+    const tmCard = h('section', { class: 'setcard' }, h('div', {}, h('b', {}, 'Textmodell'), tmNote), tmSel);
     const sess = sessionPanel();
     const panel = colabPanel((on) => paintPill(on));
     panel.open = true;
-    v.append(pagehead(/^#\/motor/.test(location.hash) ? 'Egen GPU' : 'Inställningar', 'Motor och läge. Allt sparas bara i den här webbläsaren.'), laneCard, h('div', { class: 'stoprow' }, stopAllButton()), sess, h('h2', { class: 'sect' }, 'Motor: Colab / Kaggle (egen GPU, med tunnel)'), panel);
+    v.append(pagehead(/^#\/motor/.test(location.hash) ? 'Egen GPU' : 'Inställningar', 'Motor och läge. Allt sparas bara i den här webbläsaren.'), laneCard, tmCard, h('div', { class: 'stoprow' }, stopAllButton()), sess, h('h2', { class: 'sect' }, 'Motor: Colab / Kaggle (egen GPU, med tunnel)'), panel);
     if (tool) setTimeout(() => { const el = document.getElementById(`tool-${tool}`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 300);
   }
 
