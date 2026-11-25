@@ -179,10 +179,28 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       if (r.ok) {
         const j = await r.json();
         sessionInfo = j || { active: false, label: 'GPU-session: inaktiv' };
+        syncQwen38Mode();
         paintPill();
         document.dispatchEvent(new CustomEvent('kino-session', { detail: sessionInfo }));
       }
     } catch { /* offline */ }
+  }
+  // Qwen3.8 27B (bildförståelse + manus i egen GPU-session). Läget sparas i webbläsaren och skickas till servern
+  // när en session med Qwen3.8 ansluter (servern minns det bara i minnet).
+  const Q38_KEY = 'kino-qwen38-mode';
+  let q38Synced = '';
+  function qwen38Mode() { try { return localStorage.getItem(Q38_KEY) || 'reserv'; } catch { return 'reserv'; } }
+  async function setQwen38Mode(mode) {
+    try { localStorage.setItem(Q38_KEY, mode); } catch { /* privat läge */ }
+    const r = await fetch(`${API}/qwen38/mode`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) q38Synced = `${sessionInfo && sessionInfo.startedAt}:${mode}`;
+    return j;
+  }
+  function syncQwen38Mode() {
+    const live = sessionInfo && sessionInfo.active && (sessionInfo.supports || []).includes('qwen38-vl');
+    const key = `${sessionInfo && sessionInfo.startedAt}:${qwen38Mode()}`;
+    if (live && q38Synced !== key) { q38Synced = key; setQwen38Mode(qwen38Mode()).catch(() => { q38Synced = ''; }); }
   }
   pollSession();
   setInterval(pollSession, 15000);
@@ -836,8 +854,33 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       h('p', { class: 'meta' }, 'Sessionen slutar när du stänger notebooken, efter några timmars gratis-GPU, eller vid inaktivitet (efter ca 60 sekunder utan kontakt faller KINO tillbaka på Hugging Face).'),
       h('p', { class: 'meta' }, 'Kaggle tillåter ett konto per person och är för ditt eget personliga bruk. På Kaggle: File → Import Notebook → klistra in GitHub-länken, Accelerator → GPU T4 (eller P100), Internet → On.'),
       h('p', { class: 'meta' }, 'Workern kör bara SFW. På 16 GB T4 (sm75) används LTX-Video 2B och Wan 2.1 1.3B, ev. Wan 2.2 TI2V-5B med CPU-offload i 480p. Kandinsky S2V Lite får inte plats. Tiderna är uppskattningar, inte mätta här: LTX-Video ca 45–120 s, Wan 1.3B ca 1–3 min, Wan 5B med offload ca 3–8 min per 5 s-klipp.'),
+      qwen38Panel(),
       h('p', { class: 'meta' }, 'Äkta läppsynk: MuseTalk 1.5 (MIT) körs i sessionen. Under Läppsynk väljer du motor "Egen GPU: MuseTalk 1.5" och typ "Bara munnen" eller "Levande bild + läppsynk" (bilden får rörelse med LTX-Video och sedan synkas munnen). Första gången hämtas ca 4 GB vikter, därefter ca 1–3 min per 5 s (levande bild ca 5–10 min). Har du en äldre notebook igång: starta om den så hämtas den nya workern.')
     );
+  }
+  function qwen38Panel() {
+    const stat = h('div', { class: 'meta' }, 'Qwen3.8: inte ansluten');
+    const sel = h('select', { 'aria-label': 'När ska Qwen3.8 användas' },
+      h('option', { value: 'reserv' }, 'Som reserv (när de vanliga modellerna inte svarar)'),
+      h('option', { value: 'forst' }, 'Först för bildförståelse (bilagor, Video → prompt, Gör om, referensbilder)'),
+      h('option', { value: 'av' }, 'Av'));
+    sel.value = qwen38Mode();
+    sel.onchange = async () => { stat.textContent = 'Sparar…'; try { await setQwen38Mode(sel.value); } catch { /* offline */ } paint(); };
+    const paint = () => {
+      const live = sessionInfo && sessionInfo.active;
+      const has = live && (sessionInfo.supports || []).includes('qwen38-vl');
+      stat.textContent = has ? `Qwen3.8 27B: ansluten i sessionen (${{ reserv: 'som reserv', forst: 'används först', av: 'avstängd' }[sel.value]})`
+        : live ? 'Qwen3.8: sessionen saknar Qwen3.8 (starta om notebooken med den nya koden, QWEN38 = True)' : 'Qwen3.8: ingen session ansluten';
+      stat.classList.toggle('on', Boolean(has));
+    };
+    document.addEventListener('kino-session', paint);
+    paint();
+    return h('div', { class: 'setcard q38-card' },
+      h('b', {}, 'Qwen3.8 27B abliterated (bildförståelse + manus)'),
+      stat,
+      h('p', { class: 'meta' }, 'En syn- och språkmodell: den tittar på bilder och videorutor och skriver text (beskrivningar, bild-/scenprompter, manus). Den skapar inga bilder – för det används bildmotorerna som vanligt.'),
+      h('p', { class: 'meta' }, 'Används när du bifogar en bild (Titta/lyssna på bilaga), i Video → prompt, Gör om, referensbilder och SFW-manus. Körs i din egen GPU-session med llama.cpp: 2×T4 på Kaggle → Q4 (17 GB), 1×T4 i Colab → IQ3 (11 GB). Första gången hämtas 12–18 GB; laddning ca 1–3 min, sedan ca 15–60 s per bild och 2–5 min för ett längre manus. Laddas ur automatiskt när video eller läppsynk renderas. Bara SFW. Manus: välj Textmodell → Huihui Qwen3.8 ovan, då används sessionen först och annars Hugging Face-Spacet.'),
+      h('label', { class: 'meta' }, 'Använd Qwen3.8: ', sel));
   }
   function settingsView(v, q) {
     const tool = new URLSearchParams(q || '').get('t');

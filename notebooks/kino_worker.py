@@ -29,6 +29,8 @@ DEFAULT_SERVER = os.environ.get("KINO_SERVER", "https://grok-musik-video.onrende
 SUPPORTS = ["video", "wan-2.2", "wan-2.2-ti2v-5b", "ltx-video", "lipsync", "musetalk", "musetalk-alive", "whisperx"]
 # 'whisperx' = speech-to-text with real word times (forced alignment) for Klipp and word-by-word captions,
 # optional speaker labels (SpeechBrain ECAPA, not the gated pyannote model). See kino_whisperx.py.
+# 'qwen38-vl' = Qwen3.8 27B abliterated (vision-language, image+text in → text out) in llama.cpp, added at
+# registration when the GPU has room (kino_qwen38.py). It is unloaded before every other GPU job.
 READY: set = set()  # engines whose code + weights are downloaded; sent with every heartbeat
 # 'musetalk' = real MuseTalk 1.5 lip sync on a still or a video; 'musetalk-alive' = the still is
 # first animated with LTX/Wan ("Levande bild + läppsynk"), then lip-synced. See kino_musetalk.py.
@@ -71,7 +73,7 @@ class WorkerClient:
 
     def pair_register(self, code: str, platform: str, gpu: str):
         r = self._req("POST", "/api/kino/worker/register", {
-            "code": code, "platform": platform, "gpu": gpu, "supports": SUPPORTS,
+            "code": code, "platform": platform, "gpu": gpu, "supports": supports_list(),
         })
         if not r.get("ok") or not r.get("token"):
             raise RuntimeError(r.get("message") or "register failed")
@@ -120,6 +122,28 @@ class WorkerClient:
             raw=True,
             timeout=120,
         )
+
+
+def qwen38_wanted() -> bool:
+    try:
+        import kino_qwen38  # type: ignore
+        if not kino_qwen38.enabled():
+            return False
+        return os.environ.get("KINO_WORKER_MOCK") == "1" or kino_qwen38.plan() is not None
+    except Exception:
+        return False
+
+
+def supports_list() -> list:
+    return SUPPORTS + (["qwen38-vl"] if qwen38_wanted() else [])
+
+
+def qwen38_unload():
+    try:
+        import kino_qwen38  # type: ignore
+        kino_qwen38.unload()
+    except Exception as err:
+        eprint(f"Qwen3.8 unload: {err}")
 
 
 def detect_platform():
@@ -228,6 +252,8 @@ def real_render(job: dict, image: Path | None, audio: Path | None, work: Path, v
 
 def engine_label(job: dict) -> str:
     eng = (job.get("engine") or "video").lower()
+    if job.get("kind") == "vlm":
+        return "Qwen3.8 27B abliterated (llama.cpp)"
     if job.get("kind") == "asr" or eng == "whisperx":
         return "WhisperX large-v3 + ordjustering"
     if eng == "musetalk-alive":
@@ -248,6 +274,17 @@ def process_job(client: WorkerClient, job: dict, mock: bool) -> None:
         video = None
         if job.get("videoUrl"):
             video = client.download(job["videoUrl"], work / "input.mp4")
+        if job.get("kind") == "vlm":
+            import kino_qwen38  # type: ignore
+            req = client._req("GET", job["requestUrl"], timeout=120)
+            if not isinstance(req, dict):
+                req = json.loads(bytes(req).decode() or "{}")
+            out = kino_qwen38.mock_answer(req, work) if mock else kino_qwen38.answer(req, work)
+            client.submit(job["id"], out, f"GPU-session ({engine_label(job)})")
+            eprint(f"ok job {job['id']} (Qwen3.8)")
+            return
+        if not mock:
+            qwen38_unload()  # free the GPU for video / lip sync / WhisperX
         if job.get("kind") == "asr":
             if not audio:
                 raise RuntimeError("Transkribering kräver ljud.")
@@ -292,6 +329,17 @@ def prefetch_whisperx():
         eprint(f"WhisperX-förhämtning misslyckades, försöker igen vid första transkriberingen: {err}")
 
 
+def prefetch_qwen38():
+    """llama.cpp + GGUF + mmproj to disk in the background (no VRAM)."""
+    try:
+        import kino_qwen38  # type: ignore
+        p = kino_qwen38.prefetch()
+        READY.add("qwen38-vl")
+        eprint(f"Qwen3.8 27B hämtad ({p['quant']}) – laddas vid första bild-/manusfrågan")
+    except Exception as err:
+        eprint(f"Qwen3.8-förhämtning misslyckades, försöker igen vid första frågan: {err}")
+
+
 def heartbeat_loop(client: WorkerClient, stop: threading.Event):
     while True:
         try:
@@ -309,6 +357,8 @@ def run_loop(server: str, code: str, mock: bool = False, platform: str | None = 
     eprint(f"ansluten: {info.get('platform')} {info.get('gpu')} (id {info.get('workerId')})")
     if mock:
         READY.add("whisperx")  # nothing to download in mock mode; report it with the first heartbeat
+        if "qwen38-vl" in (info.get("supports") or []):
+            READY.add("qwen38-vl")
     stop = threading.Event()
     hb = threading.Thread(target=heartbeat_loop, args=(client, stop), daemon=True)
     hb.start()
@@ -316,6 +366,8 @@ def run_loop(server: str, code: str, mock: bool = False, platform: str | None = 
         threading.Thread(target=prefetch_musetalk, daemon=True).start()
     if not mock and os.environ.get("KINO_WHISPERX_PREFETCH", "1") != "0":
         threading.Thread(target=prefetch_whisperx, daemon=True).start()
+    if not mock and os.environ.get("KINO_QWEN38_PREFETCH", "1") != "0" and "qwen38-vl" in (info.get("supports") or []):
+        threading.Thread(target=prefetch_qwen38, daemon=True).start()
     try:
         while True:
             nxt = client.next_job(25)
