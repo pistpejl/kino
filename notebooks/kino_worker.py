@@ -26,7 +26,10 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_SERVER = os.environ.get("KINO_SERVER", "https://grok-musik-video.onrender.com")
-SUPPORTS = ["video", "wan-2.2", "wan-2.2-ti2v-5b", "ltx-video", "lipsync", "musetalk", "musetalk-alive"]
+SUPPORTS = ["video", "wan-2.2", "wan-2.2-ti2v-5b", "ltx-video", "lipsync", "musetalk", "musetalk-alive", "whisperx"]
+# 'whisperx' = speech-to-text with real word times (forced alignment) for Klipp and word-by-word captions,
+# optional speaker labels (SpeechBrain ECAPA, not the gated pyannote model). See kino_whisperx.py.
+READY: set = set()  # engines whose code + weights are downloaded; sent with every heartbeat
 # 'musetalk' = real MuseTalk 1.5 lip sync on a still or a video; 'musetalk-alive' = the still is
 # first animated with LTX/Wan ("Levande bild + läppsynk"), then lip-synced. See kino_musetalk.py.
 # Kandinsky S2V Lite is documented at ~28 GB even with VAE tiling — it does not
@@ -76,7 +79,7 @@ class WorkerClient:
         return r
 
     def heartbeat(self):
-        return self._req("POST", "/api/kino/worker/heartbeat", {})
+        return self._req("POST", "/api/kino/worker/heartbeat", {"ready": sorted(READY)})
 
     def next_job(self, wait: int = 25):
         return self._req("GET", f"/api/kino/worker/next?wait={int(wait)}", timeout=wait + 15)
@@ -105,7 +108,8 @@ class WorkerClient:
         if error:
             add("error", error)
         if file and file.exists():
-            add("file", file.read_bytes(), filename=file.name, mime="video/mp4")
+            mime = "application/json" if file.suffix == ".json" else "video/mp4"
+            add("file", file.read_bytes(), filename=file.name, mime=mime)
         parts.append(b"--" + boundary.encode() + b"--\r\n")
         body = b"".join(parts)
         return self._req(
@@ -172,6 +176,49 @@ def mock_render(job: dict, image: Path | None, work: Path, audio: Path | None = 
     return out
 
 
+def mock_asr(job: dict, work: Path) -> Path:
+    """Fake WhisperX result (no model) so the server wiring can be tested end to end."""
+    opts = job.get("options") or {}
+    segs = []
+    known = opts.get("align") or []
+    if known:
+        for s in known:
+            words = str(s.get("text") or "").split()
+            a, b = float(s.get("start") or 0), float(s.get("end") or 0)
+            step = (b - a) / max(1, len(words))
+            segs.append({"start": a, "end": b, "text": s.get("text"), "est": False,
+                         "words": [{"w": w, "s": round(a + i * step, 3), "e": round(a + (i + 1) * step, 3)} for i, w in enumerate(words)]})
+    else:
+        t = 0.5
+        for k, line in enumerate(["Det här är ett test av KINO.", "Nu pratar någon annan här."]):
+            words = []
+            for w in line.split():
+                words.append({"w": w, "s": round(t, 3), "e": round(t + 0.35, 3), "spk": k})
+                t += 0.4
+            segs.append({"start": words[0]["s"], "end": words[-1]["e"], "text": line, "words": words, "est": False, "speaker": k})
+            t += 0.5
+    out = work / "result.json"
+    out.write_text(json.dumps({"ok": True, "engine": "whisperx", "model": "mock", "language": opts.get("lang") if opts.get("lang") not in (None, "", "auto") else "sv",
+                               "aligned": True, "mode": "align" if known else "transcribe",
+                               "diarization": {"engine": "speechbrain-ecapa", "speakers": 2} if opts.get("diarize") and not known else None,
+                               "segments": segs, "notes": ["mock"]}, ensure_ascii=False))
+    return out
+
+
+def real_asr(job: dict, audio: Path, work: Path) -> Path:
+    """WhisperX in its own venv (subprocess). MuseTalk is unloaded first so the card is free."""
+    try:
+        import kino_worker_models as km  # type: ignore
+        km._unload_musetalk()
+        km._free()
+    except Exception:
+        pass
+    import kino_whisperx as wx  # type: ignore
+    out = wx.run(audio, work, job.get("options") or {})
+    READY.add("whisperx")
+    return out
+
+
 def real_render(job: dict, image: Path | None, audio: Path | None, work: Path, video: Path | None = None) -> Path:
     """Lazy-import GPU pipelines that fit 16 GB Turing (sm75): fp16 + SDPA, no FA2/FP8."""
     # Imported only on the GPU machine; the mock path never reaches here.
@@ -181,6 +228,8 @@ def real_render(job: dict, image: Path | None, audio: Path | None, work: Path, v
 
 def engine_label(job: dict) -> str:
     eng = (job.get("engine") or "video").lower()
+    if job.get("kind") == "asr" or eng == "whisperx":
+        return "WhisperX large-v3 + ordjustering"
     if eng == "musetalk-alive":
         return "MuseTalk 1.5 läppsynk + levande bild (LTX-Video)"
     if job.get("kind") == "lipsync" or eng.startswith("musetalk"):
@@ -199,7 +248,12 @@ def process_job(client: WorkerClient, job: dict, mock: bool) -> None:
         video = None
         if job.get("videoUrl"):
             video = client.download(job["videoUrl"], work / "input.mp4")
-        if mock:
+        if job.get("kind") == "asr":
+            if not audio:
+                raise RuntimeError("Transkribering kräver ljud.")
+            out = mock_asr(job, work) if mock else real_asr(job, audio, work)
+            name = f"GPU-session ({'mock, ' if mock else ''}{engine_label(job)})"
+        elif mock:
             out = mock_render(job, image, work, audio if job.get("kind") == "lipsync" else None)
             name = f"GPU-session (mock ffmpeg, {engine_label(job)})"
         else:
@@ -227,6 +281,17 @@ def prefetch_musetalk():
         eprint(f"MuseTalk-förhämtning misslyckades, försöker igen vid första läppsynken: {err}")
 
 
+def prefetch_whisperx():
+    """Install WhisperX in its own venv and download large-v3 + Swedish/English alignment models (no VRAM)."""
+    try:
+        import kino_whisperx  # type: ignore
+        kino_whisperx.prefetch()
+        READY.add("whisperx")
+        eprint("WhisperX redo (large-v3 + ordjustering sv/en hämtade)")
+    except Exception as err:
+        eprint(f"WhisperX-förhämtning misslyckades, försöker igen vid första transkriberingen: {err}")
+
+
 def heartbeat_loop(client: WorkerClient, stop: threading.Event):
     while True:
         try:
@@ -242,11 +307,15 @@ def run_loop(server: str, code: str, mock: bool = False, platform: str | None = 
     info = client.pair_register(code, platform or detect_platform(), gpu or detect_gpu())
     # Never print the session token.
     eprint(f"ansluten: {info.get('platform')} {info.get('gpu')} (id {info.get('workerId')})")
+    if mock:
+        READY.add("whisperx")  # nothing to download in mock mode; report it with the first heartbeat
     stop = threading.Event()
     hb = threading.Thread(target=heartbeat_loop, args=(client, stop), daemon=True)
     hb.start()
     if not mock and os.environ.get("KINO_MUSETALK_PREFETCH", "1") != "0":
         threading.Thread(target=prefetch_musetalk, daemon=True).start()
+    if not mock and os.environ.get("KINO_WHISPERX_PREFETCH", "1") != "0":
+        threading.Thread(target=prefetch_whisperx, daemon=True).start()
     try:
         while True:
             nxt = client.next_job(25)

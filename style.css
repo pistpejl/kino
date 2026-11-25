@@ -366,6 +366,19 @@ textarea::placeholder, input::placeholder { color:var(--mute); opacity:1; }
 .kcard .acts select { min-height:var(--tap); flex:0 0 auto; padding:0 8px; font-size:14px; }
 .kcard .kl-note { padding:0 14px 12px; }
 .kcard .kl-note:empty { display:none; }
+.kpub { margin-top:6px; border:1px solid var(--line2); border-radius:12px; padding:10px 12px; display:flex; flex-direction:column; gap:8px; background:var(--s2); }
+.kpub-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.kpub-head b { font-size:13px; letter-spacing:.06em; text-transform:uppercase; }
+.kpub-head small { flex:1 1 auto; }
+.kpub-row { display:flex; gap:8px; align-items:flex-start; }
+.kpub-row > div { flex:1 1 auto; min-width:0; }
+.kpub-row span { font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--mute); }
+.kpub-row p { margin:2px 0 0; font-size:14px; line-height:1.4; overflow-wrap:anywhere; white-space:pre-wrap; }
+.kpub-row button { flex:0 0 auto; }
+.kcover { display:flex; gap:10px; align-items:flex-start; margin-top:4px; }
+.kcover img { width:84px; border-radius:8px; border:1px solid var(--line2); flex:0 0 auto; }
+.kcover b { font-size:13px; }
+.kl-wx { padding:0; }
 .finputsa { margin-top:12px; font-size:13px; }
 .finputsa a { color:var(--fg); text-decoration:underline; text-decoration-color:var(--line2); text-underline-offset:3px; }
 .finputsa a::after { content:" ↗"; font-size:11px; color:var(--mute); }

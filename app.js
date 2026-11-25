@@ -2152,11 +2152,12 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
 
 
   // ---- Klipp (Opus Clip-style): long video -> best short clips with captions ----
-  st.kl = st.kl || { job: null, status: null, progress: 0, message: '', info: {}, result: null, error: null, refused: false, opts: { count: '4', length: 'auto', aspect: '9:16', crop: 'center', captions: true, lang: 'auto', hint: '', url: '' }, fileName: '' };
+  st.kl = st.kl || { job: null, status: null, progress: 0, message: '', info: {}, result: null, error: null, refused: false, opts: { count: '4', length: 'auto', aspect: '9:16', crop: 'speaker', captions: true, lang: 'auto', hint: '', url: '', asr: 'auto', diarize: true }, fileName: '' };
   const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(n >= 10485760 ? 0 : 1)} MB` : `${Math.max(1, Math.round(n / 1024))} kB`);
   const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   const KL_MAX_MB = 200; const KL_MAX_MIN = 30;
-  const CROP_SV = { center: 'Mitten', left: 'Vänster', right: 'Höger', smart: 'Smart (följer rörelse)' };
+  const CROP_SV = { speaker: 'Följ den som pratar (ansikten)', center: 'Mitten', left: 'Vänster', right: 'Höger', smart: 'Smart (följer rörelse)' };
+  const copyText = (t, btn, done = 'Kopierat') => { const old = btn.textContent; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => { btn.textContent = done; setTimeout(() => { btn.textContent = old; }, 1600); }, () => { btn.textContent = 'Markera och kopiera själv'; }); };
   function uploadKlipp(fd, onPct) {
     return new Promise((resolve, reject) => {
       const x = new XMLHttpRequest(); x.open('POST', `${API}/klipp`); x.responseType = 'json';
@@ -2188,6 +2189,15 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const crop = select(Object.entries(CROP_SV), O.crop); crop.onchange = () => { O.crop = crop.value; };
     const lang = select([['auto', 'Hitta språk själv'], ['sv', 'Svenska'], ['en', 'Engelska']], O.lang); lang.onchange = () => { O.lang = lang.value; };
     const caps = h('input', { type: 'checkbox', checked: O.captions }); caps.onchange = () => { O.captions = caps.checked; };
+    if (O.asr === undefined) O.asr = 'auto'; if (O.diarize === undefined) O.diarize = true;
+    const asr = select([['auto', 'Auto: WhisperX på GPU-sessionen om den är igång, annars NVIDIA'], ['nvidia', 'Bara NVIDIA på servern']], O.asr); asr.onchange = () => { O.asr = asr.value; };
+    const diar = h('input', { type: 'checkbox', checked: O.diarize }); diar.onchange = () => { O.diarize = diar.checked; };
+    const wxInfo = h('div', { class: 'meta kl-wx' }, 'Kollar GPU-sessionen…');
+    fetch(`${API}/klipp/info`).then((r) => r.json()).then((i) => {
+      const w = (i.engines && i.engines.whisperx) || {}; const f = (i.engines && i.engines.ansikten) || {};
+      wxInfo.textContent = (w.available ? (w.ready ? 'GPU-session med WhisperX är redo: riktiga ordtider och talare.' : 'GPU-session ansluten: WhisperX installeras/hämtas där (första gången ca 5–10 min).') : 'Ingen GPU-session: NVIDIA på servern används (svenska får uppskattade ordtider). Starta en session under Inställningar för WhisperX.')
+        + (f.available === false ? ' Ansiktsföljning är inte installerad på servern än – rörelse används i stället.' : '');
+    }).catch(() => { wxInfo.textContent = ''; });
     const hint = h('input', { type: 'text', maxlength: 200, placeholder: 'valfritt, t.ex. tips om sömn', value: O.hint || '' }); hint.oninput = () => { O.hint = hint.value; };
     const go = h('button', { class: 'text primary lg', type: 'button' }, 'Skapa klipp');
     const bar = h('div', { class: 'kprog', hidden: true, role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100' }, h('i'));
@@ -2200,6 +2210,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       const i = info || {}; const rows = [];
       if (i.transkribering) rows.push(['Transkribering', i.transkribering.text]);
       if (i.urval) rows.push(['Urval', i.urval.text]);
+      if (i.publicering) rows.push(['Publicering', i.publicering.text]);
       if (i.safety) rows.push(['Säkerhet', i.safety]);
       if (i.note) rows.push(['Obs', i.note]);
       how.hidden = !rows.length;
@@ -2232,11 +2243,25 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
           c.hook ? h('p', { class: 'khook' }, h('span', {}, 'Hook'), `“${c.hook}”`) : null,
           h('div', { class: 'meta kl-tags' }, `${fmtT(c.start)}–${fmtT(c.end)} i originalet · ${Math.round(c.duration)} s · ${c.aspect} · ${fmtBytes(c.bytes)}`),
           h('div', { class: 'meta kl-tags' }, `Textremsor: ${c.captions}${c.captionNote ? ` – ${c.captionNote}` : ''}`),
-          c.crop && c.crop.note ? h('div', { class: 'meta kl-tags' }, `Beskärning: ${CROP_SV[c.crop.mode] || c.crop.mode}. ${c.crop.note}`) : null),
+          c.crop && c.crop.note ? h('div', { class: 'meta kl-tags' }, `Beskärning: ${CROP_SV[c.crop.mode] || c.crop.mode}. ${c.crop.note}`) : null,
+          c.publish ? publishBox(c.publish) : null,
+          c.cover ? h('div', { class: 'kcover' }, h('img', { src: abs(c.cover), alt: 'Omslagsbild', loading: 'lazy' }),
+            h('div', {}, h('b', {}, 'Omslag'), h('div', { class: 'meta' }, 'Bild ur klippet med texten på. Ladda upp som omslag på TikTok/Reels/Shorts.'),
+              h('a', { class: 'text', href: abs(c.cover), download: `omslag-${idx + 1}.jpg`, target: '_blank', rel: 'noopener' }, 'Ladda ner omslag'))) : null),
         h('div', { class: 'acts' },
           h('a', { class: 'text primary', href: `${abs(c.url)}${c.url.includes('?') ? '&' : '?'}dl=1`, download: `klipp-${idx + 1}.mp4` }, 'Ladda ner'),
           sel, redo), note);
       return card;
+    }
+    function publishBox(p) {
+      const row = (label, text) => { const b = h('button', { class: 'text sm', type: 'button' }, 'Kopiera'); b.onclick = () => copyText(text, b); return h('div', { class: 'kpub-row' }, h('div', {}, h('span', {}, label), h('p', {}, text)), b); };
+      const all = [p.title, p.caption, (p.hashtags || []).join(' ')].filter(Boolean).join('\n\n');
+      const allBtn = h('button', { class: 'text', type: 'button' }, 'Kopiera allt'); allBtn.onclick = () => copyText(all, allBtn, 'Allt kopierat');
+      return h('div', { class: 'kpub' },
+        h('div', { class: 'kpub-head' }, h('b', {}, 'Publiceringstext'), h('small', { class: 'meta' }, p.method === 'ai' ? 'AI-förslag – läs igenom innan du postar' : p.method === 'borttagen' ? 'Texten togs bort av filtret' : 'Enkla regler (ingen AI svarade)'), allBtn),
+        p.title ? row('Titel', p.title) : null,
+        p.caption ? row('Text', p.caption) : null,
+        p.hashtags && p.hashtags.length ? row('Hashtags', p.hashtags.join(' ')) : null);
     }
     function paintResult() {
       out.innerHTML = '';
@@ -2284,6 +2309,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       if (file) fd.append('video', file); else fd.append('url', u);
       fd.append('lane', st.lane); fd.append('count', count.value); fd.append('length', length.value); fd.append('aspect', aspect.value); fd.append('crop', crop.value);
       fd.append('captions', caps.checked ? '1' : '0'); fd.append('lang', lang.value); fd.append('hint', hint.value.trim());
+      fd.append('asr', asr.value); fd.append('diarize', diar.checked ? '1' : '0');
       K.following = true; K.result = null; K.info = {}; out.innerHTML = ''; paintHow(null); go.disabled = true; K.fileName = file ? file.name : u;
       try {
         say(file ? 'Laddar upp…' : 'Skickar länken…', false, true); setBar(0);
@@ -2294,9 +2320,12 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const panel = h('div', { class: 'panel kpanel' },
       field('Antal klipp', count), field('Längd', length), field('Bildformat', aspect), field('Beskärning', crop), field('Språk i videon', lang),
       h('label', { class: 'chk' }, h('span', {}, caps, 'Textremsor (ord för ord)')),
+      field('Taligenkänning', asr),
+      h('label', { class: 'chk' }, h('span', {}, diar, 'Känn igen talare (WhisperX, för "Följ den som pratar")')),
+      h('div', { class: 'wide' }, wxInfo),
       h('label', { class: 'wide' }, 'Vad ska klippen handla om?', hint));
     v.append(
-      pagehead('Klipp', 'Ladda upp en lång video. KINO lyssnar, väljer de bästa ögonblicken och gör korta, färdiga klipp med textremsor.'),
+      pagehead('Klipp', 'Ladda upp en lång video. KINO lyssnar, väljer de bästa ögonblicken och gör korta, färdiga klipp med textremsor, beskärning som följer den som pratar, omslagsbild och publiceringstext.'),
       h('div', { class: 'drop kdrop' },
         h('label', { class: 'kfile' }, h('span', {}, 'Välj video'), fileIn), fileInfo,
         h('label', { class: 'kurl' }, 'Eller en direktlänk till en videofil', url),
