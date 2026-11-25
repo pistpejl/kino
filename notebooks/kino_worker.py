@@ -26,7 +26,9 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_SERVER = os.environ.get("KINO_SERVER", "https://grok-musik-video.onrender.com")
-SUPPORTS = ["video", "wan-2.2", "wan-2.2-ti2v-5b", "ltx-video"]
+SUPPORTS = ["video", "wan-2.2", "wan-2.2-ti2v-5b", "ltx-video", "lipsync", "musetalk", "musetalk-alive"]
+# 'musetalk' = real MuseTalk 1.5 lip sync on a still or a video; 'musetalk-alive' = the still is
+# first animated with LTX/Wan ("Levande bild + läppsynk"), then lip-synced. See kino_musetalk.py.
 # Kandinsky S2V Lite is documented at ~28 GB even with VAE tiling — it does not
 # fit a 16 GB T4/P100, so it is not advertised as a supported engine here.
 
@@ -141,7 +143,7 @@ def detect_gpu():
         return os.environ.get("KINO_GPU", "T4")
 
 
-def mock_render(job: dict, image: Path | None, work: Path) -> Path:
+def mock_render(job: dict, image: Path | None, work: Path, audio: Path | None = None) -> Path:
     """Short 480p clip via ffmpeg. Not a real model — for wiring tests only.
 
     Avoid `ffmpeg -loop 1 -i still` with `-t` only as an output option: on some
@@ -159,15 +161,31 @@ def mock_render(job: dict, image: Path | None, work: Path) -> Path:
     ]
     # Image is still downloaded by the worker; it is not required for the mock mux.
     _ = image
+    if audio is not None and Path(audio).exists():
+        # Lip-sync wiring test: silent colour clip + the job's audio, like the real MuseTalk output.
+        cmd = [
+            "ffmpeg", "-nostdin", "-y", "-f", "lavfi", "-i", src, "-i", str(audio),
+            "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-shortest", str(out),
+        ]
     subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
     return out
 
 
-def real_render(job: dict, image: Path | None, audio: Path | None, work: Path) -> Path:
+def real_render(job: dict, image: Path | None, audio: Path | None, work: Path, video: Path | None = None) -> Path:
     """Lazy-import GPU pipelines that fit 16 GB Turing (sm75): fp16 + SDPA, no FA2/FP8."""
     # Imported only on the GPU machine; the mock path never reaches here.
     from kino_worker_models import render_job  # type: ignore
-    return render_job(job, image, audio, work)
+    return render_job(job, image, audio, work, video)
+
+
+def engine_label(job: dict) -> str:
+    eng = (job.get("engine") or "video").lower()
+    if eng == "musetalk-alive":
+        return "MuseTalk 1.5 läppsynk + levande bild (LTX-Video)"
+    if job.get("kind") == "lipsync" or eng.startswith("musetalk"):
+        return "MuseTalk 1.5 läppsynk"
+    return eng
 
 
 def process_job(client: WorkerClient, job: dict, mock: bool) -> None:
@@ -178,12 +196,15 @@ def process_job(client: WorkerClient, job: dict, mock: bool) -> None:
             image = client.download(job["imageUrl"], work / "start.jpg")
         if job.get("audioUrl"):
             audio = client.download(job["audioUrl"], work / "audio.wav")
+        video = None
+        if job.get("videoUrl"):
+            video = client.download(job["videoUrl"], work / "input.mp4")
         if mock:
-            out = mock_render(job, image, work)
-            name = "GPU-session (mock ffmpeg)"
+            out = mock_render(job, image, work, audio if job.get("kind") == "lipsync" else None)
+            name = f"GPU-session (mock ffmpeg, {engine_label(job)})"
         else:
-            out = real_render(job, image, audio, work)
-            name = f"GPU-session ({job.get('engine') or 'video'})"
+            out = real_render(job, image, audio, work, video)
+            name = f"GPU-session ({engine_label(job)})"
         client.submit(job["id"], out, name)
         eprint(f"ok job {job['id']}")
     except Exception as err:
@@ -194,6 +215,16 @@ def process_job(client: WorkerClient, job: dict, mock: bool) -> None:
             eprint(f"could not report failure: {submit_err}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def prefetch_musetalk():
+    """Fetch MuseTalk code + weights in the background (disk/network only, no VRAM)."""
+    try:
+        import kino_musetalk  # type: ignore
+        kino_musetalk.prefetch()
+        eprint("MuseTalk 1.5 redo (vikter hämtade)")
+    except Exception as err:
+        eprint(f"MuseTalk-förhämtning misslyckades, försöker igen vid första läppsynken: {err}")
 
 
 def heartbeat_loop(client: WorkerClient, stop: threading.Event):
@@ -214,6 +245,8 @@ def run_loop(server: str, code: str, mock: bool = False, platform: str | None = 
     stop = threading.Event()
     hb = threading.Thread(target=heartbeat_loop, args=(client, stop), daemon=True)
     hb.start()
+    if not mock and os.environ.get("KINO_MUSETALK_PREFETCH", "1") != "0":
+        threading.Thread(target=prefetch_musetalk, daemon=True).start()
     try:
         while True:
             nxt = client.next_job(25)

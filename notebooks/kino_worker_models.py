@@ -6,11 +6,17 @@ that is realistic on this card; full LTX-2.5 is not assumed to fit.
 
 Kandinsky S2V Lite is not loaded: upstream documents ~28 GB even with VAE tiling.
 
+Lip sync ('lipsync' jobs) runs MuseTalk 1.5 (kino_musetalk.py): engine 'musetalk' redraws the
+mouth on the uploaded still or video; engine 'musetalk-alive' ("Levande bild + läppsynk")
+first animates the still with LTX-Video (Wan as fallback) for the audio's length, frees the
+VRAM, then runs MuseTalk on that clip and muxes the audio.
+
 This module is imported only when KINO_WORKER_MOCK is off. It is not executed in
 CI. Time estimates in the notebooks are not measured on this machine.
 """
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 
 NEG = "blurry, text, watermark, logo, low quality, deformed, nsfw"
@@ -30,14 +36,73 @@ def _sdpa_pipe(pipe):
     return pipe
 
 
-def render_job(job: dict, image: Path | None, audio: Path | None, work: Path) -> Path:
+def _free(*objs):
+    """Drop pipelines and give the VRAM back before the next model loads."""
+    for o in objs:
+        try:
+            del o
+        except Exception:
+            pass
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
+
+
+def _unload_musetalk():
+    try:
+        import kino_musetalk  # type: ignore
+        kino_musetalk.unload()
+    except Exception:
+        pass
+
+
+def render_job(job: dict, image: Path | None, audio: Path | None, work: Path, video: Path | None = None) -> Path:
     engine = (job.get("engine") or "ltx-video").lower()
+    if job.get("kind") == "lipsync" or engine.startswith("musetalk"):
+        return render_lipsync(job, image, audio, work, video)
+    _unload_musetalk()
     if "wan" in engine:
         return render_wan(job, image, work)
     return render_ltx(job, image, work)
 
 
-def render_ltx(job: dict, image: Path | None, work: Path) -> Path:
+def render_lipsync(job: dict, image: Path | None, audio: Path | None, work: Path, video: Path | None = None) -> Path:
+    """Real lip sync with MuseTalk 1.5. 'musetalk-alive' animates the still first."""
+    import kino_musetalk as mt  # type: ignore
+    if not audio or not Path(audio).exists():
+        raise RuntimeError("Läppsynk kräver ljud.")
+    seconds = mt.probe_seconds(audio) or float(job.get("seconds") or 4)
+    seconds = max(1.0, min(mt.MAX_SECONDS, seconds))
+    engine = (job.get("engine") or "musetalk").lower()
+    source = video if video and Path(video).exists() else image
+    if not source or not Path(source).exists():
+        raise RuntimeError("Läppsynk kräver en bild eller video.")
+    if engine == "musetalk-alive" and not (video and Path(video).exists()):
+        mt.unload()  # LTX/Wan need the whole card
+        motion = (job.get("prompt") or "").strip()
+        prompt = ", ".join(x for x in (
+            motion,
+            "the person is singing, mouth moving naturally, expressive face, natural body motion",
+            "cinematic, realistic, steady camera, SFW",
+        ) if x)
+        clip_job = dict(job, prompt=prompt, seconds=seconds)
+        try:
+            clip = render_ltx(clip_job, image, work, frames=mt.ltx_frames_for(seconds), fps=24, name="alive.mp4")
+        except Exception as err:
+            print(f"LTX misslyckades ({err}), provar Wan", flush=True)
+            _free()
+            clip = render_wan(dict(clip_job, engine="wan-2.2"), image, work)
+        _free()
+        source = clip
+    return mt.lipsync(Path(source), Path(audio), work / "mt", seconds=seconds)
+
+
+def render_ltx(job: dict, image: Path | None, work: Path, frames: int | None = None, fps: int = 8, name: str = "out.mp4") -> Path:
     import torch
     from diffusers import LTXPipeline, LTXImageToVideoPipeline
     from PIL import Image
@@ -48,18 +113,20 @@ def render_ltx(job: dict, image: Path | None, work: Path) -> Path:
     width, height = {"9:16": (480, 832), "16:9": (832, 480), "1:1": (512, 512)}.get(ratio, (480, 832))
     # snap to 32
     width, height = width // 32 * 32, height // 32 * 32
-    out = work / "out.mp4"
+    out = work / name
+    n_frames = frames or max(9, int(seconds * 8))
     if image and Path(image).exists():
         pipe = LTXImageToVideoPipeline.from_pretrained(
             "Lightricks/LTX-Video", torch_dtype=dtype
         )
         pipe = _sdpa_pipe(pipe)
         pipe.enable_model_cpu_offload()
-        img = Image.open(image).convert("RGB").resize((width, height))
+        from PIL import ImageOps
+        img = ImageOps.fit(Image.open(image).convert("RGB"), (width, height))  # crop, don't squash faces
         video = pipe(
             image=img, prompt=job.get("prompt") or "cinematic motion, SFW",
             negative_prompt=NEG, width=width, height=height,
-            num_frames=max(9, int(seconds * 8)), num_inference_steps=20,
+            num_frames=n_frames, num_inference_steps=20,
         ).frames[0]
     else:
         pipe = LTXPipeline.from_pretrained("Lightricks/LTX-Video", torch_dtype=dtype)
@@ -68,10 +135,12 @@ def render_ltx(job: dict, image: Path | None, work: Path) -> Path:
         video = pipe(
             prompt=job.get("prompt") or "cinematic motion, SFW",
             negative_prompt=NEG, width=width, height=height,
-            num_frames=max(9, int(seconds * 8)), num_inference_steps=20,
+            num_frames=n_frames, num_inference_steps=20,
         ).frames[0]
     from diffusers.utils import export_to_video
-    export_to_video(video, str(out), fps=8)
+    export_to_video(video, str(out), fps=fps)
+    pipe = None
+    _free(pipe)
     return out
 
 
@@ -107,8 +176,12 @@ def render_wan(job: dict, image: Path | None, work: Path) -> Path:
             video = pipe(**kw).frames[0]
             from diffusers.utils import export_to_video
             export_to_video(video, str(out), fps=8)
+            pipe = None
+            _free()
             return out
         except Exception as err:
             last_err = err
+            pipe = None
+            _free()
             continue
     raise RuntimeError(f"Wan/LTX could not load on this GPU: {last_err}")
