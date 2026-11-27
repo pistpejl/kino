@@ -956,7 +956,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
           setCancel(null);
         }
         j.images.forEach((i) => { st.results.image.unshift(i); grid.prepend(resultCard(i, 'image')); });
-        say(j.loraNote || (j.images[0] && j.images[0].waitedSeconds != null ? `Gjord av ${j.engineName} (${j.images[0].waitedSeconds} s totalt).${j.note ? ' ' + j.note : ''}` : `Gjord av ${j.engineName}.`));
+        say(j.loraNote || (j.images[0] && j.images[0].waitedSeconds != null ? `Gjord av ${j.engineName} (${j.images[0].waitedSeconds} s totalt).${j.note ? ' ' + j.note : ''}` : `Gjord av ${(j.images[0] && j.images[0].engineName) || j.engineName}.${j.images.some((i) => i.fallback) ? ' Reservmotor användes – se etiketten på bilden.' : ''}`));
       } });
     const cinI = cinemaPanel('image'); if (cinI) { c.setCinema(cinI); if (st.cinemaPrefill) { cinI.set(st.cinemaPrefill); st.cinemaPrefill = null; } }
     v.classList.add('two');
