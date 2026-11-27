@@ -6,7 +6,8 @@ that is realistic on this card; full LTX-2.5 is not assumed to fit.
 
 Kandinsky S2V Lite is not loaded: upstream documents ~28 GB even with VAE tiling.
 
-Lip sync ('lipsync' jobs) runs MuseTalk 1.5 (kino_musetalk.py): engine 'musetalk' redraws the
+Lip sync ('lipsync' jobs) runs LatentSync 1.5 on videos (kino_latentsync.py), EchoMimic V3 Flash for full-body
+singing from a still (kino_echomimic.py), or MuseTalk 1.5 (kino_musetalk.py): engine 'musetalk' redraws the
 mouth on the uploaded still or video; engine 'musetalk-alive' ("Levande bild + läppsynk")
 first animates the still with LTX-Video (Wan as fallback) for the audio's length, frees the
 VRAM, then runs MuseTalk on that clip and muxes the audio.
@@ -72,16 +73,33 @@ def render_job(job: dict, image: Path | None, audio: Path | None, work: Path, vi
 
 
 def render_lipsync(job: dict, image: Path | None, audio: Path | None, work: Path, video: Path | None = None) -> Path:
-    """Real lip sync with MuseTalk 1.5. 'musetalk-alive' animates the still first."""
+    """Real lip sync. 'musetalk' / 'musetalk-alive' (MuseTalk 1.5, alive = LTX animates the still first),
+    'latentsync' (LatentSync 1.5 on a video, own venv) and 'echomimic-v3' (EchoMimic V3 Flash: image + audio ->
+    singing with head and body motion, own venv). The venv engines run as subprocesses, so MuseTalk and any
+    diffusers pipeline are dropped from VRAM first."""
     import kino_musetalk as mt  # type: ignore
     if not audio or not Path(audio).exists():
         raise RuntimeError("Läppsynk kräver ljud.")
-    seconds = mt.probe_seconds(audio) or float(job.get("seconds") or 4)
-    seconds = max(1.0, min(mt.MAX_SECONDS, seconds))
     engine = (job.get("engine") or "musetalk").lower()
     source = video if video and Path(video).exists() else image
     if not source or not Path(source).exists():
         raise RuntimeError("Läppsynk kräver en bild eller video.")
+    if engine == "latentsync":
+        import kino_latentsync as ls  # type: ignore
+        mt.unload()
+        _free()
+        seconds = max(1.0, min(ls.MAX_SECONDS, mt.probe_seconds(audio) or float(job.get("seconds") or 4)))
+        return ls.run(Path(source), Path(audio), work / "ls", seconds=seconds)
+    if engine == "echomimic-v3":
+        import kino_echomimic as em  # type: ignore
+        mt.unload()
+        _free()
+        seconds = max(1.0, min(em.MAX_SECONDS, mt.probe_seconds(audio) or float(job.get("seconds") or 4)))
+        ref = image if image and Path(image).exists() else source
+        return em.run(Path(ref), Path(audio), work / "em", prompt=(job.get("prompt") or "").strip(),
+                      seconds=seconds, ratio=job.get("ratio") or "9:16")
+    seconds = mt.probe_seconds(audio) or float(job.get("seconds") or 4)
+    seconds = max(1.0, min(mt.MAX_SECONDS, seconds))
     if engine == "musetalk-alive" and not (video and Path(video).exists()):
         mt.unload()  # LTX/Wan need the whole card
         motion = (job.get("prompt") or "").strip()

@@ -568,7 +568,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
 
   // ---- Läppsynk: porträtt + ljud -> talande/sjungande klipp ----
   async function lappsynkView(v) {
-    v.append(pagehead('Läppsynk', 'Välj ett porträtt ur din artistlista (eller egen AI-figur) och ett ljud – få ett klipp där munnen följer rösten. Med egen GPU-session: MuseTalk 1.5, även "Levande bild + läppsynk" där bilden rör sig. Gratis utan GPU: LongCat-Video-Avatar 1.6, med Kandinsky S2V 1.0 och LTX-2 som reserv. Bara era egna artister eller AI-figurer, aldrig kändisar.'));
+    v.append(pagehead('Läppsynk', 'Välj ett porträtt ur din artistlista (eller egen AI-figur) och ett ljud – få ett klipp där munnen följer rösten. Med egen GPU-session: MuseTalk 1.5, LatentSync 1.5 (synkar munnen i en video, upp till 30 s) och EchoMimic V3 ("Levande bild + läppsynk": läppar, huvud och kropp från en bild) – det sessionen annonserar visas. Gratis utan GPU: LongCat-Video-Avatar 1.6, med Kandinsky S2V 1.0 och LTX-2 som reserv. Bara era egna artister eller AI-figurer, aldrig kändisar.'));
     const roster = rosterLocal().filter((a) => a.photos && a.photos.length);
     let portrait = st.lipPortrait || null; st.lipPortrait = null;
     const pick = st.agentPick && st.agentPick.lipsync ? st.agentPick.lipsync : null; if (pick) st.agentPick.lipsync = null;
@@ -587,25 +587,48 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     if (pick && pick.text) tts.value = pick.text;
     if (pick && pick.song) { const dt = new DataTransfer(); dt.items.add(pick.song instanceof File ? pick.song : new File([pick.song], pick.songName || 'lat.mp3', { type: pick.song.type || 'audio/mpeg' })); aIn.files = dt.files; from.value = pick.start || 0; to.value = pick.end || 8; }
     const amode = select([['file', 'Ljudfil eller del av låt'], ['tts', 'Text till tal']], pick && pick.text && !pick.song ? 'tts' : 'file');
-    const fileBox = h('div', { class: 'grid2' }, field('Ljud / låt', aIn, true), field('Från (s)', from), field('Till (s)', to), h('small', { class: 'meta wide' }, 'Max 12 sekunder per klipp. Välj den del av låten som ska sjungas.'));
+    const maxTxt = h('small', { class: 'meta wide' }, 'Max 12 sekunder per klipp. Välj den del av låten som ska sjungas.');
+    const fileBox = h('div', { class: 'grid2' }, field('Ljud / låt', aIn, true), field('Från (s)', from), field('Till (s)', to), maxTxt);
     const ttsBox = h('div', {}, field('Text', tts, true), field('Språk', lang));
     const paintA = () => { fileBox.hidden = amode.value !== 'file'; ttsBox.hidden = amode.value !== 'tts'; }; amode.onchange = paintA; paintA();
     const vocals = h('input', { type: 'checkbox' });
     // typ: bara munnen, eller levande bild (I2V på GPU-sessionen) + läppsynk
-    const lmode = select([['face', 'Bara munnen (MuseTalk på bilden eller videon)'], ['alive', 'Levande bild + läppsynk (bilden rör sig, t.ex. spelar gitarr)']], 'face');
+    const lmode = select([['face', 'Bara munnen (MuseTalk / LatentSync på bilden eller videon)'], ['alive', 'Levande bild + läppsynk (bilden rör sig, t.ex. spelar gitarr)']], 'face');
     const motion = h('input', { type: 'text', maxlength: 300, placeholder: 'Rörelse, t.ex. "plays acoustic guitar, sways gently, hair moves"' });
-    const motionBox = h('div', {}, field('Rörelse (engelska funkar bäst)', motion, true), h('small', { class: 'meta wide' }, 'Först får bilden rörelse (LTX-Video på din GPU, ca 4 s, förlängs fram-och-tillbaka om ljudet är längre), sedan synkar MuseTalk 1.5 munnen. Händer på gitarr blir ungefärliga. Tar ca 5–10 min på T4.'));
-    function paintM() { const vid = Boolean(portrait && portrait.video); lmode.disabled = vid; if (vid) lmode.value = 'face'; motionBox.hidden = lmode.value !== 'alive'; }
-    lmode.onchange = paintM;
+    const motionTxt = h('small', { class: 'meta wide' }, '');
+    const motionBox = h('div', {}, field('Rörelse (engelska funkar bäst)', motion, true), motionTxt);
+    // GPU-motor på sessionen: bara de motorer sessionen annonserar visas (LatentSync / EchoMimic / MuseTalk).
+    let sess = {};
+    const geng = h('select', {});
+    const gengBox = h('div', { hidden: true }, field('GPU-motor (session)', geng, true));
+    function paintG() {
+      const vid = Boolean(portrait && portrait.video); const alive = lmode.value === 'alive' && !vid; const cur = geng.value || 'auto';
+      const opts = [['auto', 'Automatiskt (bästa som finns)']];
+      if (sess.latentsync && !alive) opts.push(['latentsync', vid ? 'LatentSync 1.5 – synkar munnen i videon (upp till 30 s)' : 'LatentSync 1.5 – bara munnen på bilden']);
+      if (sess.echomimic && alive) opts.push(['echomimic', 'EchoMimic V3 – läppar, huvud och kropp (långsam)']);
+      if (sess.musetalk) opts.push(['musetalk', alive ? 'LTX-Video + MuseTalk 1.5 (snabbare)' : 'MuseTalk 1.5 (snabb)']);
+      geng.innerHTML = ''; opts.forEach(([val, t]) => geng.append(h('option', { value: val }, t)));
+      geng.value = opts.some((o) => o[0] === cur) ? cur : 'auto';
+      gengBox.hidden = opts.length < 3;
+    }
+    function paintM() {
+      const vid = Boolean(portrait && portrait.video); lmode.disabled = vid; if (vid) lmode.value = 'face'; motionBox.hidden = lmode.value !== 'alive';
+      paintG();
+      const em = sess.echomimic && (geng.value === 'auto' || geng.value === 'echomimic');
+      motionTxt.textContent = em ? 'EchoMimic V3 på din GPU gör läppar, huvud och kropp direkt från bilden (rörelsetexten styr stilen). Max 12 s. Ca 15–35 min för 10 s på T4; första gången hämtas ca 24 GB (30–60 min extra). Faller tillbaka på LTX-Video + MuseTalk om den inte orkar.' : 'Först får bilden rörelse (LTX-Video på din GPU, ca 4 s, förlängs fram-och-tillbaka om ljudet är längre), sedan synkar MuseTalk 1.5 munnen. Händer på gitarr blir ungefärliga. Tar ca 5–10 min på T4.';
+      const ls30 = sess.latentsync && vid && (geng.value === 'auto' || geng.value === 'latentsync');
+      maxTxt.textContent = ls30 ? 'Max 30 sekunder (LatentSync 1.5 på din video, ca 2–6 min per 10 s). Välj den del av låten som ska sjungas.' : 'Max 12 sekunder per klipp. Välj den del av låten som ska sjungas.';
+    }
+    lmode.onchange = paintM; geng.onchange = paintM;
     // engine
     const eng = select([['auto', 'Automatiskt (egen GPU-session om ansluten, annars Hugging Face)'], ['session', 'Egen GPU: MuseTalk 1.5 (renderingssession Colab / Kaggle)'], ['gpu', 'Egen GPU (tunnel): LatentSync 1.5'], ['hf', 'Hugging Face: LongCat-Video-Avatar 1.6 (reserv Kandinsky S2V / LTX-2)']], 'auto');
     const engInfo = h('div', { class: 'meta' }, 'Kollar motorer…');
-    let gpuOk = false; let hfOk = false; let sessOk = false; let sessAlive = false;
+    let gpuOk = false; let hfOk = false; let sessOk = false; let sessAlive = false; let sessVid = false;
     Promise.all([colabHealth(), fetch(`${API}/lipsync/info`).then((r) => r.json()).catch(() => null)]).then(([c, i]) => {
       gpuOk = c.state === 'on' && (!c.info || !c.info.features || c.info.features.includes('lipsync')); hfOk = Boolean(i && i.hf && i.hf.available);
-      const ss = (i && i.session) || {}; sessOk = Boolean(ss.musetalk); sessAlive = Boolean(ss.alive);
+      const ss = (i && i.session) || {}; sess = ss; sessOk = Boolean(ss.musetalk || ss.latentsync || ss.echomimic); sessAlive = Boolean(ss.alive || ss.echomimic); sessVid = Boolean(ss.musetalk || ss.latentsync); paintM();
       const chain = (i && i.engines) ? i.engines.map((e) => e.name).join(' → ') : 'LongCat-Video-Avatar 1.6 → Kandinsky S2V 1.0 → LTX-2';
-      const sessTxt = sessOk ? `ansluten, MuseTalk 1.5 redo${sessAlive ? ' (även levande bild)' : ''}` : ss.active ? 'ansluten men gammal notebook utan MuseTalk – starta om den' : 'inte ansluten (Inställningar › Starta renderingssession)';
+      const sessTxt = sessOk ? `ansluten, ${ss.name || 'MuseTalk 1.5'} redo${sessAlive ? ' (även levande bild)' : ''}` : ss.active ? 'ansluten men gammal notebook utan läppsynk – starta om den' : 'inte ansluten (Inställningar › Starta renderingssession)';
       engInfo.textContent = `GPU-session: ${sessTxt} · Tunnel-GPU: ${c.state === 'on' ? (gpuOk ? 'LatentSync redo' : 'ansluten utan LatentSync') : 'inte ansluten'} · Hugging Face: ${hfOk ? `tillgänglig (${chain})` : 'inte aktiverad på servern'}`;
     });
     const consent = h('input', { type: 'checkbox' });
@@ -641,9 +664,9 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       if (alive && st.lane === 'nsfw') return say('Levande bild + läppsynk körs på GPU-sessionen, som bara är för SFW.', true);
       const which = portrait.video ? 'session' : eng.value === 'auto' ? (sessOk && (!alive || sessAlive) ? 'session' : alive ? 'hf' : gpuOk ? 'gpu' : 'hf') : eng.value;
       if (portrait.video && st.lane === 'nsfw') return say('Läppsynk på en video körs bara på GPU-sessionen (SFW).', true);
-      if (portrait.video && !sessOk) return say('Läppsynk på en egen video kräver en GPU-session med MuseTalk. Starta en under Inställningar › Starta renderingssession.', true);
+      if (portrait.video && !sessVid) return say('Läppsynk på en egen video kräver en GPU-session med LatentSync 1.5 eller MuseTalk. Starta en under Inställningar › Starta renderingssession.', true);
       if (which === 'gpu' && !gpuOk) return say('Egen GPU är inte ansluten eller saknar LatentSync. Anslut under Inställningar › Egen GPU, eller välj Hugging Face.', true);
-      if (which === 'session' && !sessOk) return say('Ingen GPU-session med MuseTalk är ansluten. Starta en under Inställningar › Starta renderingssession (kör den nya notebooken), eller välj Hugging Face.', true);
+      if (which === 'session' && !sessOk) return say('Ingen GPU-session med läppsynk är ansluten. Starta en under Inställningar › Starta renderingssession (kör den nya notebooken), eller välj Hugging Face.', true);
       if (which === 'session' && st.lane === 'nsfw') return say('GPU-sessionen körs bara i SFW. Välj Hugging Face.', true);
       if (alive && !motion.value.trim()) motion.value = 'sings expressively, sways gently to the music';
       ac = new AbortController(); go.disabled = true; cancelBtn.hidden = false;
@@ -666,10 +689,10 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
           out = { name: f.name, url: f.url, blob: f.blob, engineName: 'LatentSync 1.5 läppsynk (egen GPU)' };
         } else {
           const fd = new FormData(); fd.append('lane', st.lane); if (portrait.video) fd.append('video', portrait.blob, portrait.name); else fd.append('image', img); fd.append('consent', 'true'); fd.append('source', portrait.source); fd.append('name', portrait.name);
-          fd.append('engine', which === 'session' ? 'session' : which === 'hf' && eng.value === 'hf' ? 'hf' : 'auto'); fd.append('mode', alive ? 'alive' : 'face'); if (alive) fd.append('motion', motion.value.trim()); fd.append('ratio', '9:16');
+          fd.append('engine', which === 'session' ? 'session' : which === 'hf' && eng.value === 'hf' ? 'hf' : 'auto'); fd.append('mode', alive ? 'alive' : 'face'); if (alive) fd.append('motion', motion.value.trim()); fd.append('ratio', '9:16'); if (which === 'session') fd.append('lipEngine', geng.value || 'auto');
           if (amode.value === 'tts') { const t = tts.value.trim(); if (!t) throw new Error('Skriv texten som ska läsas upp.'); fd.append('ttsText', t); fd.append('lang', lang.value); }
           else { const f = aIn.files[0]; if (!f) throw new Error('Välj ett ljud eller en låt.'); fd.append('audio', f); fd.append('start', String(s0)); fd.append('end', String(s1)); }
-          say(which === 'session' ? (alive ? 'Skickar till din GPU-session: levande bild (LTX-Video) + MuseTalk 1.5… första gången hämtas modellerna, det kan ta 15–25 min.' : 'Skickar till din GPU-session (MuseTalk 1.5)… första gången hämtas vikterna (~4 GB).') : 'Skickar till Hugging Face (LongCat-Video-Avatar 1.6, kan köa)…');
+          say(which === 'session' ? `Skickar till din GPU-session (${{ latentsync: 'LatentSync 1.5', echomimic: 'EchoMimic V3', musetalk: 'MuseTalk 1.5' }[geng.value] || 'bästa motorn som finns'})… första gången installeras motorn och vikterna hämtas, det kan ta lång tid.` : 'Skickar till Hugging Face (LongCat-Video-Avatar 1.6, kan köa)…');
           const r = await fetch(`${API}/lipsync`, { method: 'POST', body: fd, signal: ac.signal });
           if (!r.ok) throw new Error(await errMsg(r));
           const j = await r.json(); serverJob = j.jobId;
@@ -679,12 +702,13 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       } catch (e) { say(e.cancelled || ac.signal.aborted ? 'Avbrutet.' : String(e.message || e).slice(0, 300), !(e.cancelled || ac.signal.aborted)); }
       finally { untrack(); go.disabled = false; cancelBtn.hidden = true; cancelBtn.disabled = false; status.classList.remove('busy'); }
     };
+    const videoHint = /[?&]video=1/.test(location.hash) ? h('p', { class: 'meta' }, 'Läppsynka video: välj en video nedan (max 20 MB) och ett ljud. LatentSync 1.5 på din GPU-session ritar om munnen så den följer ljudet, upp till 30 s.') : null;
     paintP(); paintM();
     v.classList.add('two');
     v.append(h('div', { class: 'compbox lipsync' },
-      h('section', { class: 'step' }, h('b', {}, '1. Porträtt'), rosterChips, h('div', { class: 'librow' }, field('Eget foto / från biblioteket', pUp, true)), h('div', { class: 'librow' }, field('Eller egen video (bara munnen synkas, kräver GPU-session)', vUp, true)), pv),
+      h('section', { class: 'step' }, h('b', {}, '1. Porträtt'), rosterChips, h('div', { class: 'librow' }, field('Eget foto / från biblioteket', pUp, true)), videoHint, h('div', { class: 'librow' }, field('Eller egen video (bara munnen synkas, kräver GPU-session)', vUp, true)), pv),
       h('section', { class: 'step' }, h('b', {}, '2. Ljud'), field('Källa', amode), fileBox, ttsBox, h('label', {}, vocals, ' Isolera sången först (bara tunnel-GPU)')),
-      h('section', { class: 'step' }, h('b', {}, '3. Typ och motor'), field('Typ', lmode, true), motionBox, field('Motor', eng, true), engInfo, h('label', { class: 'wide' }, consent, consentTxt)),
+      h('section', { class: 'step' }, h('b', {}, '3. Typ och motor'), field('Typ', lmode, true), motionBox, field('Motor', eng, true), gengBox, engInfo, h('label', { class: 'wide' }, consent, consentTxt)),
       status, h('div', { class: 'ctabar' }, go, cancelBtn)), grid);
   }
 
@@ -801,6 +825,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       ['v2p', 'Video → prompt', 'Ladda upp ett klipp, få en text-till-video-prompt med scener', '#/video-prompt'],
       ['video', 'Gör om klipp', 'Referensklipp + dina bilder blir en ny video med samma klipp, ljud och rörelse', '#/gor-om', null, true],
       ['lipsync', 'Läppsynk', 'Porträtt + låt eller text blir ett sjungande klipp', '#/lappsynk'],
+      ...(sessionInfo && sessionInfo.active && (sessionInfo.supports || []).includes('latentsync') ? [['lipsync', 'Läppsynka video', 'Egen GPU · LatentSync 1.5 synkar munnen i en video med nytt ljud (upp till 30 s)', '#/lappsynk?video=1']] : []),
       ['image', 'Tillgångsbibliotek', 'Uppladdningar och färdiga verk, sparade i webbläsaren', '#/bibliotek'],
       ['face', 'Ansiktsbyte', 'Egen GPU · bara samtyckta artister', '#/motor?t=faceswap'],
       ['voice', 'Röstbyte', 'Egen GPU · röster ur din röstlista', '#/motor?t=voice'],
@@ -855,7 +880,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
       h('p', { class: 'meta' }, 'Kaggle tillåter ett konto per person och är för ditt eget personliga bruk. På Kaggle: File → Import Notebook → klistra in GitHub-länken, Accelerator → GPU T4 (eller P100), Internet → On.'),
       h('p', { class: 'meta' }, 'Workern kör bara SFW. På 16 GB T4 (sm75) används LTX-Video 2B och Wan 2.1 1.3B, ev. Wan 2.2 TI2V-5B med CPU-offload i 480p. Kandinsky S2V Lite får inte plats. Tiderna är uppskattningar, inte mätta här: LTX-Video ca 45–120 s, Wan 1.3B ca 1–3 min, Wan 5B med offload ca 3–8 min per 5 s-klipp.'),
       qwen38Panel(),
-      h('p', { class: 'meta' }, 'Äkta läppsynk: MuseTalk 1.5 (MIT) körs i sessionen. Under Läppsynk väljer du motor "Egen GPU: MuseTalk 1.5" och typ "Bara munnen" eller "Levande bild + läppsynk" (bilden får rörelse med LTX-Video och sedan synkas munnen). Första gången hämtas ca 4 GB vikter, därefter ca 1–3 min per 5 s (levande bild ca 5–10 min). Har du en äldre notebook igång: starta om den så hämtas den nya workern.')
+      h('p', { class: 'meta' }, 'Äkta läppsynk: MuseTalk 1.5 (MIT) körs i sessionen. Är LATENTSYNC = True i notebooken (standard) finns även LatentSync 1.5 (video → video, upp till 30 s, ca 6 GB vikter, ca 2–6 min per 10 s) och "Läppsynka video" under Verktyg. ECHOMIMIC = True ger EchoMimic V3 för levande bild (läppar, huvud och kropp; ca 24 GB vikter, ca 15–35 min för 10 s på T4) – annonseras bara om GPU:n har minst 15 GB och disken räcker. InfiniteTalk stöds inte: den kräver 14B-modellen och FP8 som T4 saknar. Under Läppsynk väljer du motor "Egen GPU: MuseTalk 1.5" och typ "Bara munnen" eller "Levande bild + läppsynk" (bilden får rörelse med LTX-Video och sedan synkas munnen). Första gången hämtas ca 4 GB vikter, därefter ca 1–3 min per 5 s (levande bild ca 5–10 min). Har du en äldre notebook igång: starta om den så hämtas den nya workern.')
     );
   }
   function qwen38Panel() {
@@ -1588,8 +1613,20 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
     const lip = h('input', { type: 'checkbox' });
     const lipConsent = h('input', { type: 'checkbox' });
     const lipConsentEl = h('label', { class: 'wide', hidden: true }, lipConsent, ' Jag intygar att porträttet är min egen artist, persona eller AI-figur och har gett samtycke (inga kändisar).');
-    const lipEl = st.lane === 'sfw' ? h('div', {}, h('label', { class: 'wide' }, lip, ' Läppsynk: en artistbild och låtdelen blir ett sjungande klipp (med GPU-session: levande bild + MuseTalk 1.5, annars LongCat-Video-Avatar 1.6, reserv Kandinsky S2V 1.0). Bara egna eller samtyckta porträtt.'), lipConsentEl) : null;
-    if (lipEl) lip.onchange = () => { lipConsentEl.hidden = !lip.checked; if (!lip.checked) lipConsent.checked = false; };
+    const mvLipEng = h('select', {});
+    const mvLipEngEl = h('div', { hidden: true }, field('Läppsynk-motor (GPU-session)', mvLipEng, true));
+    const paintMvLip = () => {
+      const sup = (sessionInfo && sessionInfo.active && sessionInfo.supports) || []; const cur = mvLipEng.value || 'auto';
+      const opts = [['auto', 'Automatiskt (LatentSync på AI-klippet om det finns, annars levande bild)']];
+      if (sup.includes('latentsync')) opts.push(['latentsync', 'LatentSync 1.5 – synkar munnen i AI-videoklippet']);
+      if (sup.includes('echomimic-v3')) opts.push(['echomimic', 'EchoMimic V3 – läppar, huvud och kropp från bilden (långsam)']);
+      if (sup.includes('musetalk-alive')) opts.push(['musetalk', 'LTX-Video + MuseTalk 1.5 (snabbast)']);
+      mvLipEng.innerHTML = ''; opts.forEach(([val, t]) => mvLipEng.append(h('option', { value: val }, t)));
+      mvLipEng.value = opts.some((o) => o[0] === cur) ? cur : 'auto';
+      mvLipEngEl.hidden = !lip.checked || opts.length < 3;
+    };
+    const lipEl = st.lane === 'sfw' ? h('div', {}, h('label', { class: 'wide' }, lip, ' Läppsynk: en artistbild och låtdelen blir ett sjungande klipp (med GPU-session: LatentSync 1.5 på AI-klippet, EchoMimic V3 eller levande bild + MuseTalk 1.5, annars LongCat-Video-Avatar 1.6, reserv Kandinsky S2V 1.0). Bara egna eller samtyckta porträtt.'), lipConsentEl, mvLipEngEl) : null;
+    if (lipEl) { lip.onchange = () => { lipConsentEl.hidden = !lip.checked; if (!lip.checked) lipConsent.checked = false; paintMvLip(); }; paintMvLip(); document.addEventListener('kino-session', paintMvLip); }
     const motion = select([['none', 'ingen (klipp i takt med musiken)'], ...(st.lane === 'sfw' ? [['hf-auto', 'AI-video på de första bilderna (LTX-2.5 → LTX-2.3 → Wan 2.2 → Cosmos3-Nano → Kandinsky 6.0 → MiniMax H3, gratis kvot)'], ['ltx-2.5', 'AI-video: LTX-2.5 först'], ['ltx-2.3', 'AI-video: LTX-2.3 först'], ['wan-2.2', 'AI-video: Wan 2.2 först (behöver startbild)'], ['cosmos3-nano', 'AI-video: Cosmos3-Nano först'], ['kandinsky-6', 'AI-video: Kandinsky 6.0 först (5 s-klipp, ca 1–2 min/klipp)'], ['minimax-h3', 'AI-video: MiniMax H3 först (licens undantar EU)']] : []), ...(st.lane === 'sfw' && cfg.agnes && cfg.agnes.available ? [['agnes', 'Agnes Video (riktig rörelse, upp till 30 s, ca 1 klipp/min)']] : []), ...(st.lane === 'sfw' ? [['stock', `Stockklipp (${(cfg.stock && cfg.stock.source) || 'Wikimedia Commons'}) – riktigt stockmaterial, inte AI`]] : [])], 'none');
     // Stock source: 3-way toggle Riktiga / AI / Blanda (sent as source=real|ai|mix)
     let stockSrc = 'real';
@@ -1630,7 +1667,7 @@ function ageOk() { try { if (localStorage.getItem('kino.18') === '1') return tru
         const fd = new FormData();
         fd.append('lane', st.lane); fd.append('prompt', prompt); fd.append('genre', genre.value); fd.append('ratio', ratio.value); fd.append('seconds', len.value);
         fd.append('lyrics', lyrics.value); fd.append('look', look.value); fd.append('action', action.value); fd.append('grok', g.cb.checked ? '1' : '0'); fd.append('motion', motion.value); fd.append('multiPass', mp.checked ? '1' : '0'); fd.append('crew', crew.checked ? '1' : '0'); fd.append('bibleId', bibleId()); fd.append('imageEngine', engine.startsWith('puter:') ? '' : engine);
-        if (st.lane === 'sfw' && lip.checked) { fd.append('lipsync', '1'); fd.append('consent', 'true'); }
+        if (st.lane === 'sfw' && lip.checked) { fd.append('lipsync', '1'); fd.append('consent', 'true'); fd.append('lipEngine', mvLipEng.value || 'auto'); }
         if (song) fd.append('song', song);
         imgs.forEach((f) => fd.append('images', f));
         say('Laddar upp…');

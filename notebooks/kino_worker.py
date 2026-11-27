@@ -32,6 +32,9 @@ SUPPORTS = ["video", "wan-2.2", "wan-2.2-ti2v-5b", "ltx-video", "lipsync", "muse
 # 'qwen38-vl' = Qwen3.8 27B abliterated (vision-language, image+text in → text out) in llama.cpp, added at
 # registration when the GPU has room (kino_qwen38.py). It is unloaded before every other GPU job.
 READY: set = set()  # engines whose code + weights are downloaded; sent with every heartbeat
+# 'latentsync' = LatentSync 1.5 video-to-video lip sync (own venv, kino_latentsync.py) and 'echomimic-v3' =
+# EchoMimic V3 Flash, image + audio -> singing with head/body motion (own venv, kino_echomimic.py). Both are
+# added at registration only if the card/disk can hold them, and downloaded lazily on their first job.
 # 'musetalk' = real MuseTalk 1.5 lip sync on a still or a video; 'musetalk-alive' = the still is
 # first animated with LTX/Wan ("Levande bild + läppsynk"), then lip-synced. See kino_musetalk.py.
 # Kandinsky S2V Lite is documented at ~28 GB even with VAE tiling — it does not
@@ -134,8 +137,52 @@ def qwen38_wanted() -> bool:
         return False
 
 
+def latentsync_wanted() -> bool:
+    """LatentSync 1.5 (video-to-video lip sync) needs ~8 GB VRAM and ~14 GB disk for its own venv + weights."""
+    try:
+        import kino_latentsync as ls  # type: ignore
+        if not ls.enabled():
+            eprint("LatentSync: avstängd (LATENTSYNC = False)")
+            return False
+        if os.environ.get("KINO_WORKER_MOCK") == "1":
+            return True
+        p = ls.paths()
+        if not p["disk_ok"] and not ls.is_ready():
+            eprint(f"LatentSync annonseras inte: för lite disk ({p['free_gb']:.0f} GB ledigt, behöver ca {ls.NEED_GB:.0f} GB)")
+            return False
+        return True
+    except Exception as err:
+        eprint(f"LatentSync annonseras inte: {err}")
+        return False
+
+
+def echomimic_wanted() -> bool:
+    """EchoMimic V3 Flash (helkropp) needs a ~15 GB card and ~34 GB disk; checked once at registration."""
+    try:
+        import kino_echomimic as em  # type: ignore
+        ok, why = em.wanted()
+        if not ok:
+            eprint(f"EchoMimic V3 annonseras inte: {why}")
+        return bool(ok)
+    except Exception as err:
+        eprint(f"EchoMimic V3 annonseras inte: {err}")
+        return False
+
+
+_SUPPORTS_CACHE: list = []
+
+
 def supports_list() -> list:
-    return SUPPORTS + (["qwen38-vl"] if qwen38_wanted() else [])
+    if not _SUPPORTS_CACHE:
+        extra = []
+        if latentsync_wanted():
+            extra.append("latentsync")
+        if echomimic_wanted():
+            extra.append("echomimic-v3")
+        if qwen38_wanted():
+            extra.append("qwen38-vl")
+        _SUPPORTS_CACHE.extend(SUPPORTS + extra)
+    return list(_SUPPORTS_CACHE)
 
 
 def qwen38_unload():
@@ -256,6 +303,10 @@ def engine_label(job: dict) -> str:
         return "Qwen3.8 27B abliterated (llama.cpp)"
     if job.get("kind") == "asr" or eng == "whisperx":
         return "WhisperX large-v3 + ordjustering"
+    if eng == "latentsync":
+        return "LatentSync 1.5 läppsynk på video"
+    if eng == "echomimic-v3":
+        return "EchoMimic V3 Flash helkropp + läppsynk"
     if eng == "musetalk-alive":
         return "MuseTalk 1.5 läppsynk + levande bild (LTX-Video)"
     if job.get("kind") == "lipsync" or eng.startswith("musetalk"):
@@ -296,6 +347,8 @@ def process_job(client: WorkerClient, job: dict, mock: bool) -> None:
         else:
             out = real_render(job, image, audio, work, video)
             name = f"GPU-session ({engine_label(job)})"
+            if (job.get("engine") or "") in ("latentsync", "echomimic-v3"):
+                READY.add(job["engine"])
         client.submit(job["id"], out, name)
         eprint(f"ok job {job['id']}")
     except Exception as err:
@@ -316,6 +369,18 @@ def prefetch_musetalk():
         eprint("MuseTalk 1.5 redo (vikter hämtade)")
     except Exception as err:
         eprint(f"MuseTalk-förhämtning misslyckades, försöker igen vid första läppsynken: {err}")
+
+
+def prefetch_engine(module: str, label: str, engine: str):
+    """Optional background download (venv + weights, no VRAM) for the heavy lip-sync engines. Off by default:
+    they are fetched lazily on the first job (notebook flags LATENTSYNC_PREFETCH / ECHOMIMIC_PREFETCH)."""
+    try:
+        mod = __import__(module)
+        mod.prefetch()
+        READY.add(engine)
+        eprint(f"{label} redo")
+    except Exception as err:
+        eprint(f"{label}-förhämtning misslyckades, försöker igen vid första jobbet: {err}")
 
 
 def prefetch_whisperx():
@@ -364,6 +429,27 @@ def run_loop(server: str, code: str, mock: bool = False, platform: str | None = 
     hb.start()
     if not mock and os.environ.get("KINO_MUSETALK_PREFETCH", "1") != "0":
         threading.Thread(target=prefetch_musetalk, daemon=True).start()
+    sup = info.get("supports") or []
+    if not mock and "latentsync" in sup:
+        try:
+            import kino_latentsync as _ls  # type: ignore
+            if _ls.is_ready():
+                READY.add("latentsync")
+        except Exception:
+            pass
+        if os.environ.get("KINO_LATENTSYNC_PREFETCH", "0") == "1":
+            threading.Thread(target=prefetch_engine, args=("kino_latentsync", "LatentSync 1.5", "latentsync"), daemon=True).start()
+    if not mock and "echomimic-v3" in sup:
+        try:
+            import kino_echomimic as _em  # type: ignore
+            if _em.is_ready():
+                READY.add("echomimic-v3")
+        except Exception:
+            pass
+        if os.environ.get("KINO_ECHOMIMIC_PREFETCH", "0") == "1":
+            threading.Thread(target=prefetch_engine, args=("kino_echomimic", "EchoMimic V3", "echomimic-v3"), daemon=True).start()
+    if mock:
+        READY.update(x for x in ("latentsync", "echomimic-v3") if x in sup)
     if not mock and os.environ.get("KINO_WHISPERX_PREFETCH", "1") != "0":
         threading.Thread(target=prefetch_whisperx, daemon=True).start()
     if not mock and os.environ.get("KINO_QWEN38_PREFETCH", "1") != "0" and "qwen38-vl" in (info.get("supports") or []):
